@@ -1,4 +1,4 @@
-export default async function AdminLoginPage({
+export default async function LoginPage({
   searchParams,
 }: {
   searchParams: Promise<{ error?: string }>;
@@ -7,7 +7,9 @@ export default async function AdminLoginPage({
 
   return (
     <div className="mx-auto flex w-full max-w-sm flex-1 flex-col justify-center gap-6 px-6 py-24">
-      <h1 className="text-2xl font-semibold tracking-tight">Admin</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">
+        Corey Wogenstahl
+      </h1>
       <form
         method="POST"
         action="/api/auth/login"

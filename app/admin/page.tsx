@@ -7,7 +7,7 @@ export default async function AdminPage() {
   // Proxy already gates this route, but never trust that alone — re-verify.
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
-    redirect("/admin/login");
+    redirect("/login");
   }
 
   const [exercises, recentSessions] = await Promise.all([

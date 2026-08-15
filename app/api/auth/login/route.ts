@@ -24,14 +24,13 @@ export async function POST(request: NextRequest) {
   const password = formData.get("password");
 
   if (typeof password !== "string" || !safeEqual(password, adminPassword)) {
-    return NextResponse.redirect(
-      new URL("/admin/login?error=1", request.url),
-      { status: 303 },
-    );
+    return NextResponse.redirect(new URL("/login?error=1", request.url), {
+      status: 303,
+    });
   }
 
   const token = await createSessionToken();
-  const response = NextResponse.redirect(new URL("/admin", request.url), {
+  const response = NextResponse.redirect(new URL("/", request.url), {
     status: 303,
   });
   response.cookies.set(SESSION_COOKIE_NAME, token, {
