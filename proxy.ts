@@ -1,39 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/session";
 
 /**
- * Gates the entire site behind the signed session cookie. This is only an
- * optimistic check (see Next.js docs on Proxy) — `/admin/page.tsx` and every
- * mutating route handler re-verify the session independently too.
+ * PAUSED: the whole site — including login — is off right now. Every
+ * request gets the bare "work in progress" placeholder, logged in or not,
+ * so there's no path (a stale session cookie, a direct /login visit,
+ * whatever) that reaches the real pages behind it.
+ *
+ * Nothing else was touched — login, the session cookie machinery, and
+ * every page it used to gate are all still here. To bring it back, restore
+ * the auth check this replaced (see git history on this file for the
+ * previous version) so logged-in sessions pass through again.
  */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // The login page, the auth routes that power it, and the public WIP
-  // placeholder itself must stay reachable while logged out.
-  if (
-    pathname === "/login" ||
-    pathname === "/wip" ||
-    pathname.startsWith("/api/auth/")
-  ) {
+  if (pathname === "/wip") {
     return NextResponse.next();
   }
 
-  const token = request.cookies.get(SESSION_COOKIE_NAME)?.value;
-  const isValid = await verifySessionToken(token);
-
-  if (isValid) {
-    return NextResponse.next();
-  }
-
-  if (pathname.startsWith("/api/")) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
-  // TEMPORARY: while the site's under construction, logged-out visitors
-  // see a bare "work in progress" placeholder instead of the login
-  // prompt. To bring the password prompt back, swap this rewrite for
-  // `NextResponse.redirect(new URL("/login", request.url))`.
   return NextResponse.rewrite(new URL("/wip", request.url));
 }
 
