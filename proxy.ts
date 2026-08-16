@@ -9,9 +9,13 @@ import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/session";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // The login page + the auth routes that power it must stay reachable
-  // while logged out.
-  if (pathname === "/login" || pathname.startsWith("/api/auth/")) {
+  // The login page, the auth routes that power it, and the public WIP
+  // placeholder itself must stay reachable while logged out.
+  if (
+    pathname === "/login" ||
+    pathname === "/wip" ||
+    pathname.startsWith("/api/auth/")
+  ) {
     return NextResponse.next();
   }
 
@@ -26,7 +30,11 @@ export async function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.redirect(new URL("/login", request.url));
+  // TEMPORARY: while the site's under construction, logged-out visitors
+  // see a bare "work in progress" placeholder instead of the login
+  // prompt. To bring the password prompt back, swap this rewrite for
+  // `NextResponse.redirect(new URL("/login", request.url))`.
+  return NextResponse.rewrite(new URL("/wip", request.url));
 }
 
 export const config = {
