@@ -1,9 +1,11 @@
-import { HubSceneLoader } from "@/components/three/HubSceneLoader";
+"use client";
+
+import { WaveVisualizer } from "@/components/menu/WaveVisualizer";
 
 export default function Home() {
   return (
-    <div className="h-dvh w-full">
-      <HubSceneLoader />
+    <div className="flex h-dvh w-full flex-col items-center justify-center gap-1 bg-zinc-50 px-6 dark:bg-zinc-950">
+      <WaveVisualizer hoverX={null} />
     </div>
   );
 }

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * PAUSED: the whole site — including login — is off right now. Every
- * request gets the bare "work in progress" placeholder, logged in or not,
- * so there's no path (a stale session cookie, a direct /login visit,
- * whatever) that reaches the real pages behind it.
+ * PAUSED: the whole site — including login — is off right now, except for
+ * the bare homepage ("/"), which is just the wave-line visual with no menu
+ * or links out. Every other request gets the "work in progress" placeholder,
+ * logged in or not, so there's no path (a stale session cookie, a direct
+ * /login visit, whatever) that reaches the real pages behind it.
  *
  * Nothing else was touched — login, the session cookie machinery, and
  * every page it used to gate are all still here. To bring it back, restore
@@ -14,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (pathname === "/wip") {
+  if (pathname === "/wip" || pathname === "/") {
     return NextResponse.next();
   }
 
