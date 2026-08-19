@@ -164,7 +164,7 @@ export function WaveVisualizer({
   }, []);
 
   return (
-    <div ref={containerRef} className="h-10 w-full max-w-xl">
+    <div ref={containerRef} className="h-10 w-full">
       <svg viewBox={`0 0 ${width || 1} ${HEIGHT}`} className="h-full w-full overflow-visible">
         {LINES.map((line, i) => (
           <path
