@@ -35,8 +35,12 @@ export function encryptAmount(value: number): string {
   return Buffer.concat([iv, authTag, ciphertext]).toString("base64");
 }
 
-/** Reverses `encryptAmount`, returning the original number. */
-export function decryptAmount(encoded: string): number {
+/**
+ * Reverses `encryptAmount`/the description-encrypting path in
+ * scripts/import-transactions.mjs, returning the original plaintext
+ * string. `decryptAmount` below is just this plus a Number() cast.
+ */
+export function decryptText(encoded: string): string {
   const raw = Buffer.from(encoded, "base64");
   const iv = raw.subarray(0, IV_LENGTH);
   const authTag = raw.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
@@ -47,5 +51,10 @@ export function decryptAmount(encoded: string): number {
     decipher.update(ciphertext),
     decipher.final(),
   ]);
-  return Number(plaintext.toString("utf8"));
+  return plaintext.toString("utf8");
+}
+
+/** Reverses `encryptAmount`, returning the original number. */
+export function decryptAmount(encoded: string): number {
+  return Number(decryptText(encoded));
 }

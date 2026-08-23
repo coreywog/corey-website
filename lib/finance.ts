@@ -169,10 +169,244 @@ export function computeSpendingByCategory(
     .sort((a, b) => b.total - a.total);
 }
 
+export type SpendingSubcategoryTotal = {
+  subcategory: string;
+  total: number;
+};
+
+export type SpendingCategoryGroup = {
+  category: string;
+  total: number;
+  subcategories: SpendingSubcategoryTotal[];
+};
+
+/**
+ * Spending grouped hierarchically — merchantCategory (broad umbrella, e.g.
+ * "food") -> merchantSubcategory (fine-grained, e.g. "groceries") -> total —
+ * for already-filtered transactions. Categories sorted largest first;
+ * subcategories within each category sorted largest first too.
+ * Uncategorized spending falls under category "other", subcategory "other".
+ */
+export function computeSpendingHierarchy(
+  transactions: {
+    amount: number;
+    category: string;
+    merchantCategory: string | null;
+    merchantSubcategory: string | null;
+  }[],
+): SpendingCategoryGroup[] {
+  const categoryTotals = new Map<string, number>();
+  const subcategoryTotals = new Map<string, Map<string, number>>();
+
+  for (const t of transactions) {
+    if (t.category !== "spending") continue;
+    const category = t.merchantCategory ?? "other";
+    const subcategory = t.merchantSubcategory ?? "other";
+    const amount = -t.amount;
+
+    categoryTotals.set(category, (categoryTotals.get(category) ?? 0) + amount);
+
+    if (!subcategoryTotals.has(category)) subcategoryTotals.set(category, new Map());
+    const subMap = subcategoryTotals.get(category)!;
+    subMap.set(subcategory, (subMap.get(subcategory) ?? 0) + amount);
+  }
+
+  return [...categoryTotals.entries()]
+    .map(([category, total]) => {
+      const subcategories = [...subcategoryTotals.get(category)!.entries()]
+        .map(([subcategory, subTotal]) => ({
+          subcategory,
+          total: Math.round(subTotal * 100) / 100,
+        }))
+        .sort((a, b) => b.total - a.total);
+      return { category, total: Math.round(total * 100) / 100, subcategories };
+    })
+    .sort((a, b) => b.total - a.total);
+}
+
 /** UTC start of "today minus N months" — for the rolling 6-month window. */
 export function monthsAgo(n: number): Date {
   const now = new Date();
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - n, now.getUTCDate()));
+}
+
+export type MerchantSpendingTotal = {
+  merchant: string;
+  total: number;
+};
+
+// Canonical display name for a specific merchant, collapsing known raw-text
+// variants of the same real-world business into one row instead of several
+// near-duplicates — e.g. "AplPay WHOLE FOODS MAUSTIN TX" and "AplPay
+// WHOLEFDS KBS CHICAGO IL" both -> "Whole Foods". The source description
+// text varies per statement/format (store-number suffixes, inconsistent
+// spacing from the original PDF/CSV extraction, city/state tags), which
+// this list works around case by case rather than trying to fully parse.
+// First matching pattern wins.
+const MERCHANT_NAME_PATTERNS: [RegExp, string][] = [
+  [/whole\s*foods|wholefds/i, "Whole Foods"],
+  [/h-?e-?b/i, "H-E-B"],
+  [/central\s*marke/i, "Central Market"],
+  [/trader\s*joe/i, "Trader Joe's"],
+  [/\bkroger\b/i, "Kroger"],
+  [/foxtrot\s*marke/i, "Foxtrot Market"],
+  [/united\s*dairy\s*farmers/i, "United Dairy Farmers"],
+
+  [/la\s*colombe/i, "La Colombe"],
+  [/blank\s*street/i, "Blank Street Coffee"],
+  [/ruta\s*maya/i, "Ruta Maya"],
+  [/\bbsc\b/i, "Black Sheep Coffee"],
+  [/blue\s*bottle/i, "Blue Bottle Coffee"],
+  [/merit\s*coffee/i, "Merit Coffee"],
+  [/cafe\s*creme/i, "Cafe Creme"],
+  [/\bdunkin/i, "Dunkin'"],
+  [/petes\s*coffee/i, "Peet's Coffee"],
+  [/starbucks/i, "Starbucks"],
+
+  [/\bcava\b/i, "CAVA"],
+  [/chick-?fil-?a/i, "Chick-fil-A"],
+  [/chipotle/i, "Chipotle"],
+  [/p\.?\s*terry'?s/i, "P. Terry's Burger Stand"],
+  [/jersey\s*mikes?/i, "Jersey Mike's"],
+  [/quizno'?s/i, "Quizno's"],
+  [/hunan\s*lion/i, "Hunan Lion"],
+  [/kerbey\s*lane/i, "Kerbey Lane Cafe"],
+  [/grata'?s\s*pizze?/i, "Grata's Pizzeria"],
+  [/noble\s*sandwic/i, "Noble Sandwich Co"],
+  [/turf\s*n\s*surf/i, "Turf N Surf Po Boy"],
+  [/papalote\s*taco/i, "Papalote Taco House"],
+  [/thundercloud/i, "Thundercloud Subs"],
+  [/tst\*\s*the\s*sou/i, "The Soup Peddler"],
+  [/olamaie/i, "Olamaie"],
+  [/little\s*woodrows/i, "Little Woodrow's"],
+  [/katy\s*trail\s*ice\s*house/i, "Katy Trail Ice House"],
+  [/ghost\s*pepper/i, "Ghost Pepper"],
+
+  [/yogurtland/i, "Yogurtland"],
+  [/van\s*leeuwen/i, "Van Leeuwen Ice Cream"],
+  [/graeter'?s/i, "Graeter's"],
+  [/venchi/i, "Venchi"],
+  [/bananarchy/i, "Bananarchy"],
+  [/shipley\s*do-?nuts/i, "Shipley Do-Nuts"],
+  [/edible\.?com/i, "Edible Arrangements"],
+  [/the\s*market\s*#\d+/i, "The Market"],
+
+  [/exxon\s*mobil|exxonmobil/i, "ExxonMobil"],
+  [/\bmarathon\b/i, "Marathon"],
+  [/love'?s\s*#?\d*/i, "Love's Travel Stop"],
+  [/buc-?ee'?s/i, "Buc-ee's"],
+  [/circle\s*k/i, "Circle K"],
+
+  [/\blyft\b/i, "Lyft"],
+  [/\buber\b(?!eats)/i, "Uber"],
+
+  [/amazon|amzn/i, "Amazon"],
+  [/\btarget\b/i, "Target"],
+  [/bookpeople/i, "BookPeople"],
+  [/officemax|office\s*depot/i, "Office Depot/OfficeMax"],
+  [/lowe'?s/i, "Lowe's"],
+  [/nordstrom\s*rac/i, "Nordstrom Rack"],
+  [/dick'?s\s*sporti/i, "Dick's Sporting Goods"],
+
+  [/avis/i, "Avis"],
+  [/homewood\s*suit/i, "Homewood Suites"],
+  [/sheraton/i, "Sheraton"],
+];
+
+/**
+ * Canonical display name for a raw merchant description — strips the
+ * "AplPay " prefix and, for known chains, collapses format variants down
+ * to one consistent name (see MERCHANT_NAME_PATTERNS). Anything
+ * unrecognized falls back to the trimmed raw text as-is.
+ */
+export function normalizeMerchantName(raw: string): string {
+  const cleaned = raw.replace(/^AplPay\s+/i, "").trim();
+  for (const [pattern, canonical] of MERCHANT_NAME_PATTERNS) {
+    if (pattern.test(cleaned)) return canonical;
+  }
+  return cleaned || "Unknown";
+}
+
+/**
+ * Spending grouped by merchant — the finest level available (a specific
+ * store/vendor), with known chains normalized to one canonical name (see
+ * normalizeMerchantName) so format variants don't fragment into several
+ * near-duplicate rows — for already-filtered transactions. Meant to be
+ * called after narrowing down to one category+subcategory via
+ * computeSpendingHierarchy. Blank/missing descriptions collapse to
+ * "Unknown".
+ */
+export function computeSpendingByMerchant(
+  transactions: { amount: number; category: string; description: string | null }[],
+): MerchantSpendingTotal[] {
+  const totals = new Map<string, number>();
+  for (const t of transactions) {
+    if (t.category !== "spending") continue;
+    const key = t.description ? normalizeMerchantName(t.description) : "Unknown";
+    totals.set(key, (totals.get(key) ?? 0) + -t.amount);
+  }
+  return [...totals.entries()]
+    .map(([merchant, total]) => ({ merchant, total: Math.round(total * 100) / 100 }))
+    .sort((a, b) => b.total - a.total);
+}
+
+export type WeekdaySpendingPoint = {
+  weekday: string; // "Sun" .. "Sat"
+  average: number;
+};
+
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * Average spending per calendar weekday across [start, end) — total spend
+ * on that weekday divided by how many times that weekday actually occurred
+ * in the range (not just days with activity), so a quiet Tuesday still
+ * pulls the average down instead of being ignored. Dates are "YYYY-MM-DD"
+ * strings (UTC, matching every other date string in this module); end is
+ * exclusive.
+ */
+export function computeSpendingByWeekday(
+  transactions: { date: string; amount: number; category: string }[],
+  start: string,
+  end: string,
+): WeekdaySpendingPoint[] {
+  const totals = new Array(7).fill(0);
+  const counts = new Array(7).fill(0);
+
+  for (
+    let d = new Date(`${start}T00:00:00Z`);
+    d.toISOString().slice(0, 10) < end;
+    d = new Date(d.getTime() + 86_400_000)
+  ) {
+    counts[d.getUTCDay()]++;
+  }
+
+  for (const t of transactions) {
+    if (t.category !== "spending") continue;
+    if (t.date < start || t.date >= end) continue;
+    const weekday = new Date(`${t.date}T00:00:00Z`).getUTCDay();
+    totals[weekday] += -t.amount;
+  }
+
+  return WEEKDAY_LABELS.map((label, i) => ({
+    weekday: label,
+    average: counts[i] > 0 ? Math.round((totals[i] / counts[i]) * 100) / 100 : 0,
+  }));
+}
+
+/**
+ * The n calendar months immediately before the current one, oldest first,
+ * as "YYYY-MM" — excludes the current (in-progress) month. E.g. on Aug 2026,
+ * trailingMonths(6) -> ["2026-02", "2026-03", ..., "2026-07"].
+ */
+export function trailingMonths(n: number): string[] {
+  const now = new Date();
+  const months: string[] = [];
+  for (let i = n; i >= 1; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    months.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`);
+  }
+  return months;
 }
 
 /** "personal_transfer" -> "Personal transfer" */
