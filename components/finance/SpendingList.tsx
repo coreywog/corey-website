@@ -44,8 +44,8 @@ export function SpendingList({
               className={
                 "flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors " +
                 (selectedKey === item.key
-                  ? "bg-black/[.06] dark:bg-white/[.1]"
-                  : "hover:bg-black/[.03] dark:hover:bg-white/[.05]")
+                  ? "bg-black/[.06] dark:bg-white/[.1] creamsicle:bg-orange-100"
+                  : "hover:bg-black/[.03] dark:hover:bg-white/[.05] creamsicle:hover:bg-orange-50")
               }
             >
               <span className="flex items-center gap-2 truncate">

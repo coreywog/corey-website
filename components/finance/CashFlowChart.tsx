@@ -43,8 +43,8 @@ export function CashFlowChart({
             contentStyle={{ fontSize: 12, borderRadius: 6 }}
           />
           <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar dataKey="Income" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={80} />
-          <Bar dataKey="Spending" fill="#f43f5e" radius={[4, 4, 0, 0]} maxBarSize={80} />
+          <Bar dataKey="Income" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={80} isAnimationActive={false} />
+          <Bar dataKey="Spending" fill="#f43f5e" radius={[4, 4, 0, 0]} maxBarSize={80} isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
     </div>

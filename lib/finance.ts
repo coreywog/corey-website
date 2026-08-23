@@ -311,6 +311,35 @@ const MERCHANT_NAME_PATTERNS: [RegExp, string][] = [
   [/avis/i, "Avis"],
   [/homewood\s*suit/i, "Homewood Suites"],
   [/sheraton/i, "Sheraton"],
+
+  // Subscriptions — PayPal/ACH billing text embeds a different reference
+  // number or card ID per charge, which would otherwise fragment one
+  // subscription into a separate row per billing cycle (e.g. Spotify
+  // showing up 6 times, once per month, each with a different ID).
+  // GOOGLE YOUTU and GOOGLE GOOGL are two distinct real subscriptions
+  // (YouTube Premium vs YouTube TV) — order matters, more specific first.
+  [/google\s*youtu/i, "YouTube Premium"],
+  [/google\s*googl/i, "YouTube TV"],
+  [/spotify/i, "Spotify"],
+  [/\bhulu\b/i, "Hulu"],
+  [/crunchyroll/i, "Crunchyroll"],
+  [/\bmlb\b/i, "MLB.TV"],
+  [/squarespace/i, "Squarespace"],
+  [/\basana\b/i, "Asana"],
+  [/nvidia/i, "NVIDIA"],
+  [/battle\.?net|blizzard/i, "Battle.net"],
+  [/epic\s*games/i, "Epic Games"],
+  [/twitchinter|\btwitch\b/i, "Twitch"],
+  [/\bjagex\b/i, "Jagex"],
+  [/scribd/i, "Scribd"],
+  [/purchase\s*microsoft|microsoft\s*corp/i, "Microsoft"],
+  [/spectrum/i, "Spectrum"],
+  [/mashvisor/i, "Mashvisor"],
+  [/airdna/i, "AirDNA"],
+  [/tapcap/i, "TapCap"],
+  [/teazys/i, "Teazys"],
+  [/tomofun/i, "TOMOFUN (Furbo)"],
+  [/worpenberg/i, "The Worpenberg Foundation"],
 ];
 
 /**
@@ -324,7 +353,13 @@ export function normalizeMerchantName(raw: string): string {
   for (const [pattern, canonical] of MERCHANT_NAME_PATTERNS) {
     if (pattern.test(cleaned)) return canonical;
   }
-  return cleaned || "Unknown";
+  if (!cleaned) return "Unknown";
+  // Fallback for anything not explicitly listed above: strip a long
+  // reference-number run (PayPal/ACH transaction IDs, phone numbers) and a
+  // trailing 2-letter state code, so at least same-merchant charges that
+  // only differ by that noise still collapse into one row instead of a
+  // fresh "unique" merchant per billing cycle.
+  return cleaned.replace(/\d{6,}.*$/, "").replace(/\s+[A-Z]{2}$/, "").trim() || cleaned;
 }
 
 /**
@@ -348,6 +383,63 @@ export function computeSpendingByMerchant(
   return [...totals.entries()]
     .map(([merchant, total]) => ({ merchant, total: Math.round(total * 100) / 100 }))
     .sort((a, b) => b.total - a.total);
+}
+
+export type RecurringSubscription = {
+  merchant: string;
+  monthlyAverage: number;
+  chargeCount: number;
+  lastCharged: string; // YYYY-MM-DD
+};
+
+/**
+ * Recurring subscription merchants (category="spending",
+ * merchantCategory="subscriptions"), normalized (see normalizeMerchantName)
+ * and grouped, sorted by monthly cost descending. monthlyAverage divides
+ * total spend by the number of distinct months a charge appeared in — not
+ * raw charge count — so a merchant billed twice in one month doesn't read
+ * as costing double.
+ */
+export function computeRecurringSubscriptions(
+  transactions: {
+    date: string;
+    amount: number;
+    category: string;
+    merchantCategory: string | null;
+    description: string | null;
+  }[],
+): RecurringSubscription[] {
+  const byMerchant = new Map<
+    string,
+    { total: number; months: Set<string>; count: number; lastCharged: string }
+  >();
+  for (const t of transactions) {
+    if (t.category !== "spending" || t.merchantCategory !== "subscriptions") continue;
+    const merchant = t.description ? normalizeMerchantName(t.description) : "Unknown";
+    const entry = byMerchant.get(merchant) ?? {
+      total: 0,
+      months: new Set<string>(),
+      count: 0,
+      lastCharged: t.date,
+    };
+    entry.total += -t.amount;
+    entry.months.add(t.date.slice(0, 7));
+    entry.count++;
+    if (t.date > entry.lastCharged) entry.lastCharged = t.date;
+    byMerchant.set(merchant, entry);
+  }
+  return [...byMerchant.entries()]
+    .map(([merchant, e]) => ({
+      merchant,
+      monthlyAverage: Math.round((e.total / Math.max(e.months.size, 1)) * 100) / 100,
+      chargeCount: e.count,
+      lastCharged: e.lastCharged,
+    }))
+    // A refund can fully offset a charge and net to $0 (or negative) for
+    // the month it happened — not a meaningful "this is what it costs"
+    // signal, so it's excluded rather than shown as a $0/mo subscription.
+    .filter((s) => s.monthlyAverage > 0)
+    .sort((a, b) => b.monthlyAverage - a.monthlyAverage);
 }
 
 export type WeekdaySpendingPoint = {

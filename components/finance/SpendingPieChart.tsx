@@ -20,12 +20,25 @@ export function SpendingPieChart({ data, selectedKey }: { data: BarDatum[]; sele
   }
 
   const total = data.reduce((sum, d) => sum + d.total, 0);
+  // Only label slices big enough for a percentage to actually fit/matter —
+  // otherwise a chart with many small categories turns into label soup.
+  const MIN_LABEL_SHARE = 0.05;
 
   return (
     <div className="h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
-          <Pie data={data} dataKey="total" nameKey="label" innerRadius={40} outerRadius={72} paddingAngle={1}>
+          <Pie
+            data={data}
+            dataKey="total"
+            nameKey="label"
+            innerRadius={40}
+            outerRadius={72}
+            paddingAngle={1}
+            label={({ percent }) => (percent && percent >= MIN_LABEL_SHARE ? `${Math.round(percent * 100)}%` : "")}
+            labelLine={false}
+            isAnimationActive={false}
+          >
             {data.map((d) => (
               <Cell key={d.key} fill={d.color} opacity={selectedKey && selectedKey !== d.key ? 0.3 : 1} />
             ))}

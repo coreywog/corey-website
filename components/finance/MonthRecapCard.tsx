@@ -29,8 +29,8 @@ export function MonthRecapCard({
   const label = formatMonthLabel(month).split(" ")[0]; // "February 2026" -> "February"
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
-      <span className="text-xs font-medium text-zinc-500">{label}</span>
+    <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
+      <span className="text-xs font-medium text-zinc-500 creamsicle:text-orange-700">{label}</span>
       <span
         className={
           net >= 0
@@ -49,8 +49,8 @@ export function MonthRecapCard({
               labelFormatter={() => ""}
               contentStyle={{ fontSize: 11, borderRadius: 6 }}
             />
-            <Bar dataKey="Income" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={28} />
-            <Bar dataKey="Spending" fill="#f43f5e" radius={[3, 3, 0, 0]} maxBarSize={28} />
+            <Bar dataKey="Income" fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={28} isAnimationActive={false} />
+            <Bar dataKey="Spending" fill="#f43f5e" radius={[3, 3, 0, 0]} maxBarSize={28} isAnimationActive={false} />
           </BarChart>
         </ResponsiveContainer>
       </div>

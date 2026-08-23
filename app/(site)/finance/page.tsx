@@ -72,18 +72,18 @@ export default async function FinancePage() {
       <h1 className="text-2xl font-semibold tracking-tight">Finances</h1>
 
       <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500">
+        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
           Cash flow trend
         </h2>
         <DailyCashFlowChart data={dailySeries} />
-        <p className="text-xs text-zinc-500">
+        <p className="text-xs text-zinc-500 creamsicle:text-orange-600">
           Chase + Amex only, excludes investment accounts and transfers
           between your own accounts (savings, card payments).
         </p>
       </div>
 
       <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500">
+        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
           Monthly recap
         </h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">

@@ -27,7 +27,7 @@ export function WeekdaySpendingChart({ data }: { data: WeekdaySpendingPoint[] })
             formatter={(value) => currencyFormatter.format(Number(value))}
             contentStyle={{ fontSize: 12, borderRadius: 6 }}
           />
-          <Bar dataKey="average" fill="#6366f1" radius={[4, 4, 0, 0]} maxBarSize={40} />
+          <Bar dataKey="average" fill="#6366f1" radius={[4, 4, 0, 0]} maxBarSize={40} isAnimationActive={false} />
         </BarChart>
       </ResponsiveContainer>
     </div>

@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Make Tailwind's dark: variant respond to our own [data-theme] attribute
+   (set by ThemeProvider) instead of the OS prefers-color-scheme media
+   query, so the settings-menu theme choice is the single source of truth.
+   creamsicle: is a second custom variant for the light, orange-based mode. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+@custom-variant creamsicle (&:where([data-theme="creamsicle"], [data-theme="creamsicle"] *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
@@ -12,11 +19,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+}
+
+[data-theme="creamsicle"] {
+  --background: #fff7ed;
+  --foreground: #431407;
 }
 
 body {

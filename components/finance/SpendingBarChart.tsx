@@ -61,7 +61,7 @@ export function SpendingBarChart({
             formatter={(value) => currencyFormatter.format(Number(value))}
             contentStyle={{ fontSize: 12, borderRadius: 6 }}
           />
-          <Bar dataKey="total" radius={[4, 4, 0, 0]} maxBarSize={40}>
+          <Bar dataKey="total" radius={[4, 4, 0, 0]} maxBarSize={40} isAnimationActive={false}>
             {visibleData.map((d) => (
               <Cell
                 key={d.key}

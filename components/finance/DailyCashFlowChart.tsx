@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -18,12 +18,6 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
-const SERIES = [
-  { key: "income" as const, label: "Income", color: "#10b981" },
-  { key: "spending" as const, label: "Spending", color: "#f43f5e" },
-  { key: "net" as const, label: "Net", color: "#6366f1" },
-];
-
 const RANGES = [
   { key: "1m" as const, label: "1 month", months: 1 },
   { key: "3m" as const, label: "3 months", months: 3 },
@@ -36,17 +30,51 @@ function monthsAgo(n: number): Date {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - n, now.getUTCDate()));
 }
 
+type Point = DailyCashFlowPoint & { cumulativeNet: number };
+
+function CashFlowTooltip({ active, payload }: { active?: boolean; payload?: { payload: Point }[] }) {
+  if (!active || !payload || payload.length === 0) return null;
+  const point = payload[0].payload;
+  return (
+    <div className="rounded-md border border-black/[.08] bg-white/95 px-3 py-2 text-xs shadow-sm dark:border-white/[.1] dark:bg-zinc-900/95 creamsicle:border-orange-200 creamsicle:bg-orange-50/95">
+      <div className="mb-1.5 font-medium text-zinc-500">{point.date}</div>
+      <div className="flex items-center justify-between gap-6">
+        <span className="text-emerald-600 dark:text-emerald-400">Income</span>
+        <span className="font-medium">{currencyFormatter.format(point.income)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-6">
+        <span className="text-rose-600 dark:text-rose-400">Spending</span>
+        <span className="font-medium">{currencyFormatter.format(point.spending)}</span>
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-6 border-t border-black/[.08] pt-1.5 dark:border-white/[.1]">
+        <span className="text-zinc-500">Running net</span>
+        <span className="font-semibold">{currencyFormatter.format(point.cumulativeNet)}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Running (cumulative) net position over time, not a per-day net line —
+ * a per-day net zigzags sharply around $0 (a payday spikes it, then it
+ * snaps back), which reads as noise. The cumulative line instead climbs on
+ * income and eases back down as purchases happen, which is the shape
+ * people actually mean by "net trend". Income/spending are still there,
+ * just moved into the hover tooltip instead of their own lines/legend.
+ */
 export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
-  const [visible, setVisible] = useState<Record<string, boolean>>({
-    income: true,
-    spending: true,
-    net: true,
-  });
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("6m");
 
-  function toggle(key: string) {
-    setVisible((prev) => ({ ...prev, [key]: !prev[key] }));
-  }
+  // Cumulative sum runs over the full fetched history (6 months back = $0
+  // baseline) before the range toggle windows it, so switching ranges zooms
+  // the same continuous line rather than resetting the baseline each time.
+  const withCumulative: Point[] = useMemo(() => {
+    let running = 0;
+    return data.map((d) => {
+      running += d.net;
+      return { ...d, cumulativeNet: Math.round(running * 100) / 100 };
+    });
+  }, [data]);
 
   if (data.length === 0) {
     return (
@@ -58,33 +86,12 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
 
   const rangeMonths = RANGES.find((r) => r.key === range)!.months;
   const cutoff = monthsAgo(rangeMonths).toISOString().slice(0, 10);
-  const visibleData = data.filter((d) => d.date >= cutoff);
+  const visibleData = withCumulative.filter((d) => d.date >= cutoff);
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex gap-2">
-          {SERIES.map((s) => (
-            <button
-              key={s.key}
-              type="button"
-              onClick={() => toggle(s.key)}
-              className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors"
-              style={{
-                borderColor: visible[s.key] ? s.color : "var(--zinc-border, #d4d4d8)",
-                color: visible[s.key] ? s.color : "#71717a",
-                opacity: visible[s.key] ? 1 : 0.5,
-              }}
-            >
-              <span
-                className="h-2 w-2 rounded-full"
-                style={{ backgroundColor: s.color }}
-              />
-              {s.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-1 rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1]">
+      <div className="flex items-center justify-end">
+        <div className="flex gap-1 rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
           {RANGES.map((r) => (
             <button
               key={r.key}
@@ -92,8 +99,8 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
               onClick={() => setRange(r.key)}
               className={
                 range === r.key
-                  ? "rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
-                  : "rounded-full px-3 py-1 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                  ? "rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 creamsicle:bg-orange-600 creamsicle:text-white"
+                  : "rounded-full px-3 py-1 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 creamsicle:hover:text-orange-800"
               }
             >
               {r.label}
@@ -119,21 +126,16 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
               width={64}
               tickFormatter={(v) => currencyFormatter.format(v)}
             />
-            <Tooltip
-              formatter={(value) => currencyFormatter.format(Number(value))}
-              contentStyle={{ fontSize: 12, borderRadius: 6 }}
+            <Tooltip content={<CashFlowTooltip />} />
+            <Line
+              type="monotone"
+              dataKey="cumulativeNet"
+              name="Net"
+              stroke="#6366f1"
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
             />
-            {SERIES.filter((s) => visible[s.key]).map((s) => (
-              <Line
-                key={s.key}
-                type="monotone"
-                dataKey={s.key}
-                name={s.label}
-                stroke={s.color}
-                strokeWidth={1.75}
-                dot={false}
-              />
-            ))}
           </LineChart>
         </ResponsiveContainer>
       </div>
