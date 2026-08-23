@@ -2,23 +2,25 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
 import {
-  computeNetWorthSeries,
   computeMonthlyCashFlow,
+  computeDailyCashFlow,
+  computeSpendingByCategory,
   listAvailableMonths,
   monthRange,
+  monthsAgo,
 } from "@/lib/finance";
 import { decryptAmount } from "@/lib/crypto";
-import { NetWorthChart } from "@/components/finance/NetWorthChart";
 import { CashFlowChart } from "@/components/finance/CashFlowChart";
+import { DailyCashFlowChart } from "@/components/finance/DailyCashFlowChart";
+import { CategoryBreakdown } from "@/components/finance/CategoryBreakdown";
 import { MonthSelector } from "@/components/finance/MonthSelector";
-import { BalanceForm } from "@/components/admin/BalanceForm";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
 });
 
-// Investment accounts (Schwab) are excluded from monthly cash flow — only
+// Investment accounts (Schwab) are excluded from cash flow — only
 // checking/credit accounts (Chase, Amex) reflect actual income and spending.
 const CASH_FLOW_ACCOUNT_TYPES = ["checking", "credit"];
 
@@ -33,34 +35,26 @@ export default async function FinancePage({
     redirect("/quietharbor");
   }
 
-  const [accounts, rawEntries, cashFlowDates] = await Promise.all([
-    prisma.financeAccount.findMany({
-      where: { archived: false },
-      orderBy: { name: "asc" },
-    }),
-    prisma.balanceEntry.findMany({ orderBy: { date: "asc" } }),
-    prisma.transaction.findMany({
-      where: { account: { type: { in: CASH_FLOW_ACCOUNT_TYPES } } },
-      select: { date: true },
-    }),
-  ]);
+  const sixMonthsAgo = monthsAgo(6);
+  const rawRecentTxns = await prisma.transaction.findMany({
+    where: {
+      account: { type: { in: CASH_FLOW_ACCOUNT_TYPES } },
+      date: { gte: sixMonthsAgo },
+    },
+    select: { date: true, amount: true, category: true, merchantCategory: true },
+    orderBy: { date: "asc" },
+  });
 
-  // Balances are encrypted at rest (see lib/crypto.ts) — decrypt once here,
+  // Amounts are encrypted at rest (see lib/crypto.ts) — decrypt once here,
   // never persisted or logged in plaintext.
-  const entries = rawEntries.map((entry) => ({
-    ...entry,
-    balance: decryptAmount(entry.balance),
+  const recentTxns = rawRecentTxns.map((t) => ({
+    ...t,
+    amount: decryptAmount(t.amount),
   }));
 
-  const series = computeNetWorthSeries(accounts, entries);
-  const currentNetWorth = series.at(-1)?.netWorth ?? 0;
+  const dailySeries = computeDailyCashFlow(recentTxns);
 
-  const latestByAccount = new Map<string, number>();
-  for (const entry of entries) {
-    latestByAccount.set(entry.accountId, entry.balance);
-  }
-
-  const availableMonths = listAvailableMonths(cashFlowDates.map((d) => d.date));
+  const availableMonths = listAvailableMonths(recentTxns.map((t) => t.date));
   const { month: requestedMonth } = await searchParams;
   const selectedMonth =
     requestedMonth && availableMonths.includes(requestedMonth)
@@ -68,34 +62,27 @@ export default async function FinancePage({
       : availableMonths[0];
 
   let cashFlow = { income: 0, spending: 0, net: 0 };
+  let categoryTotals: ReturnType<typeof computeSpendingByCategory> = [];
   if (selectedMonth) {
     const { start, end } = monthRange(selectedMonth);
-    const rawMonthTxns = await prisma.transaction.findMany({
-      where: {
-        account: { type: { in: CASH_FLOW_ACCOUNT_TYPES } },
-        date: { gte: start, lt: end },
-      },
-      select: { amount: true, category: true },
-    });
-    const monthTxns = rawMonthTxns.map((t) => ({
-      ...t,
-      amount: decryptAmount(t.amount),
-    }));
+    const monthTxns = recentTxns.filter((t) => t.date >= start && t.date < end);
     cashFlow = computeMonthlyCashFlow(monthTxns);
+    categoryTotals = computeSpendingByCategory(monthTxns);
   }
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-10 px-6 py-16">
       <h1 className="text-2xl font-semibold tracking-tight">Finances</h1>
 
-      <div className="flex flex-col gap-4">
-        <div>
-          <div className="text-sm text-zinc-500">Net worth</div>
-          <div className="text-3xl font-semibold tracking-tight">
-            {currencyFormatter.format(currentNetWorth)}
-          </div>
-        </div>
-        <NetWorthChart data={series} />
+      <div className="flex flex-col gap-3">
+        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500">
+          Last 6 months
+        </h2>
+        <DailyCashFlowChart data={dailySeries} />
+        <p className="text-xs text-zinc-500">
+          Chase + Amex only, excludes investment accounts and transfers
+          between your own accounts (savings, card payments).
+        </p>
       </div>
 
       {selectedMonth && (
@@ -121,50 +108,19 @@ export default async function FinancePage({
             </span>
           </div>
           <CashFlowChart income={cashFlow.income} spending={cashFlow.spending} />
-          <p className="text-xs text-zinc-500">
-            Chase + Amex only, excludes investment accounts. Income counts
-            deposits from Amazon/Whole Foods; transfers between your own
-            accounts (savings, card payments) are excluded from spending.
-          </p>
+
+          <div className="flex flex-col gap-3 border-t border-black/[.08] pt-4 dark:border-white/[.1]">
+            <h3 className="text-sm font-medium text-zinc-500 dark:text-zinc-500">
+              Spending by category
+            </h3>
+            <CategoryBreakdown totals={categoryTotals} />
+            <p className="text-xs text-zinc-500">
+              Best-effort classification from merchant names — not perfect.
+              Anything unrecognized lands in &quot;Other&quot;.
+            </p>
+          </div>
         </div>
       )}
-
-      <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500">
-          Accounts
-        </h2>
-        {accounts.length === 0 ? (
-          <p className="text-sm text-zinc-500">
-            No accounts yet — add one below.
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {accounts.map((account) => (
-              <li
-                key={account.id}
-                className="flex items-center justify-between rounded-md border border-black/[.08] px-3 py-2 text-sm dark:border-white/[.1]"
-              >
-                <span>
-                  {account.name}{" "}
-                  <span className="text-zinc-500">({account.type})</span>
-                </span>
-                <span className="font-medium">
-                  {latestByAccount.has(account.id)
-                    ? currencyFormatter.format(latestByAccount.get(account.id)!)
-                    : "—"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div className="flex flex-col gap-4">
-        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500">
-          Log balances
-        </h2>
-        <BalanceForm accounts={accounts} />
-      </div>
     </div>
   );
 }

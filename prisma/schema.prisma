@@ -53,6 +53,12 @@ model Transaction {
   amount    String // AES-256-GCM ciphertext (base64) — see lib/crypto.ts, never plaintext
   category  String // "income" | "spending" | "other" | "transfer" (transfer = excluded from cash flow)
 
+  // Merchant-type grouping (groceries, dining, transport, ...) — only set
+  // for category="spending". Best-effort keyword classification done
+  // locally in scripts/extract_statements.py from the raw description,
+  // which itself is never stored — this label is all that survives.
+  merchantCategory String?
+
   // SHA-256 of the source statement's raw date+description+amount — lets the
   // local import script skip re-importing a transaction it's already seen,
   // without ever storing the merchant description itself.

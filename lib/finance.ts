@@ -108,3 +108,74 @@ export function formatMonthLabel(month: string): string {
     timeZone: "UTC",
   });
 }
+
+export type DailyCashFlowPoint = {
+  date: string; // YYYY-MM-DD
+  income: number;
+  spending: number;
+  net: number;
+};
+
+/**
+ * One point per day that has income or spending activity (Chase + Amex
+ * only, transfers/other excluded) — sparse, not forward-filled, since each
+ * day's flow is independent rather than a running total.
+ */
+export function computeDailyCashFlow(
+  transactions: { date: Date; amount: number; category: string }[],
+): DailyCashFlowPoint[] {
+  const byDay = new Map<string, { income: number; spending: number }>();
+  for (const t of transactions) {
+    if (t.category !== "income" && t.category !== "spending") continue;
+    const day = t.date.toISOString().slice(0, 10);
+    const bucket = byDay.get(day) ?? { income: 0, spending: 0 };
+    if (t.category === "income") bucket.income += t.amount;
+    else bucket.spending += -t.amount;
+    byDay.set(day, bucket);
+  }
+  return [...byDay.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, { income, spending }]) => ({
+      date,
+      income: Math.round(income * 100) / 100,
+      spending: Math.round(spending * 100) / 100,
+      net: Math.round((income - spending) * 100) / 100,
+    }));
+}
+
+export type MerchantCategoryTotal = {
+  category: string;
+  total: number;
+};
+
+/**
+ * Spending grouped by merchant category (groceries, dining, ...) for
+ * already-filtered transactions, largest first. Uncategorized spending
+ * (merchantCategory null, or transactions predating this feature) falls
+ * under "other".
+ */
+export function computeSpendingByCategory(
+  transactions: { amount: number; category: string; merchantCategory: string | null }[],
+): MerchantCategoryTotal[] {
+  const totals = new Map<string, number>();
+  for (const t of transactions) {
+    if (t.category !== "spending") continue;
+    const key = t.merchantCategory ?? "other";
+    totals.set(key, (totals.get(key) ?? 0) + -t.amount);
+  }
+  return [...totals.entries()]
+    .map(([category, total]) => ({ category, total: Math.round(total * 100) / 100 }))
+    .sort((a, b) => b.total - a.total);
+}
+
+/** UTC start of "today minus N months" — for the rolling 6-month window. */
+export function monthsAgo(n: number): Date {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - n, now.getUTCDate()));
+}
+
+/** "personal_transfer" -> "Personal transfer" */
+export function formatCategoryLabel(category: string): string {
+  const spaced = category.replace(/_/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}

@@ -97,6 +97,7 @@ async function main() {
         date: new Date(txn.date),
         amount: encryptAmount(txn.amount),
         category: txn.category,
+        merchantCategory: txn.merchantCategory ?? null,
         dedupeHash: txn.dedupeHash,
       },
     });

@@ -2,8 +2,9 @@
 """
 Local-only statement extraction. Reads Amex CSVs and Chase PDFs from
 ~/Documents/bank statements/, classifies each transaction as
-income/spending/other/transfer, and prints a JSON array to stdout —
-{account, date, amount, category, dedupeHash} per line item.
+income/spending/other/transfer (plus a best-effort merchant category for
+spending), and prints a JSON array to stdout — {account, date, amount,
+category, merchantCategory, dedupeHash} per line item.
 
 Never prints or persists the merchant description itself. dedupeHash is a
 one-way SHA-256 fingerprint of date+description+amount, used downstream to
@@ -36,6 +37,42 @@ TRANSFER_PATTERNS = [
 AMEX_PAYMENT_PATTERN = re.compile(r"payment.*thank you|autopay", re.IGNORECASE)
 
 MONEY_TOKEN = re.compile(r"-?[\d,]+\.\d{2}")
+
+# Best-effort merchant-type classification, built from the real (locally
+# inspected, never stored) merchant tokens in this data. Only applied to
+# category="spending" transactions. First matching pattern wins; anything
+# unmatched falls into "other" rather than guessing wrong.
+MERCHANT_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("groceries", re.compile(r"whole\s*foods|wholefds|h-e-b|\bheb\b|trader\s*joe|kroger", re.IGNORECASE)),
+    ("dining", re.compile(
+        r"tst\*|starbucks|thundercloud|torchys|sonic drive|papalote|desnudo|"
+        r"flo'?s|slice|olive garden|doordash|\bdd\b|grubhub|ubereats",
+        re.IGNORECASE,
+    )),
+    ("transport", re.compile(r"lyft|uber(?!eats)|\bnyct\b|transit|parking", re.IGNORECASE)),
+    ("gas", re.compile(r"exxon|mobil|texaco|chevron|shell|buc-?ee'?s|conoco|valero", re.IGNORECASE)),
+    ("travel", re.compile(r"delta air|southwest|airbnb|courtyard|marriott|hilton|hotel|airlines|flight", re.IGNORECASE)),
+    ("subscriptions", re.compile(
+        r"hulu|netflix|spotify|crunchyroll|nvidia|epic games|asana|mlb\.?tv|"
+        r"squarespace|google \*|spectrum|comcast|xfinity|apple\.com/bill",
+        re.IGNORECASE,
+    )),
+    ("fitness", re.compile(r"la fitness|planet fitness|equinox|gym\b|yoga|crossfit", re.IGNORECASE)),
+    ("healthcare", re.compile(r"dentistry|dental|medical|pharmacy|\bcvs\b|walgreens|clinic|doctor", re.IGNORECASE)),
+    ("insurance", re.compile(r"progressive ins|asi lloyds|geico|allstate|state farm|insurance", re.IGNORECASE)),
+    ("utilities", re.compile(r"\batt\b|bell south|city of \w+.*payment|verizon|t-mobile|electric|water dept", re.IGNORECASE)),
+    ("loans", re.compile(r"bmwfs|bmw bank|auto loan|student loan|mortgage|loan pymt", re.IGNORECASE)),
+    ("shopping", re.compile(r"amazon|target\b|bookpeople|walmart|best buy|\bcostco\b", re.IGNORECASE)),
+    ("personal_transfer", re.compile(r"venmo|paypal(?! \*)|apple cash|zelle|cash app", re.IGNORECASE)),
+    ("personal_care", re.compile(r"cleaners|salon|barber|spa\b", re.IGNORECASE)),
+]
+
+
+def classify_merchant_category(description: str) -> str:
+    for category, pattern in MERCHANT_CATEGORY_PATTERNS:
+        if pattern.search(description):
+            return category
+    return "other"
 
 
 # Tracks how many times a given (date, description, amount) signature has
@@ -84,6 +121,9 @@ def parse_amex(path: str) -> list[dict]:
                     "date": iso_date,
                     "amount": stored_amount,
                     "category": category,
+                    "merchantCategory": classify_merchant_category(desc)
+                    if category == "spending"
+                    else None,
                     "dedupeHash": dedupe_hash(date_str, desc, amount),
                 }
             )
@@ -151,6 +191,9 @@ def _parse_candidate(
                 "date": iso_date,
                 "amount": amount,
                 "category": category,
+                "merchantCategory": classify_merchant_category(desc)
+                if category == "spending"
+                else None,
                 "dedupeHash": dedupe_hash(date_str, desc, amount),
             }
         )
