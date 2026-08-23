@@ -385,11 +385,19 @@ export function computeSpendingByMerchant(
     .sort((a, b) => b.total - a.total);
 }
 
+function daysBetween(a: string, b: string): number {
+  return Math.round((new Date(`${b}T00:00:00Z`).getTime() - new Date(`${a}T00:00:00Z`).getTime()) / 86_400_000);
+}
+
+export type SubscriptionStatus = "active" | "likely_cancelled" | "single_charge";
+
 export type RecurringSubscription = {
   merchant: string;
   monthlyAverage: number;
   chargeCount: number;
   lastCharged: string; // YYYY-MM-DD
+  monthsCharged: string[]; // "YYYY-MM", every distinct month this merchant billed
+  status: SubscriptionStatus;
 };
 
 /**
@@ -399,6 +407,22 @@ export type RecurringSubscription = {
  * total spend by the number of distinct months a charge appeared in — not
  * raw charge count — so a merchant billed twice in one month doesn't read
  * as costing double.
+ *
+ * Also flags a best-effort `status`, purely from the charge history —
+ * there's no "cancelled" flag anywhere in the source data, only whether a
+ * charge that should have happened by now (given the merchant's own past
+ * cadence) didn't:
+ *   - "single_charge": only ever billed once in the whole window — could be
+ *     a one-time trial, an annual charge that hasn't repeated yet, or a
+ *     subscription cancelled right after the first bill. Not enough history
+ *     to say more.
+ *   - "likely_cancelled": billed on a fairly regular cadence before, but
+ *     it's now been well over that typical gap (1.5x) since the last charge
+ *     with no new one — a bill that should have landed by now didn't.
+ *   - "active": still within its normal cadence. Note this can't detect a
+ *     cancellation that happened recently but hasn't yet missed its next
+ *     expected billing date — that will show "active" right up until the
+ *     gap actually passes, then flip.
  */
 export function computeRecurringSubscriptions(
   transactions: {
@@ -411,9 +435,11 @@ export function computeRecurringSubscriptions(
 ): RecurringSubscription[] {
   const byMerchant = new Map<
     string,
-    { total: number; months: Set<string>; count: number; lastCharged: string }
+    { total: number; months: Set<string>; count: number; lastCharged: string; chargeDates: string[] }
   >();
+  let asOf = "";
   for (const t of transactions) {
+    if (t.date > asOf) asOf = t.date;
     if (t.category !== "spending" || t.merchantCategory !== "subscriptions") continue;
     const merchant = t.description ? normalizeMerchantName(t.description) : "Unknown";
     const entry = byMerchant.get(merchant) ?? {
@@ -421,20 +447,38 @@ export function computeRecurringSubscriptions(
       months: new Set<string>(),
       count: 0,
       lastCharged: t.date,
+      chargeDates: [],
     };
     entry.total += -t.amount;
     entry.months.add(t.date.slice(0, 7));
     entry.count++;
+    entry.chargeDates.push(t.date);
     if (t.date > entry.lastCharged) entry.lastCharged = t.date;
     byMerchant.set(merchant, entry);
   }
+
   return [...byMerchant.entries()]
-    .map(([merchant, e]) => ({
-      merchant,
-      monthlyAverage: Math.round((e.total / Math.max(e.months.size, 1)) * 100) / 100,
-      chargeCount: e.count,
-      lastCharged: e.lastCharged,
-    }))
+    .map(([merchant, e]) => {
+      const dates = [...e.chargeDates].sort();
+      let status: SubscriptionStatus;
+      if (dates.length < 2) {
+        status = "single_charge";
+      } else {
+        const gaps = dates.slice(1).map((d, i) => daysBetween(dates[i], d));
+        gaps.sort((a, b) => a - b);
+        const cadence = gaps[Math.floor(gaps.length / 2)]; // median gap
+        const sinceLast = daysBetween(e.lastCharged, asOf);
+        status = cadence > 0 && sinceLast > cadence * 1.5 ? "likely_cancelled" : "active";
+      }
+      return {
+        merchant,
+        monthlyAverage: Math.round((e.total / Math.max(e.months.size, 1)) * 100) / 100,
+        chargeCount: e.count,
+        lastCharged: e.lastCharged,
+        monthsCharged: [...e.months].sort(),
+        status,
+      };
+    })
     // A refund can fully offset a charge and net to $0 (or negative) for
     // the month it happened — not a meaningful "this is what it costs"
     // signal, so it's excluded rather than shown as a $0/mo subscription.
@@ -501,8 +545,15 @@ export function trailingMonths(n: number): string[] {
   return months;
 }
 
-/** "personal_transfer" -> "Personal transfer" */
+// Display-only renames for specific category values — doesn't touch what's
+// actually stored (merchantCategory stays "charity" in the DB either way).
+const CATEGORY_LABEL_OVERRIDES: Record<string, string> = {
+  charity: "Church",
+};
+
+/** "personal_transfer" -> "Personal transfer"; a few values get a custom display name (see CATEGORY_LABEL_OVERRIDES). */
 export function formatCategoryLabel(category: string): string {
+  if (CATEGORY_LABEL_OVERRIDES[category]) return CATEGORY_LABEL_OVERRIDES[category];
   const spaced = category.replace(/_/g, " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }

@@ -72,9 +72,6 @@ export default async function FinancePage() {
       <h1 className="text-2xl font-semibold tracking-tight">Finances</h1>
 
       <div className="flex flex-col gap-3">
-        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
-          Cash flow trend
-        </h2>
         <DailyCashFlowChart data={dailySeries} />
         <p className="text-xs text-zinc-500 creamsicle:text-orange-600">
           Chase + Amex only, excludes investment accounts and transfers

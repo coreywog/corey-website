@@ -50,23 +50,41 @@ MONEY_TOKEN = re.compile(r"-?[\d,]+\.\d{2}")
 # descriptions are reviewed, not treated as final.
 MERCHANT_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("groceries", re.compile(r"whole\s*foods|wholefds|h-e-b|\bheb\b|trader\s*joe|kroger", re.IGNORECASE)),
+    # Coffee shops before the general dining pattern — starbucks/desnudo
+    # used to fall through to "dining" since that pattern also matched them
+    # and came first; keeping this ahead of it is what fixes that.
+    ("coffee_shop", re.compile(
+        r"starbucks|desnudo|la colombe|blank street|\bbsc\b|blue bottle|"
+        r"merit coffee|cafe creme|dunkin|petes coffee|ruta maya",
+        re.IGNORECASE,
+    )),
     ("dining", re.compile(
-        r"tst\*|starbucks|thundercloud|torchys|sonic drive|papalote|desnudo|"
+        r"tst\*|thundercloud|torchys|sonic drive|papalote|"
         r"flo'?s|slice|olive garden|doordash|\bdd\b|grubhub|ubereats",
         re.IGNORECASE,
     )),
     ("transport", re.compile(r"lyft|uber(?!eats)|\bnyct\b|transit|parking", re.IGNORECASE)),
     ("gas", re.compile(r"exxon|mobil|texaco|chevron|shell|buc-?ee'?s|conoco|valero", re.IGNORECASE)),
-    ("travel", re.compile(r"delta air|southwest|airbnb|courtyard|marriott|hilton|hotel|airlines|flight", re.IGNORECASE)),
+    ("airport", re.compile(r"airport|hudson st\d|\bairp\b", re.IGNORECASE)),
+    ("flights", re.compile(r"delta air|southwest|\bairlines\b|\bflight\b", re.IGNORECASE)),
+    ("airbnb", re.compile(r"airbnb", re.IGNORECASE)),
+    ("hotel", re.compile(r"courtyard|marriott|hilton|\bhotel\b|homewood suit|sheraton", re.IGNORECASE)),
     ("subscriptions", re.compile(
         r"hulu|netflix|spotify|crunchyroll|nvidia|epic games|asana|mlb\.?tv|"
         r"squarespace|google \*|spectrum|comcast|xfinity|apple\.com/bill",
         re.IGNORECASE,
     )),
-    ("fitness", re.compile(r"la fitness|planet fitness|equinox|gym\b|yoga|crossfit", re.IGNORECASE)),
-    ("healthcare", re.compile(r"dentistry|dental|medical|pharmacy|\bcvs\b|walgreens|clinic|doctor", re.IGNORECASE)),
-    ("insurance", re.compile(r"progressive ins|asi lloyds|geico|allstate|state farm|insurance", re.IGNORECASE)),
-    ("utilities", re.compile(r"\batt\b|bell south|city of \w+.*payment|verizon|t-mobile|electric|water dept", re.IGNORECASE)),
+    ("gym", re.compile(r"la fitness|planet fitness|equinox|\bgym\b|yoga|crossfit", re.IGNORECASE)),
+    ("dental", re.compile(r"dentistry|\bdental\b", re.IGNORECASE)),
+    ("vision", re.compile(r"zenni|eyecare|eye care|optical", re.IGNORECASE)),
+    ("pharmacy", re.compile(r"\bpharmacy\b|\bcvs\b|walgreens", re.IGNORECASE)),
+    ("doctor", re.compile(r"\bmedical\b|\bclinic\b|\bdoctor\b|urgent care", re.IGNORECASE)),
+    # Specific known insurers — insurance type can't be inferred from
+    # generic text, so this only catches carriers seen in real statements.
+    ("insurance_auto", re.compile(r"progressive ins|geico|allstate|state farm", re.IGNORECASE)),
+    ("insurance_renters", re.compile(r"asi lloyds", re.IGNORECASE)),
+    ("phone_internet", re.compile(r"\batt\b|bell south|verizon|t-mobile", re.IGNORECASE)),
+    ("electric_water", re.compile(r"city of \w+.*payment|electric|water dept", re.IGNORECASE)),
     ("loans", re.compile(r"bmwfs|bmw bank|auto loan|student loan|mortgage|loan pymt", re.IGNORECASE)),
     ("shopping", re.compile(r"amazon|target\b|bookpeople|walmart|best buy|\bcostco\b", re.IGNORECASE)),
     ("personal_transfer", re.compile(r"venmo|paypal(?! \*)|apple cash|zelle|cash app", re.IGNORECASE)),
@@ -78,26 +96,46 @@ MERCHANT_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
 # i.e. no umbrella grouping applied yet — left for the manual review pass.
 SUBCATEGORY_TO_CATEGORY: dict[str, str] = {
     "groceries": "food",
+    "coffee_shop": "food",
     "dining": "food",
     "transport": "transport",
     "gas": "transport",
-    "travel": "travel",
+    "airport": "travel",
+    "flights": "travel",
+    "airbnb": "travel",
+    "hotel": "travel",
     "subscriptions": "subscriptions",
-    "fitness": "health_fitness",
-    "healthcare": "health_fitness",
-    "insurance": "insurance",
-    "utilities": "utilities",
+    "gym": "fitness",
+    "climbing_gym": "fitness",
+    "supplements": "fitness",
+    "dental": "health",
+    "vision": "health",
+    "pharmacy": "health",
+    "doctor": "health",
+    "urgent_care": "health",
+    "auto": "insurance",
+    "renters": "insurance",
+    "phone_internet": "utilities",
+    "electric_water": "utilities",
     "loans": "debt",
     "shopping": "shopping",
     "personal_transfer": "personal_transfer",
     "personal_care": "personal_care",
 }
 
+# insurance_auto/insurance_renters exist only to disambiguate by carrier
+# name at classification time — the stored merchantSubcategory should just
+# read "auto"/"renters" (the category already says "insurance").
+SUBCATEGORY_RENAME: dict[str, str] = {
+    "insurance_auto": "auto",
+    "insurance_renters": "renters",
+}
+
 
 def classify_merchant_subcategory(description: str) -> str:
     for subcategory, pattern in MERCHANT_CATEGORY_PATTERNS:
         if pattern.search(description):
-            return subcategory
+            return SUBCATEGORY_RENAME.get(subcategory, subcategory)
     return "other"
 
 

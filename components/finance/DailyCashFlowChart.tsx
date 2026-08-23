@@ -5,6 +5,7 @@ import {
   CartesianGrid,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -78,7 +79,7 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
 
   if (data.length === 0) {
     return (
-      <div className="flex h-64 items-center justify-center text-sm text-zinc-500">
+      <div className="flex h-64 items-center justify-center rounded-xl border border-black/[.08] text-sm text-zinc-500 dark:border-white/[.1] creamsicle:border-orange-200">
         No activity in the last 6 months yet.
       </div>
     );
@@ -89,8 +90,11 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
   const visibleData = withCumulative.filter((d) => d.date >= cutoff);
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-end">
+    <div className="flex flex-col gap-3 rounded-xl border border-black/[.08] p-4 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
+          Cash flow trend
+        </h2>
         <div className="flex gap-1 rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
           {RANGES.map((r) => (
             <button
@@ -126,6 +130,7 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
               width={64}
               tickFormatter={(v) => currencyFormatter.format(v)}
             />
+            <ReferenceLine y={0} stroke="currentColor" strokeOpacity={0.25} strokeDasharray="4 4" />
             <Tooltip content={<CashFlowTooltip />} />
             <Line
               type="monotone"

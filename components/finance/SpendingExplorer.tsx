@@ -178,59 +178,64 @@ export function SpendingExplorer({ transactions }: { transactions: ExplorerTrans
             <SpendingPieChart data={categoryData} selectedKey={effectiveCategory} />
           </div>
         </div>
-      </div>
 
-      {effectiveCategory ? (
-        <div className="flex flex-col gap-4 rounded-xl border border-black/[.08] p-4 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
-          <div className="flex flex-wrap items-center gap-3">
-            {effectiveSubcategory && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSelectedSubcategory(null);
-                  setHighlightedMerchant(null);
-                }}
-                className="flex items-center gap-1.5 rounded-full border border-zinc-900 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-zinc-700 dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300 creamsicle:border-orange-600 creamsicle:bg-orange-600 creamsicle:hover:bg-orange-500"
-              >
-                ← Back to subcategories
-              </button>
-            )}
-            <h3 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
-              {effectiveSubcategory
-                ? `${formatCategoryLabel(effectiveSubcategory)} — specific merchants`
-                : `${formatCategoryLabel(effectiveCategory)} — subcategories`}
-            </h3>
+        {/* Subcategory tier lives inside the same box, just under a
+            divider — one range toggle up top controls every panel in
+            both rows, so they read as one connected unit, not two. */}
+        {effectiveCategory ? (
+          <div className="flex flex-col gap-4 border-t border-black/[.08] pt-4 dark:border-white/[.1] creamsicle:border-orange-200">
+            <div className="flex flex-wrap items-center gap-3">
+              {effectiveSubcategory && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedSubcategory(null);
+                    setHighlightedMerchant(null);
+                  }}
+                  className="flex items-center gap-1.5 rounded-full border border-zinc-900 bg-zinc-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-zinc-700 dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300 creamsicle:border-orange-600 creamsicle:bg-orange-600 creamsicle:hover:bg-orange-500"
+                >
+                  ← Back to subcategories
+                </button>
+              )}
+              <h3 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
+                {effectiveSubcategory
+                  ? `${formatCategoryLabel(effectiveSubcategory)} — specific merchants`
+                  : `${formatCategoryLabel(effectiveCategory)} — subcategories`}
+              </h3>
+            </div>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+              <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
+                <SpendingList
+                  items={drillData}
+                  selectedKey={effectiveSubcategory ? highlightedMerchant : effectiveSubcategory}
+                  onSelect={selectDrillRow}
+                />
+              </div>
+              <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
+                <SpendingBarChart
+                  data={drillData}
+                  mode="highlight"
+                  selectedKey={effectiveSubcategory ? highlightedMerchant : effectiveSubcategory}
+                />
+              </div>
+              <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
+                <p className="mb-2 text-xs text-zinc-500">Average spending by day of week</p>
+                <WeekdaySpendingChart data={weekdayData} />
+              </div>
+              <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
+                <SpendingPieChart
+                  data={drillData}
+                  selectedKey={effectiveSubcategory ? highlightedMerchant : effectiveSubcategory}
+                />
+              </div>
+            </div>
           </div>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
-            <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
-              <SpendingList
-                items={drillData}
-                selectedKey={effectiveSubcategory ? highlightedMerchant : effectiveSubcategory}
-                onSelect={selectDrillRow}
-              />
-            </div>
-            <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
-              <SpendingBarChart
-                data={drillData}
-                mode="highlight"
-                selectedKey={effectiveSubcategory ? highlightedMerchant : effectiveSubcategory}
-              />
-            </div>
-            <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
-              <p className="mb-2 text-xs text-zinc-500">Average spending by day of week</p>
-              <WeekdaySpendingChart data={weekdayData} />
-            </div>
-            <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
-              <SpendingPieChart
-                data={drillData}
-                selectedKey={effectiveSubcategory ? highlightedMerchant : effectiveSubcategory}
-              />
-            </div>
-          </div>
-        </div>
-      ) : (
-        <p className="text-sm text-zinc-500">Select a category above to break it down further.</p>
-      )}
+        ) : (
+          <p className="border-t border-black/[.08] pt-4 text-sm text-zinc-500 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:text-orange-700">
+            Select a category above to break it down further.
+          </p>
+        )}
+      </div>
 
       <div className="flex flex-col gap-3 rounded-xl border border-black/[.08] p-4 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
         <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">Recurring subscriptions</h2>
