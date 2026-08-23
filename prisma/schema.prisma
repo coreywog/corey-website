@@ -53,15 +53,23 @@ model Transaction {
   amount    String // AES-256-GCM ciphertext (base64) — see lib/crypto.ts, never plaintext
   category  String // "income" | "spending" | "other" | "transfer" (transfer = excluded from cash flow)
 
-  // Merchant-type grouping (groceries, dining, transport, ...) — only set
-  // for category="spending". Best-effort keyword classification done
-  // locally in scripts/extract_statements.py from the raw description,
-  // which itself is never stored — this label is all that survives.
-  merchantCategory String?
+  // Three-level spending taxonomy, only set for category="spending":
+  //   merchantCategory    — broad umbrella, e.g. "food", "transport"
+  //   merchantSubcategory — narrower type, e.g. "groceries", "dining"
+  //   description         — the actual merchant/store, e.g. "Trader Joe's"
+  // merchantCategory/merchantSubcategory start from a best-effort keyword
+  // classification in scripts/extract_statements.py and get refined by hand.
+  // description is AES-256-GCM ciphertext (base64, same scheme as amount) —
+  // as of 2026-08, the raw merchant text is retained (encrypted) so
+  // individual transactions can be reviewed and categorized; rows imported
+  // before this change have description = null since the old pipeline
+  // discarded it before it ever reached the database.
+  merchantCategory    String?
+  merchantSubcategory String?
+  description         String?
 
   // SHA-256 of the source statement's raw date+description+amount — lets the
-  // local import script skip re-importing a transaction it's already seen,
-  // without ever storing the merchant description itself.
+  // local import script skip re-importing a transaction it's already seen.
   dedupeHash String
 
   account FinanceAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)

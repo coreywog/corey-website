@@ -2,14 +2,17 @@
 """
 Local-only statement extraction. Reads Amex CSVs and Chase PDFs from
 ~/Documents/bank statements/, classifies each transaction as
-income/spending/other/transfer (plus a best-effort merchant category for
-spending), and prints a JSON array to stdout — {account, date, amount,
-category, merchantCategory, dedupeHash} per line item.
+income/spending/other/transfer (plus a best-effort merchantCategory /
+merchantSubcategory for spending), and prints a JSON array to stdout —
+{account, date, amount, category, merchantCategory, merchantSubcategory,
+description, dedupeHash} per line item.
 
-Never prints or persists the merchant description itself. dedupeHash is a
-one-way SHA-256 fingerprint of date+description+amount, used downstream to
-avoid importing the same transaction twice without ever storing the
-description text.
+As of 2026-08 the raw merchant description IS included in the output (the
+`description` field) so real transactions can be reviewed and categorized
+by hand downstream — import-transactions.mjs encrypts it before it touches
+the database, same as amount. dedupeHash is still a one-way SHA-256
+fingerprint of date+description+amount, used downstream to avoid importing
+the same transaction twice.
 
 This script does not touch the network or the database — it only reads
 local files and prints JSON to stdout for another (local) process to
@@ -38,10 +41,13 @@ AMEX_PAYMENT_PATTERN = re.compile(r"payment.*thank you|autopay", re.IGNORECASE)
 
 MONEY_TOKEN = re.compile(r"-?[\d,]+\.\d{2}")
 
-# Best-effort merchant-type classification, built from the real (locally
-# inspected, never stored) merchant tokens in this data. Only applied to
-# category="spending" transactions. First matching pattern wins; anything
-# unmatched falls into "other" rather than guessing wrong.
+# Best-effort merchant-type classification, built from the real merchant
+# tokens in this data. Only applied to category="spending" transactions.
+# First matching pattern wins; anything unmatched falls into "other" rather
+# than guessing wrong. Key = merchantSubcategory (fine-grained); each maps
+# to a broader merchantCategory umbrella via SUBCATEGORY_TO_CATEGORY below.
+# Both are starting points — meant to be corrected by hand once real
+# descriptions are reviewed, not treated as final.
 MERCHANT_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("groceries", re.compile(r"whole\s*foods|wholefds|h-e-b|\bheb\b|trader\s*joe|kroger", re.IGNORECASE)),
     ("dining", re.compile(
@@ -67,11 +73,31 @@ MERCHANT_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("personal_care", re.compile(r"cleaners|salon|barber|spa\b", re.IGNORECASE)),
 ]
 
+# merchantSubcategory -> merchantCategory umbrella. Anything not listed here
+# (including "other") falls back to merchantCategory = merchantSubcategory,
+# i.e. no umbrella grouping applied yet — left for the manual review pass.
+SUBCATEGORY_TO_CATEGORY: dict[str, str] = {
+    "groceries": "food",
+    "dining": "food",
+    "transport": "transport",
+    "gas": "transport",
+    "travel": "travel",
+    "subscriptions": "subscriptions",
+    "fitness": "health_fitness",
+    "healthcare": "health_fitness",
+    "insurance": "insurance",
+    "utilities": "utilities",
+    "loans": "debt",
+    "shopping": "shopping",
+    "personal_transfer": "personal_transfer",
+    "personal_care": "personal_care",
+}
 
-def classify_merchant_category(description: str) -> str:
-    for category, pattern in MERCHANT_CATEGORY_PATTERNS:
+
+def classify_merchant_subcategory(description: str) -> str:
+    for subcategory, pattern in MERCHANT_CATEGORY_PATTERNS:
         if pattern.search(description):
-            return category
+            return subcategory
     return "other"
 
 
@@ -115,15 +141,18 @@ def parse_amex(path: str) -> list[dict]:
                 # conventions everywhere downstream.
                 stored_amount = -amount
 
+            subcategory = classify_merchant_subcategory(desc) if category == "spending" else None
             out.append(
                 {
                     "account": "Amex",
                     "date": iso_date,
                     "amount": stored_amount,
                     "category": category,
-                    "merchantCategory": classify_merchant_category(desc)
-                    if category == "spending"
+                    "merchantSubcategory": subcategory,
+                    "merchantCategory": SUBCATEGORY_TO_CATEGORY.get(subcategory, subcategory)
+                    if subcategory
                     else None,
+                    "description": desc,
                     "dedupeHash": dedupe_hash(date_str, desc, amount),
                 }
             )
@@ -165,8 +194,9 @@ def _parse_candidate(
         if amount == 0:
             continue
 
-        # description = chunk with the date and all money tokens stripped,
-        # used only for classification — never included in script output.
+        # description = chunk with the date and all money tokens stripped.
+        # Used for classification and, as of 2026-08, included in the
+        # script's output (see module docstring).
         desc = chunk[len(date_str):]
         desc = MONEY_TOKEN.sub("", desc)
         desc = re.sub(r"\s+", " ", desc).strip()
@@ -185,15 +215,18 @@ def _parse_candidate(
             is_transfer = any(p.search(desc) for p in TRANSFER_PATTERNS)
             category = "transfer" if is_transfer else "spending"
 
+        subcategory = classify_merchant_subcategory(desc) if category == "spending" else None
         transactions.append(
             {
                 "account": "Chase Checking",
                 "date": iso_date,
                 "amount": amount,
                 "category": category,
-                "merchantCategory": classify_merchant_category(desc)
-                if category == "spending"
+                "merchantSubcategory": subcategory,
+                "merchantCategory": SUBCATEGORY_TO_CATEGORY.get(subcategory, subcategory)
+                if subcategory
                 else None,
+                "description": desc,
                 "dedupeHash": dedupe_hash(date_str, desc, amount),
             }
         )

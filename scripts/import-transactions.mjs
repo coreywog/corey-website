@@ -2,15 +2,20 @@
 /**
  * Local-only import step. Reads the JSON produced by
  * scripts/extract_statements.py on stdin — {account, date, amount,
- * category, dedupeHash} per transaction, no merchant description — encrypts
- * each amount, and upserts into Postgres via Prisma.
+ * category, merchantCategory, merchantSubcategory, description,
+ * dedupeHash} per transaction — encrypts each amount and description, and
+ * upserts into Postgres via Prisma.
  *
  * Run as:
  *   python3 scripts/extract_statements.py | node scripts/import-transactions.mjs
  *
  * Idempotent: re-running with the same input skips transactions already
  * imported (unique on accountId + dedupeHash), so it's safe to re-run after
- * adding new statement files without double-counting.
+ * adding new statement files without double-counting. The one exception is
+ * description/merchantCategory/merchantSubcategory: an existing row with
+ * description still null gets those three backfilled in place (see below),
+ * so re-running after this feature was added fills in older transactions
+ * too — but the amount/category/date are never touched on an existing row.
  */
 import { PrismaClient } from "@prisma/client";
 import { createCipheriv, randomBytes } from "crypto";
@@ -22,7 +27,9 @@ const ACCOUNT_DEFAULTS = {
   Amex: { type: "credit", kind: "liability" },
 };
 
-function encryptAmount(value) {
+// Same AES-256-GCM scheme as lib/crypto.ts, used for both the dollar amount
+// and (as of 2026-08) the raw merchant description.
+function encryptField(value) {
   const key = Buffer.from(process.env.ENCRYPTION_KEY ?? "", "base64");
   if (key.length !== 32) {
     throw new Error("ENCRYPTION_KEY must decode (base64) to exactly 32 bytes");
@@ -74,6 +81,7 @@ async function main() {
   }
 
   let created = 0;
+  let backfilled = 0;
   let skipped = 0;
   for (const txn of transactions) {
     const accountId = accountIds[txn.account];
@@ -85,19 +93,36 @@ async function main() {
       where: {
         accountId_dedupeHash: { accountId, dedupeHash: txn.dedupeHash },
       },
-      select: { id: true },
+      select: { id: true, description: true },
     });
     if (existing) {
-      skipped++;
+      // Rows imported before description/merchantSubcategory existed have
+      // description = null — backfill those in place rather than leaving
+      // them stale forever, without touching rows already reviewed by hand.
+      if (existing.description === null && txn.description) {
+        await prisma.transaction.update({
+          where: { id: existing.id },
+          data: {
+            merchantCategory: txn.merchantCategory ?? null,
+            merchantSubcategory: txn.merchantSubcategory ?? null,
+            description: encryptField(txn.description),
+          },
+        });
+        backfilled++;
+      } else {
+        skipped++;
+      }
       continue;
     }
     await prisma.transaction.create({
       data: {
         accountId,
         date: new Date(txn.date),
-        amount: encryptAmount(txn.amount),
+        amount: encryptField(txn.amount),
         category: txn.category,
         merchantCategory: txn.merchantCategory ?? null,
+        merchantSubcategory: txn.merchantSubcategory ?? null,
+        description: txn.description ? encryptField(txn.description) : null,
         dedupeHash: txn.dedupeHash,
       },
     });
@@ -105,7 +130,9 @@ async function main() {
   }
 
   console.log(`\nParsed ${transactions.length} transactions.`);
-  console.log(`Created: ${created}, already imported (skipped): ${skipped}`);
+  console.log(
+    `Created: ${created}, backfilled description on existing: ${backfilled}, unchanged (skipped): ${skipped}`,
+  );
 
   await prisma.$disconnect();
 }

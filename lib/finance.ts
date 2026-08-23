@@ -149,10 +149,11 @@ export type MerchantCategoryTotal = {
 };
 
 /**
- * Spending grouped by merchant category (groceries, dining, ...) for
- * already-filtered transactions, largest first. Uncategorized spending
- * (merchantCategory null, or transactions predating this feature) falls
- * under "other".
+ * Spending grouped by merchantCategory — the broad umbrella (food,
+ * transport, ...), not the finer merchantSubcategory (groceries, dining,
+ * ...) — for already-filtered transactions, largest first. Uncategorized
+ * spending (merchantCategory null, or transactions predating this feature)
+ * falls under "other".
  */
 export function computeSpendingByCategory(
   transactions: { amount: number; category: string; merchantCategory: string | null }[],
