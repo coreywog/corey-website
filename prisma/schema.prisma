@@ -34,3 +34,43 @@ model SetEntry {
   session  WorkoutSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   exercise Exercise       @relation(fields: [exerciseId], references: [id])
 }
+
+model FinanceAccount {
+  id       String  @id @default(cuid())
+  name     String  @unique
+  type     String // e.g. "checking", "savings", "investment", "credit", "loan"
+  kind     String // "asset" | "liability" — sign used when summing net worth
+  archived Boolean @default(false)
+
+  balances     BalanceEntry[]
+  transactions Transaction[]
+}
+
+model Transaction {
+  id        String   @id @default(cuid())
+  accountId String
+  date      DateTime
+  amount    String // AES-256-GCM ciphertext (base64) — see lib/crypto.ts, never plaintext
+  category  String // "income" | "spending" | "other" | "transfer" (transfer = excluded from cash flow)
+
+  // SHA-256 of the source statement's raw date+description+amount — lets the
+  // local import script skip re-importing a transaction it's already seen,
+  // without ever storing the merchant description itself.
+  dedupeHash String
+
+  account FinanceAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, dedupeHash])
+  @@index([accountId, date])
+}
+
+model BalanceEntry {
+  id        String   @id @default(cuid())
+  accountId String
+  date      DateTime
+  balance   String // AES-256-GCM ciphertext (base64) — see lib/crypto.ts, never plaintext
+
+  account FinanceAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, date])
+}

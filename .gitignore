@@ -34,9 +34,15 @@ yarn-error.log*
 .env*
 !.env.example
 
+# never commit financial statement exports — extract-only, not stored
+bank statements/
+*statement*.csv
+*activity*.csv
+
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+.claude/scheduled_tasks.lock
