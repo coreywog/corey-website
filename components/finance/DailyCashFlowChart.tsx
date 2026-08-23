@@ -89,6 +89,19 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
   const cutoff = monthsAgo(rangeMonths).toISOString().slice(0, 10);
   const visibleData = withCumulative.filter((d) => d.date >= cutoff);
 
+  // One vertical line at the first data point of each distinct month in
+  // view, alongside the horizontal zero line — makes it possible to tell
+  // months apart at a glance instead of squinting at the date labels.
+  const monthLines: string[] = [];
+  const seenMonths = new Set<string>();
+  for (const d of visibleData) {
+    const monthKey = d.date.slice(0, 7);
+    if (!seenMonths.has(monthKey)) {
+      seenMonths.add(monthKey);
+      monthLines.push(d.date);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-black/[.08] p-4 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
       <div className="flex items-center justify-between">
@@ -131,6 +144,9 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
               tickFormatter={(v) => currencyFormatter.format(v)}
             />
             <ReferenceLine y={0} stroke="currentColor" strokeOpacity={0.25} strokeDasharray="4 4" />
+            {monthLines.map((d) => (
+              <ReferenceLine key={d} x={d} stroke="currentColor" strokeOpacity={0.12} />
+            ))}
             <Tooltip content={<CashFlowTooltip />} />
             <Line
               type="monotone"

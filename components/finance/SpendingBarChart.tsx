@@ -40,16 +40,10 @@ export function SpendingBarChart({
     <div className="h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={visibleData} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-          <XAxis
-            dataKey="label"
-            tick={{ fontSize: 10 }}
-            tickLine={false}
-            axisLine={false}
-            interval={0}
-            angle={-35}
-            textAnchor="end"
-            height={56}
-          />
+          {/* Labels removed — with up to 18 categories they overlapped into
+              an unreadable diagonal jumble. Color + the paired list/tooltip
+              carry that job instead. */}
+          <XAxis dataKey="label" tick={false} tickLine={false} axisLine={false} height={4} />
           <YAxis
             tick={{ fontSize: 11 }}
             tickLine={false}
