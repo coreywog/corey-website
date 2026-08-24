@@ -80,6 +80,24 @@ model PlaidItem {
   accounts FinanceAccount[]
 }
 
+// A learned correction from the Review tab (app/(site)/finance/review):
+// "any transaction whose description contains `pattern` belongs to
+// merchantCategory/merchantSubcategory." Applied immediately to every
+// existing matching transaction, and checked ahead of the static
+// lib/merchantClassify.ts patterns on every future Plaid sync — so fixing
+// a merchant once fixes it everywhere, past and future. Pattern matching
+// is a plain case-insensitive substring test (see lib/merchantRules.ts),
+// not a regex — kept simple since it's user-authored, not developer-authored.
+model MerchantCategoryRule {
+  id                  String   @id @default(cuid())
+  pattern             String
+  merchantCategory    String
+  merchantSubcategory String
+  createdAt           DateTime @default(now())
+
+  @@unique([pattern])
+}
+
 model Transaction {
   id        String   @id @default(cuid())
   accountId String

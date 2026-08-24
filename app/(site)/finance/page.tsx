@@ -9,6 +9,7 @@ import {
   trailingMonths,
 } from "@/lib/finance";
 import { decryptAmount, decryptText } from "@/lib/crypto";
+import { FinanceTabs } from "@/components/finance/FinanceTabs";
 import { DailyCashFlowChart } from "@/components/finance/DailyCashFlowChart";
 import { MonthRecapCard } from "@/components/finance/MonthRecapCard";
 import { SpendingExplorer } from "@/components/finance/SpendingExplorer";
@@ -72,6 +73,8 @@ export default async function FinancePage() {
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-10 px-6 py-16">
+      <FinanceTabs current="/finance" />
+
       <div className="flex flex-col gap-3">
         <DailyCashFlowChart data={dailySeries} />
         <p className="text-xs text-zinc-500 creamsicle:text-orange-600">

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { plaid } from "@/lib/plaid";
 import { decryptText, encryptText } from "@/lib/crypto";
 import { classifyMerchant } from "@/lib/merchantClassify";
+import { loadRules, findRuleMatch } from "@/lib/merchantRules";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -36,6 +37,19 @@ function classifyCategory(
 
 export type SyncResult = { itemId: string; added: number; modified: number; removed: number };
 
+// User corrections from the Review tab (MerchantCategoryRule) take priority
+// over the static lib/merchantClassify.ts patterns — a rule exists because
+// the static classifier got it wrong (or didn't recognize the merchant at
+// all), so it should keep winning on every future sync too.
+function classifyMerchantWithRules(
+  description: string,
+  rules: Awaited<ReturnType<typeof loadRules>>,
+): { merchantCategory: string; merchantSubcategory: string } {
+  const ruleMatch = findRuleMatch(rules, description);
+  if (ruleMatch) return { merchantCategory: ruleMatch.merchantCategory, merchantSubcategory: ruleMatch.merchantSubcategory };
+  return classifyMerchant(description);
+}
+
 /**
  * Pulls new/changed/removed transactions since the last sync for one Item,
  * using Plaid's cursor-based /transactions/sync — incremental by design,
@@ -54,6 +68,7 @@ export async function syncOneItem(item: {
     select: { id: true, plaidAccountId: true },
   });
   const accountIdByPlaidId = new Map(accounts.map((a) => [a.plaidAccountId, a.id]));
+  const rules = await loadRules();
 
   let cursor = item.cursor ?? undefined;
   let hasMore = true;
@@ -81,7 +96,7 @@ export async function syncOneItem(item: {
       // Same merchant classifier the manual import uses (lib/merchantClassify.ts,
       // ported from scripts/extract_statements.py) — only meaningful for
       // actual spending, matching that script's own gating.
-      const merchant = category === "spending" && description ? classifyMerchant(description) : null;
+      const merchant = category === "spending" && description ? classifyMerchantWithRules(description, rules) : null;
 
       await prisma.transaction.upsert({
         where: { plaidTransactionId: t.transaction_id },
@@ -117,7 +132,7 @@ export async function syncOneItem(item: {
         t.personal_finance_category?.detailed,
       );
       const description = t.merchant_name ?? t.name ?? null;
-      const merchant = category === "spending" && description ? classifyMerchant(description) : null;
+      const merchant = category === "spending" && description ? classifyMerchantWithRules(description, rules) : null;
       const updated = await prisma.transaction
         .update({
           where: { plaidTransactionId: t.transaction_id },
