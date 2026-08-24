@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { plaid } from "@/lib/plaid";
 import { decryptText, encryptText } from "@/lib/crypto";
+import { classifyMerchant } from "@/lib/merchantClassify";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -77,6 +78,10 @@ export async function syncOneItem(item: {
         t.personal_finance_category?.detailed,
       );
       const description = t.merchant_name ?? t.name ?? null;
+      // Same merchant classifier the manual import uses (lib/merchantClassify.ts,
+      // ported from scripts/extract_statements.py) — only meaningful for
+      // actual spending, matching that script's own gating.
+      const merchant = category === "spending" && description ? classifyMerchant(description) : null;
 
       await prisma.transaction.upsert({
         where: { plaidTransactionId: t.transaction_id },
@@ -85,6 +90,8 @@ export async function syncOneItem(item: {
           amount: encryptText(String(amount)),
           category,
           description: description ? encryptText(description) : null,
+          merchantCategory: merchant?.merchantCategory ?? null,
+          merchantSubcategory: merchant?.merchantSubcategory ?? null,
         },
         create: {
           accountId,
@@ -92,6 +99,8 @@ export async function syncOneItem(item: {
           amount: encryptText(String(amount)),
           category,
           description: description ? encryptText(description) : null,
+          merchantCategory: merchant?.merchantCategory ?? null,
+          merchantSubcategory: merchant?.merchantSubcategory ?? null,
           dedupeHash: sha256(t.transaction_id),
           plaidTransactionId: t.transaction_id,
         },
@@ -108,6 +117,7 @@ export async function syncOneItem(item: {
         t.personal_finance_category?.detailed,
       );
       const description = t.merchant_name ?? t.name ?? null;
+      const merchant = category === "spending" && description ? classifyMerchant(description) : null;
       const updated = await prisma.transaction
         .update({
           where: { plaidTransactionId: t.transaction_id },
@@ -116,6 +126,8 @@ export async function syncOneItem(item: {
             amount: encryptText(String(amount)),
             category,
             description: description ? encryptText(description) : null,
+            merchantCategory: merchant?.merchantCategory ?? null,
+            merchantSubcategory: merchant?.merchantSubcategory ?? null,
           },
         })
         .catch(() => null); // wasn't imported yet (was pending last sync) — fine, next add will cover it
