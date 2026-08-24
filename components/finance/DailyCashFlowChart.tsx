@@ -23,6 +23,7 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
 
 type Point = DailyCashFlowPoint & { cumulativeNet: number };
 
+const NET_COLOR = "#6366f1";
 const SCHWAB_COLOR = "#a855f7";
 
 function CashFlowTooltip({
@@ -110,6 +111,35 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
     }
   }
 
+  // Schwab deposits color the net line itself at the days they happened,
+  // rather than drawing a whole second line — a gradient along the same
+  // stroke, indigo everywhere except a narrow violet band at each deposit's
+  // x-position (by index in visibleData, matching how the category axis
+  // itself spaces points — this is a sparse day-with-activity series, not
+  // every calendar day, so index-based offsets are what actually lines up).
+  const schwabIndices = showSchwab
+    ? visibleData.reduce<number[]>((acc, d, i) => {
+        if (d.schwabDeposit !== 0) acc.push(i);
+        return acc;
+      }, [])
+    : [];
+  const gradientStops =
+    schwabIndices.length > 0
+      ? (() => {
+          const lastIndex = Math.max(visibleData.length - 1, 1);
+          const band = 1.2; // percentage points of the gradient on each side of a spike
+          const stops: { offset: number; color: string }[] = [{ offset: 0, color: NET_COLOR }];
+          for (const i of schwabIndices) {
+            const center = (i / lastIndex) * 100;
+            stops.push({ offset: Math.max(0, center - band), color: NET_COLOR });
+            stops.push({ offset: center, color: SCHWAB_COLOR });
+            stops.push({ offset: Math.min(100, center + band), color: NET_COLOR });
+          }
+          stops.push({ offset: 100, color: NET_COLOR });
+          return stops.sort((a, b) => a.offset - b.offset);
+        })()
+      : null;
+
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-black/[.08] p-4 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -141,6 +171,15 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
       <div className="h-72 w-full">
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={visibleData} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+            {gradientStops && (
+              <defs>
+                <linearGradient id="netLineGradient" x1="0" y1="0" x2="1" y2="0">
+                  {gradientStops.map((s, i) => (
+                    <stop key={i} offset={`${s.offset}%`} stopColor={s.color} />
+                  ))}
+                </linearGradient>
+              </defs>
+            )}
             <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
             <XAxis
               dataKey="date"
@@ -165,34 +204,27 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
               type="monotone"
               dataKey="cumulativeNet"
               name="Net"
-              stroke="#6366f1"
+              stroke={gradientStops ? "url(#netLineGradient)" : NET_COLOR}
               strokeWidth={2}
-              dot={false}
+              dot={
+                showSchwab
+                  ? // eslint-disable-next-line @typescript-eslint/no-explicit-any -- recharts' own dot-renderer prop typing is inconsistent across versions; narrowed by hand below instead.
+                    (props: any) => {
+                      const { cx, cy, payload, key } = props as {
+                        cx?: number;
+                        cy?: number;
+                        payload?: Point;
+                        key?: Key;
+                      };
+                      if (!payload || payload.schwabDeposit === 0 || cx === undefined || cy === undefined) {
+                        return <g key={key} />;
+                      }
+                      return <circle key={key} cx={cx} cy={cy} r={4} fill={SCHWAB_COLOR} />;
+                    }
+                  : false
+              }
               isAnimationActive={false}
             />
-            {showSchwab && (
-              <Line
-                type="linear"
-                dataKey="schwabDeposit"
-                name="Schwab deposit"
-                stroke={SCHWAB_COLOR}
-                strokeWidth={2}
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- recharts' own dot-renderer prop typing is inconsistent across versions; narrowed by hand below instead.
-                dot={(props: any) => {
-                  const { cx, cy, payload, key } = props as {
-                    cx?: number;
-                    cy?: number;
-                    payload?: Point;
-                    key?: Key;
-                  };
-                  if (!payload || payload.schwabDeposit === 0 || cx === undefined || cy === undefined) {
-                    return <g key={key} />;
-                  }
-                  return <circle key={key} cx={cx} cy={cy} r={4} fill={SCHWAB_COLOR} />;
-                }}
-                isAnimationActive={false}
-              />
-            )}
           </LineChart>
         </ResponsiveContainer>
       </div>
