@@ -158,13 +158,9 @@ export function SpendingExplorer({ transactions }: { transactions: ExplorerTrans
           <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">Spending by category</h2>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
           <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
             <SpendingList items={categoryData} selectedKey={effectiveCategory} onSelect={selectCategory} />
-          </div>
-          <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
-            <p className="mb-2 text-xs text-zinc-500">Click a category to isolate it</p>
-            <SpendingBarChart data={categoryData} mode="isolate" selectedKey={effectiveCategory} />
           </div>
           <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
             <p className="mb-2 text-xs text-zinc-500">Click a category to highlight it</p>
