@@ -7,7 +7,9 @@ import {
   computeSpendingByWeekday,
   computeRecurringSubscriptions,
   formatCategoryLabel,
-  monthsAgo,
+  resolveDateRange,
+  listAvailableMonthsFromStrings,
+  type DateRangeSelection,
 } from "@/lib/finance";
 import { colorForCategory, colorForKey } from "./categoryColors";
 import { SpendingList } from "./SpendingList";
@@ -15,6 +17,7 @@ import { SpendingBarChart, type BarDatum } from "./SpendingBarChart";
 import { SpendingPieChart } from "./SpendingPieChart";
 import { WeekdaySpendingChart } from "./WeekdaySpendingChart";
 import { RecurringSubscriptions } from "./RecurringSubscriptions";
+import { RangeSelector } from "./RangeSelector";
 
 export type ExplorerTransaction = {
   date: string; // YYYY-MM-DD
@@ -25,12 +28,6 @@ export type ExplorerTransaction = {
   description: string | null; // decrypted
 };
 
-const RANGES = [
-  { key: "1m" as const, label: "1 month", months: 1 },
-  { key: "3m" as const, label: "3 months", months: 3 },
-  { key: "6m" as const, label: "6 months", months: 6 },
-];
-
 /**
  * Full category → subcategory → merchant drill-down. Row one is category
  * totals (list + isolate-bar + highlight-bar + pie); clicking a category
@@ -40,14 +37,16 @@ const RANGES = [
  * whatever's currently selected.
  */
 export function SpendingExplorer({ transactions }: { transactions: ExplorerTransaction[] }) {
-  const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("6m");
+  const [range, setRange] = useState<DateRangeSelection>({ mode: "relative", months: 6 });
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [selectedSubcategory, setSelectedSubcategory] = useState<string | null>(null);
   const [highlightedMerchant, setHighlightedMerchant] = useState<string | null>(null);
 
-  const rangeMonths = RANGES.find((r) => r.key === range)!.months;
-  const startStr = useMemo(() => monthsAgo(rangeMonths).toISOString().slice(0, 10), [rangeMonths]);
-  const endStr = useMemo(() => new Date(Date.now() + 86_400_000).toISOString().slice(0, 10), []);
+  const { start: startStr, end: endStr } = resolveDateRange(range);
+  const availableMonths = useMemo(
+    () => listAvailableMonthsFromStrings(transactions.map((t) => t.date)),
+    [transactions],
+  );
 
   const filtered = useMemo(
     () => transactions.filter((t) => t.date >= startStr && t.date < endStr),
@@ -133,24 +132,7 @@ export function SpendingExplorer({ transactions }: { transactions: ExplorerTrans
     }
   }
 
-  const rangeToggle = (
-    <div className="flex gap-1 rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
-      {RANGES.map((r) => (
-        <button
-          key={r.key}
-          type="button"
-          onClick={() => setRange(r.key)}
-          className={
-            range === r.key
-              ? "rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 creamsicle:bg-orange-600 creamsicle:text-white"
-              : "rounded-full px-3 py-1 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 creamsicle:hover:text-orange-800"
-          }
-        >
-          {r.label}
-        </button>
-      ))}
-    </div>
-  );
+  const rangeSelector = <RangeSelector value={range} onChange={setRange} availableMonths={availableMonths} />;
 
   return (
     <div className="flex flex-col gap-8">
@@ -158,7 +140,7 @@ export function SpendingExplorer({ transactions }: { transactions: ExplorerTrans
           range toggle on the left controls every panel inside it. */}
       <div className="flex flex-col gap-4 rounded-xl border border-black/[.08] p-4 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
         <div className="flex flex-wrap items-center gap-3">
-          {rangeToggle}
+          {rangeSelector}
           <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">Spending by category</h2>
         </div>
 

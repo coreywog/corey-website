@@ -1,4 +1,4 @@
-import type { RecurringSubscription } from "@/lib/finance";
+import type { RecurringSubscription, SubscriptionStatus } from "@/lib/finance";
 import { trailingMonths, formatMonthLabel } from "@/lib/finance";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
@@ -12,32 +12,26 @@ function formatLastCharged(date: string): string {
   return dateFormatter.format(new Date(`${date}T00:00:00Z`));
 }
 
-const STATUS_STYLES: Record<
-  RecurringSubscription["status"],
-  { label: string; className: string }
-> = {
-  active: {
-    label: "Active",
-    className:
-      "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400 creamsicle:bg-emerald-100 creamsicle:text-emerald-700",
-  },
-  likely_cancelled: {
-    label: "Likely cancelled",
-    className:
-      "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 creamsicle:bg-orange-100 creamsicle:text-orange-500",
-  },
-  single_charge: {
-    label: "Charged once",
-    className:
-      "bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400 creamsicle:bg-amber-100 creamsicle:text-amber-700",
-  },
+const GROUP_ORDER: SubscriptionStatus[] = ["active", "likely_cancelled", "single_charge"];
+
+const GROUP_LABELS: Record<SubscriptionStatus, string> = {
+  active: "Active",
+  likely_cancelled: "Likely cancelled",
+  single_charge: "Charged once",
+};
+
+const GROUP_HEADER_STYLES: Record<SubscriptionStatus, string> = {
+  active: "text-emerald-600 dark:text-emerald-400 creamsicle:text-emerald-700",
+  likely_cancelled: "text-zinc-400 dark:text-zinc-500 creamsicle:text-orange-400",
+  single_charge: "text-amber-600 dark:text-amber-400 creamsicle:text-amber-700",
 };
 
 /**
- * Every recurring subscription merchant, monthly cost, a best-effort
- * active/cancelled status, and a compact month-by-month presence row — one
- * line per subscription, so the whole list stays scannable even with 20+
- * entries. Hover a row for the exact last-charged date, hover a dot for
+ * Every recurring subscription merchant, monthly cost, and a compact
+ * month-by-month presence row — grouped by best-effort status (active,
+ * then likely cancelled, then charged-once), and within each group sorted
+ * by how many distinct months it's actually billed (most consistent
+ * first). Hover a row for the exact last-charged date, hover a dot for
  * which month it is. See lib/finance.ts computeRecurringSubscriptions for
  * exactly how status is derived — it's inferred purely from billing gaps,
  * there's no actual "cancelled" flag anywhere in the source data.
@@ -57,50 +51,62 @@ export function RecurringSubscriptions({ subscriptions }: { subscriptions: Recur
   const currentMonth = new Date().toISOString().slice(0, 7);
   const months = [...trailingMonths(6), currentMonth];
 
+  const groups: Record<SubscriptionStatus, RecurringSubscription[]> = {
+    active: [],
+    likely_cancelled: [],
+    single_charge: [],
+  };
+  for (const s of subscriptions) groups[s.status].push(s);
+
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-4">
       <p className="text-sm text-zinc-500">
         <span className="font-semibold text-zinc-900 dark:text-zinc-100">
           {currencyFormatter.format(monthlyTotal)}
         </span>{" "}
         / month across {subscriptions.length} subscription{subscriptions.length === 1 ? "" : "s"}
       </p>
-      <ul className="flex flex-col divide-y divide-black/[.06] dark:divide-white/[.08] creamsicle:divide-orange-100">
-        {subscriptions.map((s) => {
-          const status = STATUS_STYLES[s.status];
-          const chargedSet = new Set(s.monthsCharged);
-          return (
-            <li
-              key={s.merchant}
-              title={`Last charged ${formatLastCharged(s.lastCharged)}`}
-              className="flex items-center gap-3 py-1.5 text-sm"
-            >
-              <span className="min-w-0 flex-1 truncate font-medium">{s.merchant}</span>
-              <span className="flex shrink-0 items-center gap-0.5">
-                {months.map((m) => (
-                  <span
-                    key={m}
-                    title={formatMonthLabel(m)}
-                    className={
-                      chargedSet.has(m)
-                        ? "h-1.5 w-1.5 rounded-full bg-zinc-700 dark:bg-zinc-300 creamsicle:bg-orange-600"
-                        : "h-1.5 w-1.5 rounded-full bg-black/[.08] dark:bg-white/[.12] creamsicle:bg-orange-100"
-                    }
-                  />
-                ))}
-              </span>
-              <span
-                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap ${status.className}`}
-              >
-                {status.label}
-              </span>
-              <span className="w-20 shrink-0 text-right font-medium">
-                {currencyFormatter.format(s.monthlyAverage)}/mo
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+      {GROUP_ORDER.map((status) => {
+        const items = groups[status];
+        if (items.length === 0) return null;
+        return (
+          <div key={status} className="flex flex-col gap-1">
+            <h3 className={`text-xs font-semibold tracking-wide uppercase ${GROUP_HEADER_STYLES[status]}`}>
+              {GROUP_LABELS[status]} ({items.length})
+            </h3>
+            <ul className="flex flex-col divide-y divide-black/[.06] dark:divide-white/[.08] creamsicle:divide-orange-100">
+              {items.map((s) => {
+                const chargedSet = new Set(s.monthsCharged);
+                return (
+                  <li
+                    key={s.merchant}
+                    title={`Last charged ${formatLastCharged(s.lastCharged)}`}
+                    className="flex items-center gap-3 py-1.5 text-sm"
+                  >
+                    <span className="min-w-0 flex-1 truncate font-medium">{s.merchant}</span>
+                    <span className="flex shrink-0 items-center gap-0.5">
+                      {months.map((m) => (
+                        <span
+                          key={m}
+                          title={formatMonthLabel(m)}
+                          className={
+                            chargedSet.has(m)
+                              ? "h-1.5 w-1.5 rounded-full bg-zinc-700 dark:bg-zinc-300 creamsicle:bg-orange-600"
+                              : "h-1.5 w-1.5 rounded-full bg-black/[.08] dark:bg-white/[.12] creamsicle:bg-orange-100"
+                          }
+                        />
+                      ))}
+                    </span>
+                    <span className="w-20 shrink-0 text-right font-medium">
+                      {currencyFormatter.format(s.monthlyAverage)}/mo
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        );
+      })}
     </div>
   );
 }

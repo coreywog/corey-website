@@ -99,6 +99,34 @@ export function monthRange(month: string): { start: Date; end: Date } {
   };
 }
 
+/** Distinct YYYY-MM months present in a set of "YYYY-MM-DD" date strings, newest first. */
+export function listAvailableMonthsFromStrings(dates: string[]): string[] {
+  const months = new Set(dates.map((d) => d.slice(0, 7)));
+  return [...months].sort().reverse();
+}
+
+/**
+ * A chart's time-window choice — either a rolling window ("last N months",
+ * anchored to today) or one specific calendar month picked from a dropdown.
+ * Shared by DailyCashFlowChart and SpendingExplorer's RangeSelector so both
+ * behave identically.
+ */
+export type DateRangeSelection =
+  | { mode: "relative"; months: 1 | 3 | 6 }
+  | { mode: "specific"; month: string }; // "YYYY-MM"
+
+/** [start, end) as "YYYY-MM-DD" strings (end exclusive) for a DateRangeSelection. */
+export function resolveDateRange(selection: DateRangeSelection): { start: string; end: string } {
+  if (selection.mode === "specific") {
+    const { start, end } = monthRange(selection.month);
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+  return {
+    start: monthsAgo(selection.months).toISOString().slice(0, 10),
+    end: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
+  };
+}
+
 /** "2026-03" -> "March 2026" */
 export function formatMonthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);
@@ -391,6 +419,12 @@ function daysBetween(a: string, b: string): number {
 
 export type SubscriptionStatus = "active" | "likely_cancelled" | "single_charge";
 
+const SUBSCRIPTION_STATUS_ORDER: Record<SubscriptionStatus, number> = {
+  active: 0,
+  likely_cancelled: 1,
+  single_charge: 2,
+};
+
 export type RecurringSubscription = {
   merchant: string;
   monthlyAverage: number;
@@ -483,7 +517,17 @@ export function computeRecurringSubscriptions(
     // the month it happened — not a meaningful "this is what it costs"
     // signal, so it's excluded rather than shown as a $0/mo subscription.
     .filter((s) => s.monthlyAverage > 0)
-    .sort((a, b) => b.monthlyAverage - a.monthlyAverage);
+    // Grouped by status first (active, then likely cancelled, then
+    // single-charge) — within each group, the ones charged most
+    // consistently (most distinct months) sort to the top, cost as the
+    // final tiebreaker.
+    .sort((a, b) => {
+      const statusDiff = SUBSCRIPTION_STATUS_ORDER[a.status] - SUBSCRIPTION_STATUS_ORDER[b.status];
+      if (statusDiff !== 0) return statusDiff;
+      const monthsDiff = b.monthsCharged.length - a.monthsCharged.length;
+      if (monthsDiff !== 0) return monthsDiff;
+      return b.monthlyAverage - a.monthlyAverage;
+    });
 }
 
 export type WeekdaySpendingPoint = {

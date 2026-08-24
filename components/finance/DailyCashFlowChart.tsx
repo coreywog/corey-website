@@ -11,25 +11,15 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { DailyCashFlowPoint } from "@/lib/finance";
+import type { DailyCashFlowPoint, DateRangeSelection } from "@/lib/finance";
+import { resolveDateRange, listAvailableMonthsFromStrings } from "@/lib/finance";
+import { RangeSelector } from "./RangeSelector";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
   maximumFractionDigits: 0,
 });
-
-const RANGES = [
-  { key: "1m" as const, label: "1 month", months: 1 },
-  { key: "3m" as const, label: "3 months", months: 3 },
-  { key: "6m" as const, label: "6 months", months: 6 },
-];
-
-/** UTC start of "today minus N months" — mirrors lib/finance.ts monthsAgo, kept local to avoid a server/client import split for one date calc. */
-function monthsAgo(n: number): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - n, now.getUTCDate()));
-}
 
 type Point = DailyCashFlowPoint & { cumulativeNet: number };
 
@@ -64,11 +54,11 @@ function CashFlowTooltip({ active, payload }: { active?: boolean; payload?: { pa
  * just moved into the hover tooltip instead of their own lines/legend.
  */
 export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
-  const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("6m");
+  const [range, setRange] = useState<DateRangeSelection>({ mode: "relative", months: 6 });
 
   // Cumulative sum runs over the full fetched history (6 months back = $0
-  // baseline) before the range toggle windows it, so switching ranges zooms
-  // the same continuous line rather than resetting the baseline each time.
+  // baseline) before the range selection windows it, so switching ranges
+  // zooms the same continuous line rather than resetting the baseline.
   const withCumulative: Point[] = useMemo(() => {
     let running = 0;
     return data.map((d) => {
@@ -76,6 +66,8 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
       return { ...d, cumulativeNet: Math.round(running * 100) / 100 };
     });
   }, [data]);
+
+  const availableMonths = useMemo(() => listAvailableMonthsFromStrings(data.map((d) => d.date)), [data]);
 
   if (data.length === 0) {
     return (
@@ -85,9 +77,8 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
     );
   }
 
-  const rangeMonths = RANGES.find((r) => r.key === range)!.months;
-  const cutoff = monthsAgo(rangeMonths).toISOString().slice(0, 10);
-  const visibleData = withCumulative.filter((d) => d.date >= cutoff);
+  const { start, end } = resolveDateRange(range);
+  const visibleData = withCumulative.filter((d) => d.date >= start && d.date < end);
 
   // One vertical line at the first data point of each distinct month in
   // view, alongside the horizontal zero line — makes it possible to tell
@@ -104,26 +95,11 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-black/[.08] p-4 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center gap-3">
+        <RangeSelector value={range} onChange={setRange} availableMonths={availableMonths} />
         <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
           Cash flow trend
         </h2>
-        <div className="flex gap-1 rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
-          {RANGES.map((r) => (
-            <button
-              key={r.key}
-              type="button"
-              onClick={() => setRange(r.key)}
-              className={
-                range === r.key
-                  ? "rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white dark:bg-zinc-100 dark:text-zinc-900 creamsicle:bg-orange-600 creamsicle:text-white"
-                  : "rounded-full px-3 py-1 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 creamsicle:hover:text-orange-800"
-              }
-            >
-              {r.label}
-            </button>
-          ))}
-        </div>
       </div>
       <div className="h-72 w-full">
         <ResponsiveContainer width="100%" height="100%">
