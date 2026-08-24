@@ -142,32 +142,40 @@ export type DailyCashFlowPoint = {
   income: number;
   spending: number;
   net: number;
+  schwabDeposit: number;
 };
 
 /**
- * One point per day that has income or spending activity (Chase + Amex
- * only, transfers/other excluded) — sparse, not forward-filled, since each
- * day's flow is independent rather than a running total.
+ * One point per day that has income, spending, or a Schwab deposit —
+ * sparse, not forward-filled, since each day's flow is independent rather
+ * than a running total. Schwab deposits ("Schwab Brokerage Moneylink"
+ * transactions landing in Chase, category="other" so they never touch the
+ * income/spending/net figures) are tracked separately, purely so the trend
+ * chart can offer them as an optional overlay — not folded into income,
+ * since money moving between your own accounts isn't earned income.
  */
 export function computeDailyCashFlow(
-  transactions: { date: Date; amount: number; category: string }[],
+  transactions: { date: Date; amount: number; category: string; merchantCategory?: string | null }[],
 ): DailyCashFlowPoint[] {
-  const byDay = new Map<string, { income: number; spending: number }>();
+  const byDay = new Map<string, { income: number; spending: number; schwabDeposit: number }>();
   for (const t of transactions) {
-    if (t.category !== "income" && t.category !== "spending") continue;
+    const isSchwabDeposit = t.merchantCategory === "schwab";
+    if (t.category !== "income" && t.category !== "spending" && !isSchwabDeposit) continue;
     const day = t.date.toISOString().slice(0, 10);
-    const bucket = byDay.get(day) ?? { income: 0, spending: 0 };
+    const bucket = byDay.get(day) ?? { income: 0, spending: 0, schwabDeposit: 0 };
     if (t.category === "income") bucket.income += t.amount;
-    else bucket.spending += -t.amount;
+    else if (t.category === "spending") bucket.spending += -t.amount;
+    if (isSchwabDeposit) bucket.schwabDeposit += t.amount;
     byDay.set(day, bucket);
   }
   return [...byDay.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, { income, spending }]) => ({
+    .map(([date, { income, spending, schwabDeposit }]) => ({
       date,
       income: Math.round(income * 100) / 100,
       spending: Math.round(spending * 100) / 100,
       net: Math.round((income - spending) * 100) / 100,
+      schwabDeposit: Math.round(schwabDeposit * 100) / 100,
     }));
 }
 

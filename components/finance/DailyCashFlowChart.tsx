@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type Key } from "react";
 import {
   CartesianGrid,
   Line,
@@ -23,7 +23,17 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
 
 type Point = DailyCashFlowPoint & { cumulativeNet: number };
 
-function CashFlowTooltip({ active, payload }: { active?: boolean; payload?: { payload: Point }[] }) {
+const SCHWAB_COLOR = "#a855f7";
+
+function CashFlowTooltip({
+  active,
+  payload,
+  showSchwab,
+}: {
+  active?: boolean;
+  payload?: { payload: Point }[];
+  showSchwab: boolean;
+}) {
   if (!active || !payload || payload.length === 0) return null;
   const point = payload[0].payload;
   return (
@@ -37,6 +47,12 @@ function CashFlowTooltip({ active, payload }: { active?: boolean; payload?: { pa
         <span className="text-rose-600 dark:text-rose-400">Spending</span>
         <span className="font-medium">{currencyFormatter.format(point.spending)}</span>
       </div>
+      {showSchwab && (
+        <div className="flex items-center justify-between gap-6" style={{ color: SCHWAB_COLOR }}>
+          <span>Schwab deposit</span>
+          <span className="font-medium">{currencyFormatter.format(point.schwabDeposit)}</span>
+        </div>
+      )}
       <div className="mt-1.5 flex items-center justify-between gap-6 border-t border-black/[.08] pt-1.5 dark:border-white/[.1]">
         <span className="text-zinc-500">Running net</span>
         <span className="font-semibold">{currencyFormatter.format(point.cumulativeNet)}</span>
@@ -55,6 +71,7 @@ function CashFlowTooltip({ active, payload }: { active?: boolean; payload?: { pa
  */
 export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
   const [range, setRange] = useState<DateRangeSelection>({ mode: "relative", months: 6 });
+  const [showSchwab, setShowSchwab] = useState(false);
 
   // Cumulative sum runs over the full fetched history (6 months back = $0
   // baseline) before the range selection windows it, so switching ranges
@@ -95,11 +112,31 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
 
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-black/[.08] p-4 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
-      <div className="flex flex-wrap items-center gap-3">
-        <RangeSelector value={range} onChange={setRange} availableMonths={availableMonths} />
-        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
-          Cash flow trend
-        </h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <RangeSelector value={range} onChange={setRange} availableMonths={availableMonths} />
+          <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
+            Cash flow trend
+          </h2>
+        </div>
+        <button
+          type="button"
+          onClick={() => setShowSchwab((v) => !v)}
+          aria-pressed={showSchwab}
+          className={
+            "flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
+            (showSchwab
+              ? "border-current"
+              : "border-black/[.08] text-zinc-500 hover:text-zinc-700 dark:border-white/[.1] dark:hover:text-zinc-300 creamsicle:border-orange-200 creamsicle:hover:text-orange-800")
+          }
+          style={showSchwab ? { color: SCHWAB_COLOR } : undefined}
+        >
+          <span
+            className="h-2 w-2 rounded-full"
+            style={{ backgroundColor: showSchwab ? SCHWAB_COLOR : "currentColor", opacity: showSchwab ? 1 : 0.4 }}
+          />
+          Schwab deposits
+        </button>
       </div>
       <div className="h-72 w-full">
         <ResponsiveContainer width="100%" height="100%">
@@ -123,7 +160,7 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
             {monthLines.map((d) => (
               <ReferenceLine key={d} x={d} stroke="currentColor" strokeOpacity={0.12} />
             ))}
-            <Tooltip content={<CashFlowTooltip />} />
+            <Tooltip content={<CashFlowTooltip showSchwab={showSchwab} />} />
             <Line
               type="monotone"
               dataKey="cumulativeNet"
@@ -133,6 +170,29 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
               dot={false}
               isAnimationActive={false}
             />
+            {showSchwab && (
+              <Line
+                type="linear"
+                dataKey="schwabDeposit"
+                name="Schwab deposit"
+                stroke={SCHWAB_COLOR}
+                strokeWidth={2}
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- recharts' own dot-renderer prop typing is inconsistent across versions; narrowed by hand below instead.
+                dot={(props: any) => {
+                  const { cx, cy, payload, key } = props as {
+                    cx?: number;
+                    cy?: number;
+                    payload?: Point;
+                    key?: Key;
+                  };
+                  if (!payload || payload.schwabDeposit === 0 || cx === undefined || cy === undefined) {
+                    return <g key={key} />;
+                  }
+                  return <circle key={key} cx={cx} cy={cy} r={4} fill={SCHWAB_COLOR} />;
+                }}
+                isAnimationActive={false}
+              />
+            )}
           </LineChart>
         </ResponsiveContainer>
       </div>
