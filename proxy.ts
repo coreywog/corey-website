@@ -19,7 +19,15 @@ const LOGIN_PATH = "/quietharbor";
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  if (pathname === "/" || pathname === LOGIN_PATH || pathname.startsWith("/api/auth/")) {
+  if (
+    pathname === "/" ||
+    pathname === LOGIN_PATH ||
+    pathname.startsWith("/api/auth/") ||
+    // Plaid calls this directly — no admin session cookie to present. It's
+    // not left open, though: the route itself verifies Plaid's ES256 JWT
+    // signature (app/api/plaid/webhook/route.ts) before doing anything.
+    pathname === "/api/plaid/webhook"
+  ) {
     return NextResponse.next();
   }
 

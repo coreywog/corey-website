@@ -42,8 +42,34 @@ model FinanceAccount {
   kind     String // "asset" | "liability" — sign used when summing net worth
   archived Boolean @default(false)
 
+  // Set only for accounts synced live via Plaid, rather than imported by
+  // hand from statement exports. plaidAccountId is Plaid's own per-account
+  // id (routes synced transactions to the right FinanceAccount); several
+  // FinanceAccounts can share one PlaidItem (one bank login can expose
+  // multiple accounts, e.g. checking + savings).
+  plaidItemId    String?
+  plaidItem      PlaidItem? @relation(fields: [plaidItemId], references: [id])
+  plaidAccountId String?    @unique
+
   balances     BalanceEntry[]
   transactions Transaction[]
+}
+
+// One Plaid Link connection (one bank login) — can expose multiple
+// FinanceAccounts. accessToken is the credential that lets us pull data
+// for this connection indefinitely until the user revokes access, so it's
+// treated at least as sensitively as amount/description (see lib/crypto.ts).
+model PlaidItem {
+  id              String    @id @default(cuid())
+  itemId          String    @unique // Plaid's item_id
+  accessToken     String // AES-256-GCM ciphertext (base64), never plaintext
+  institutionName String?
+  // /transactions/sync cursor — null means "never synced yet, pull everything".
+  cursor       String?
+  lastSyncedAt DateTime?
+  createdAt    DateTime  @default(now())
+
+  accounts FinanceAccount[]
 }
 
 model Transaction {
@@ -70,7 +96,14 @@ model Transaction {
 
   // SHA-256 of the source statement's raw date+description+amount — lets the
   // local import script skip re-importing a transaction it's already seen.
+  // For Plaid-synced rows this is sha256(plaidTransactionId) instead, so
+  // both import paths share the same accountId+dedupeHash uniqueness rule.
   dedupeHash String
+
+  // Present only for rows that came from a live Plaid sync — Plaid's own
+  // stable transaction_id, used to find and update/delete this row again
+  // when a later sync reports it as modified or removed.
+  plaidTransactionId String? @unique
 
   account FinanceAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
