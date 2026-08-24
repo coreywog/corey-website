@@ -7,13 +7,27 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-// Plaid's own spend/transfer signal (personal_finance_category.primary) is
-// more reliable than guessing from amount sign alone — this is exactly the
-// kind of thing that went wrong with the old regex-only classifier (see the
+// Plaid's own spend/transfer signal (personal_finance_category) is more
+// reliable than guessing from amount sign alone — this is exactly the kind
+// of thing that went wrong with the old regex-only classifier (see the
 // Venmo Cashout mixup earlier). Money in that isn't confidently INCOME
 // lands in "other" for manual review rather than being assumed income.
-function classifyCategory(amount: number, primaryPfc: string | null | undefined): string {
+//
+// Credit card bill payments (paying your Amex from your checking account)
+// don't get TRANSFER_IN/OUT — Plaid tags them LOAN_PAYMENTS /
+// LOAN_PAYMENTS_CREDIT_CARD_PAYMENT instead, which otherwise falls through
+// to "other" despite being just as much a self-transfer as a savings
+// transfer. Other LOAN_PAYMENTS subtypes (mortgage, auto, student loan) are
+// real money leaving to a third party, not moved between your own tracked
+// accounts, so only this specific detailed category gets the transfer
+// treatment.
+function classifyCategory(
+  amount: number,
+  primaryPfc: string | null | undefined,
+  detailedPfc: string | null | undefined,
+): string {
   if (primaryPfc === "TRANSFER_IN" || primaryPfc === "TRANSFER_OUT") return "transfer";
+  if (detailedPfc === "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT") return "transfer";
   if (amount < 0) return "spending";
   if (primaryPfc === "INCOME") return "income";
   return "other";
@@ -57,7 +71,11 @@ export async function syncOneItem(item: {
       // Plaid: positive amount = money out. Our convention (see lib/finance.ts):
       // negative = outflow, positive = inflow — the opposite, so flip the sign.
       const amount = -t.amount;
-      const category = classifyCategory(amount, t.personal_finance_category?.primary);
+      const category = classifyCategory(
+        amount,
+        t.personal_finance_category?.primary,
+        t.personal_finance_category?.detailed,
+      );
       const description = t.merchant_name ?? t.name ?? null;
 
       await prisma.transaction.upsert({
@@ -84,7 +102,11 @@ export async function syncOneItem(item: {
     for (const t of response.data.modified) {
       if (t.pending) continue;
       const amount = -t.amount;
-      const category = classifyCategory(amount, t.personal_finance_category?.primary);
+      const category = classifyCategory(
+        amount,
+        t.personal_finance_category?.primary,
+        t.personal_finance_category?.detailed,
+      );
       const description = t.merchant_name ?? t.name ?? null;
       const updated = await prisma.transaction
         .update({
