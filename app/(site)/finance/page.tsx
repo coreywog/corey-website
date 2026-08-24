@@ -69,7 +69,7 @@ export default async function FinancePage() {
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-10 px-6 py-16">
-      <h1 className="text-2xl font-semibold tracking-tight">Finances</h1>
+      <SpendingExplorer transactions={explorerTxns} />
 
       <div className="flex flex-col gap-3">
         <DailyCashFlowChart data={dailySeries} />
@@ -95,8 +95,6 @@ export default async function FinancePage() {
           ))}
         </div>
       </div>
-
-      <SpendingExplorer transactions={explorerTxns} />
     </div>
   );
 }

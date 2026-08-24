@@ -96,6 +96,20 @@ export function SpendingExplorer({ transactions }: { transactions: ExplorerTrans
     }));
   }, [selectedEntry, effectiveCategory, effectiveSubcategory, filtered]);
 
+  // Category-tier weekday chart: scoped to the selected category only
+  // (never narrowed by subcategory) — stays put as you drill deeper below,
+  // since it's answering "which day of the week for this category", not
+  // whatever the subcategory tier happens to be showing.
+  const categoryWeekdayScope = useMemo(() => {
+    if (!effectiveCategory) return filtered;
+    return filtered.filter((t) => t.merchantCategory === effectiveCategory);
+  }, [filtered, effectiveCategory]);
+
+  const categoryWeekdayData = useMemo(
+    () => computeSpendingByWeekday(categoryWeekdayScope, startStr, endStr),
+    [categoryWeekdayScope, startStr, endStr],
+  );
+
   const weekdayScope = useMemo(() => {
     if (!effectiveCategory) return filtered;
     return filtered.filter((t) => {
@@ -144,7 +158,7 @@ export function SpendingExplorer({ transactions }: { transactions: ExplorerTrans
           <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">Spending by category</h2>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
           <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
             <SpendingList items={categoryData} selectedKey={effectiveCategory} onSelect={selectCategory} />
           </div>
@@ -155,6 +169,12 @@ export function SpendingExplorer({ transactions }: { transactions: ExplorerTrans
           <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
             <p className="mb-2 text-xs text-zinc-500">Click a category to highlight it</p>
             <SpendingBarChart data={categoryData} mode="highlight" selectedKey={effectiveCategory} />
+          </div>
+          <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
+            <p className="mb-2 text-xs text-zinc-500">
+              Average spending by day of week{effectiveCategory ? ` — ${formatCategoryLabel(effectiveCategory)}` : ""}
+            </p>
+            <WeekdaySpendingChart data={categoryWeekdayData} />
           </div>
           <div className="rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
             <SpendingPieChart data={categoryData} selectedKey={effectiveCategory} />
