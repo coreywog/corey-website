@@ -348,6 +348,10 @@ const MERCHANT_NAME_PATTERNS: [RegExp, string][] = [
   [/homewood\s*suit/i, "Homewood Suites"],
   [/sheraton/i, "Sheraton"],
 
+  [/fsp\*crux\s*clim/i, "Crux Climbing"],
+  [/la\s*fitness/i, "LA Fitness"], // matches both the regular and *ANNUALF charge — same membership
+  [/gorilla\s*mind/i, "Gorilla Mind"],
+
   // Subscriptions — PayPal/ACH billing text embeds a different reference
   // number or card ID per charge, which would otherwise fragment one
   // subscription into a separate row per billing cycle (e.g. Spotify
@@ -442,10 +446,20 @@ export type RecurringSubscription = {
   status: SubscriptionStatus;
 };
 
+// Categories that hold genuinely subscription/membership-style recurring
+// charges — fixed-ish price, billed on a cadence, the kind of thing you'd
+// actually consider cancelling. Deliberately not every category: rent,
+// utilities, insurance, and taxes also recur on a schedule, but they're
+// obligations rather than something to prune, so they're left out of this
+// view on purpose rather than by omission.
+const RECURRING_ELIGIBLE_CATEGORIES = new Set(["subscriptions", "fitness"]);
+
 /**
- * Recurring subscription merchants (category="spending",
- * merchantCategory="subscriptions"), normalized (see normalizeMerchantName)
- * and grouped, sorted by monthly cost descending. monthlyAverage divides
+ * Recurring subscription/membership merchants (category="spending",
+ * merchantCategory one of RECURRING_ELIGIBLE_CATEGORIES — e.g. streaming
+ * services as well as a gym membership, but not rent or utilities),
+ * normalized (see normalizeMerchantName) and grouped, sorted by monthly
+ * cost descending. monthlyAverage divides
  * total spend by the number of distinct months a charge appeared in — not
  * raw charge count — so a merchant billed twice in one month doesn't read
  * as costing double.
@@ -482,7 +496,9 @@ export function computeRecurringSubscriptions(
   let asOf = "";
   for (const t of transactions) {
     if (t.date > asOf) asOf = t.date;
-    if (t.category !== "spending" || t.merchantCategory !== "subscriptions") continue;
+    if (t.category !== "spending" || !t.merchantCategory || !RECURRING_ELIGIBLE_CATEGORIES.has(t.merchantCategory)) {
+      continue;
+    }
     const merchant = t.description ? normalizeMerchantName(t.description) : "Unknown";
     const entry = byMerchant.get(merchant) ?? {
       total: 0,
@@ -600,7 +616,7 @@ export function trailingMonths(n: number): string[] {
 // Display-only renames for specific category values — doesn't touch what's
 // actually stored (merchantCategory stays "charity" in the DB either way).
 const CATEGORY_LABEL_OVERRIDES: Record<string, string> = {
-  charity: "Church",
+  charity: "Donations",
 };
 
 /** "personal_transfer" -> "Personal transfer"; a few values get a custom display name (see CATEGORY_LABEL_OVERRIDES). */
