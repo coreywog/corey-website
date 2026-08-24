@@ -27,7 +27,10 @@ export default async function FinancePage() {
   const sixMonthsAgo = monthsAgo(6);
   const rawRecentTxns = await prisma.transaction.findMany({
     where: {
-      account: { type: { in: CASH_FLOW_ACCOUNT_TYPES } },
+      // excludeFromCashFlow: PayPal-style accounts that charge a linked
+      // card directly duplicate that card's own transactions (see
+      // prisma/schema.prisma) — left out here so spending isn't doubled.
+      account: { type: { in: CASH_FLOW_ACCOUNT_TYPES }, excludeFromCashFlow: false },
       date: { gte: sixMonthsAgo },
     },
     select: {

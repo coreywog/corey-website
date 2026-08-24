@@ -42,6 +42,14 @@ model FinanceAccount {
   kind     String // "asset" | "liability" — sign used when summing net worth
   archived Boolean @default(false)
 
+  // True for an account whose transactions are already fully represented
+  // elsewhere — e.g. PayPal, when checkout charges a linked card directly
+  // rather than a stored balance: Plaid then shows the same purchase twice
+  // (once on PayPal, once on the card, a day or two later, exact amount).
+  // Excluded from cash-flow sums so spending isn't double-counted, but the
+  // account and its transactions are kept for browsing.
+  excludeFromCashFlow Boolean @default(false)
+
   // Set only for accounts synced live via Plaid, rather than imported by
   // hand from statement exports. plaidAccountId is Plaid's own per-account
   // id (routes synced transactions to the right FinanceAccount); several
