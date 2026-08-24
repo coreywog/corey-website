@@ -23,13 +23,26 @@ function sha256(value: string): string {
 // real money leaving to a third party, not moved between your own tracked
 // accounts, so only this specific detailed category gets the transfer
 // treatment.
+//
+// That covers the receiving side (the payment landing on the Amex account),
+// but the paying side — the ACH debit on Chase checking/savings — gets no
+// TRANSFER_IN/OUT or LOAN_PAYMENTS tag at all from Plaid; it's indistinguishable
+// from real spending by PFC alone (confirmed: "AMERICAN EXPRESS ACH PMT ..."
+// on Chase Savings landed in the Review queue as plain spending). Fall back to
+// a description match — the exact same "american express" / "epayment"
+// patterns scripts/extract_statements.py has always used for the manually-
+// imported Chase PDF data, so both pipelines treat this consistently.
+const CARD_PAYMENT_DEBIT_PATTERN = /american express|amex.*epayment|\bepayment\b/i;
+
 function classifyCategory(
   amount: number,
   primaryPfc: string | null | undefined,
   detailedPfc: string | null | undefined,
+  description: string | null,
 ): string {
   if (primaryPfc === "TRANSFER_IN" || primaryPfc === "TRANSFER_OUT") return "transfer";
   if (detailedPfc === "LOAN_PAYMENTS_CREDIT_CARD_PAYMENT") return "transfer";
+  if (description && CARD_PAYMENT_DEBIT_PATTERN.test(description)) return "transfer";
   if (amount < 0) return "spending";
   if (primaryPfc === "INCOME") return "income";
   return "other";
@@ -87,12 +100,13 @@ export async function syncOneItem(item: {
       // Plaid: positive amount = money out. Our convention (see lib/finance.ts):
       // negative = outflow, positive = inflow — the opposite, so flip the sign.
       const amount = -t.amount;
+      const description = t.merchant_name ?? t.name ?? null;
       const category = classifyCategory(
         amount,
         t.personal_finance_category?.primary,
         t.personal_finance_category?.detailed,
+        description,
       );
-      const description = t.merchant_name ?? t.name ?? null;
       // Same merchant classifier the manual import uses (lib/merchantClassify.ts,
       // ported from scripts/extract_statements.py) — only meaningful for
       // actual spending, matching that script's own gating.
@@ -126,12 +140,13 @@ export async function syncOneItem(item: {
     for (const t of response.data.modified) {
       if (t.pending) continue;
       const amount = -t.amount;
+      const description = t.merchant_name ?? t.name ?? null;
       const category = classifyCategory(
         amount,
         t.personal_finance_category?.primary,
         t.personal_finance_category?.detailed,
+        description,
       );
-      const description = t.merchant_name ?? t.name ?? null;
       const merchant = category === "spending" && description ? classifyMerchantWithRules(description, rules) : null;
       const updated = await prisma.transaction
         .update({
