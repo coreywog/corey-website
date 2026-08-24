@@ -39,17 +39,6 @@ export async function POST() {
     return NextResponse.json({ linkToken: response.data.link_token });
   } catch (err) {
     console.error("Failed to create Plaid link token", err);
-    // Temporary: surface Plaid's own error_code/error_message (safe —
-    // operational detail, not a secret) instead of a flat generic string,
-    // since this only reaches the single authenticated admin user. Revert
-    // to a plain message once the production Link flow is confirmed working.
-    const plaidError = (err as { response?: { data?: { error_code?: string; error_message?: string } } })?.response
-      ?.data;
-    const detail = plaidError?.error_message
-      ? `${plaidError.error_code}: ${plaidError.error_message}`
-      : err instanceof Error
-        ? err.message
-        : "unknown error";
-    return NextResponse.json({ error: `Failed to create link token — ${detail}` }, { status: 500 });
+    return NextResponse.json({ error: "Failed to create link token" }, { status: 500 });
   }
 }
