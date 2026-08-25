@@ -28,7 +28,7 @@ export async function POST() {
       language: "en",
       // Required in Production/Development for OAuth institutions (Chase
       // included) — must exactly match a URI registered in the Plaid
-      // dashboard under Team Settings -> API -> Allowed redirect URIs.
+      // dashboard under Developers -> API -> Allowed redirect URIs.
       // Unset in Sandbox, where OAuth isn't exercised.
       redirect_uri: process.env.PLAID_REDIRECT_URI || undefined,
       // Where Plaid POSTs SYNC_UPDATES_AVAILABLE etc. (see

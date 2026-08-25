@@ -1,4 +1,4 @@
-# coreywogenstahl.com
+# athenics.com
 
 Corey Wogenstahl's personal site — resume, "who I am," and a gym progress
 dashboard with charts of lifts, volume, and PRs over time.
