@@ -17,6 +17,7 @@ type RawTxn = {
   description: string | null;
   rawName: string | null;
   location: string | null;
+  website: string | null;
   paymentChannel: string | null;
   plaidDetailedCategory: string | null;
   merchantCategory: string | null;
@@ -34,6 +35,7 @@ function decryptTxn(t: RawTxn): ReviewTxn {
     amount: decryptAmount(t.amount),
     rawName: t.rawName ? decryptText(t.rawName) : null,
     location: t.location ? decryptText(t.location) : null,
+    website: t.website ? decryptText(t.website) : null,
     paymentChannel: t.paymentChannel,
     plaidDetailedCategory: t.plaidDetailedCategory,
     merchantCategory: t.merchantCategory,

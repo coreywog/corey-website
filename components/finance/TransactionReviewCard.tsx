@@ -12,6 +12,7 @@ export type ReviewTxn = {
   amount: number;
   rawName: string | null;
   location: string | null;
+  website: string | null;
   paymentChannel: string | null;
   plaidDetailedCategory: string | null;
   merchantCategory: string | null;
@@ -41,24 +42,44 @@ function formatPaymentChannel(channel: string): string {
   return channel.charAt(0).toUpperCase() + channel.slice(1);
 }
 
+/** Everything below the description, condensed onto as few lines as possible. */
 function TransactionDetail({ txn }: { txn: ReviewTxn }) {
-  const hasDetail = txn.rawName || txn.location || txn.plaidDetailedCategory;
+  const secondLine = [
+    txn.location,
+    txn.paymentChannel ? formatPaymentChannel(txn.paymentChannel) : null,
+    txn.plaidDetailedCategory ? `Plaid: ${formatPlaidCategory(txn.plaidDetailedCategory)}` : null,
+  ].filter(Boolean);
+  const hasDetail = txn.rawName || secondLine.length > 0 || txn.website;
+
+  if (!hasDetail) {
+    return (
+      <div className="text-xs text-zinc-500">
+        No further detail available — imported from a bank statement, not live-synced.
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-0.5 text-xs text-zinc-500">
-      {txn.rawName && (
-        <div>
-          Raw from bank: <span className="font-mono">{txn.rawName}</span>
+      {txn.rawName && <div className="truncate font-mono">{txn.rawName}</div>}
+      {(secondLine.length > 0 || txn.website) && (
+        <div className="truncate">
+          {secondLine.join(" · ")}
+          {txn.website && (
+            <>
+              {secondLine.length > 0 && " · "}
+              <a
+                href={txn.website.startsWith("http") ? txn.website : `https://${txn.website}`}
+                target="_blank"
+                rel="noreferrer"
+                className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
+              >
+                {txn.website}
+              </a>
+            </>
+          )}
         </div>
       )}
-      {(txn.location || txn.paymentChannel) && (
-        <div>
-          {[txn.location, txn.paymentChannel ? formatPaymentChannel(txn.paymentChannel) : null]
-            .filter(Boolean)
-            .join(" · ")}
-        </div>
-      )}
-      {txn.plaidDetailedCategory && <div>Plaid suggests: {formatPlaidCategory(txn.plaidDetailedCategory)}</div>}
-      {!hasDetail && <div>No further detail available — imported from a bank statement, not live-synced.</div>}
     </div>
   );
 }
@@ -69,7 +90,9 @@ function TransactionDetail({ txn }: { txn: ReviewTxn }) {
  * fast, no-click-required scanning) or collapsed-by-default for an already
  * approved one (click to re-open the same form if a correction is needed
  * later). Category/subcategory selects are pre-filled with the current
- * best guess so approving a correct guess is just one click.
+ * best guess (which by this point already reflects Plaid's own suggestion
+ * when nothing else recognized the merchant — see lib/plaidSync.ts) so
+ * approving a correct guess is just one click.
  */
 export function TransactionReviewCard({
   txn,
@@ -143,17 +166,20 @@ export function TransactionReviewCard({
     }
   }
 
+  const selectClasses =
+    "rounded-md border border-black/[.1] bg-white px-2 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500";
+
   return (
-    <div className="rounded-lg border border-black/[.08] dark:border-white/[.1] creamsicle:border-orange-200">
+    <div className="rounded-lg border border-black/[.14] shadow-sm dark:border-white/[.16] creamsicle:border-orange-300">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
+        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
       >
         <div className="flex min-w-0 flex-1 items-baseline gap-3">
-          <span className="w-20 shrink-0 text-xs text-zinc-500">{txn.date}</span>
+          <span className="w-16 shrink-0 text-xs text-zinc-500">{txn.date.slice(5)}</span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{txn.description}</span>
-          <span className="shrink-0 text-xs text-zinc-400">{txn.account}</span>
+          <span className="hidden shrink-0 text-xs text-zinc-400 sm:inline">{txn.account}</span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {approved && <span className="text-emerald-600 dark:text-emerald-400 creamsicle:text-orange-600">✓</span>}
@@ -162,19 +188,19 @@ export function TransactionReviewCard({
       </button>
 
       {open && (
-        <div className="flex flex-col gap-3 border-t border-black/[.06] p-3 dark:border-white/[.08] creamsicle:border-orange-100">
+        <div className="flex flex-col gap-2 border-t border-black/[.08] px-3 py-2 dark:border-white/[.12] creamsicle:border-orange-200">
           <TransactionDetail txn={txn} />
 
-          <div className="flex flex-wrap items-end gap-2">
-            <label className="flex flex-1 min-w-[8rem] flex-col gap-1.5">
-              <span className="text-xs text-zinc-500">Category</span>
+          <div className="flex flex-wrap items-end gap-1.5">
+            <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
+              <span className="text-[11px] text-zinc-500">Category</span>
               <select
                 value={category}
                 onChange={(e) => {
                   setCategory(e.target.value);
                   setSubcategory("");
                 }}
-                className="rounded-md border border-black/[.1] bg-white px-2 py-2 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500"
+                className={selectClasses}
               >
                 <option value="" disabled>
                   Select…
@@ -188,24 +214,24 @@ export function TransactionReviewCard({
               </select>
             </label>
             {category === NEW_VALUE && (
-              <label className="flex flex-1 min-w-[8rem] flex-col gap-1.5">
-                <span className="text-xs text-zinc-500">New category name</span>
+              <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">New category name</span>
                 <input
                   type="text"
                   value={newCategory}
                   onChange={(e) => setNewCategory(e.target.value)}
-                  className="rounded-md border border-black/[.1] bg-white px-2 py-2 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500"
+                  className={selectClasses}
                 />
               </label>
             )}
 
             {category && (
-              <label className="flex flex-1 min-w-[8rem] flex-col gap-1.5">
-                <span className="text-xs text-zinc-500">Subcategory</span>
+              <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">Subcategory</span>
                 <select
                   value={subcategory}
                   onChange={(e) => setSubcategory(e.target.value)}
-                  className="rounded-md border border-black/[.1] bg-white px-2 py-2 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500"
+                  className={selectClasses}
                 >
                   <option value="" disabled>
                     Select…
@@ -220,13 +246,13 @@ export function TransactionReviewCard({
               </label>
             )}
             {subcategory === NEW_VALUE && (
-              <label className="flex flex-1 min-w-[8rem] flex-col gap-1.5">
-                <span className="text-xs text-zinc-500">New subcategory name</span>
+              <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">New subcategory name</span>
                 <input
                   type="text"
                   value={newSubcategory}
                   onChange={(e) => setNewSubcategory(e.target.value)}
-                  className="rounded-md border border-black/[.1] bg-white px-2 py-2 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500"
+                  className={selectClasses}
                 />
               </label>
             )}
@@ -236,13 +262,13 @@ export function TransactionReviewCard({
               onClick={handleApprove}
               disabled={!canApprove || saving}
               title="Approve"
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-emerald-600/30 bg-emerald-50 text-lg font-semibold text-emerald-600 transition-colors hover:bg-emerald-100 disabled:opacity-40 dark:border-emerald-400/30 dark:bg-emerald-950/40 dark:text-emerald-400 dark:hover:bg-emerald-950/70 creamsicle:border-orange-300 creamsicle:bg-orange-50 creamsicle:text-orange-600 creamsicle:hover:bg-orange-100"
+              className="flex h-[30px] w-9 shrink-0 items-center justify-center rounded-md bg-emerald-600 text-base font-bold text-white transition-colors hover:bg-emerald-700 disabled:opacity-40 dark:bg-emerald-600 dark:hover:bg-emerald-500 creamsicle:bg-orange-600 creamsicle:hover:bg-orange-700"
             >
               {saving ? "…" : "✓"}
             </button>
           </div>
 
-          <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <label className="flex items-center gap-2 text-[11px] text-zinc-500">
             <input
               type="checkbox"
               checked={saveAsRule}
@@ -257,7 +283,7 @@ export function TransactionReviewCard({
               value={pattern}
               onChange={(e) => setPattern(e.target.value)}
               placeholder="Text to match in future transaction descriptions"
-              className="rounded-md border border-black/[.1] bg-white px-2 py-2 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500"
+              className={selectClasses}
             />
           )}
 

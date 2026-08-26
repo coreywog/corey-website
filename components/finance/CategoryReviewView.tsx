@@ -47,7 +47,7 @@ export function CategoryReviewView({
         (remaining.length === 0 ? (
           <p className="text-sm text-zinc-500">Nothing left to review in this category 🎉</p>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1.5">
             {remaining.map((t) => (
               <TransactionReviewCard
                 key={t.id}
@@ -64,7 +64,7 @@ export function CategoryReviewView({
         (approvedList.length === 0 ? (
           <p className="text-sm text-zinc-500">Nothing approved in this category yet.</p>
         ) : (
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-1.5">
             {approvedList.map((t) => (
               <TransactionReviewCard
                 key={t.id}

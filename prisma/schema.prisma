@@ -126,13 +126,15 @@ model Transaction {
   // derived-from-your-spending as the merchant name itself.
   //   rawName  — Plaid's uncleaned `name`, often more specific than the
   //              cleaned `description` (order/location codes, etc.)
-  //   location — "City, Region" from Plaid's location object, when present
+  //   location — "Address, City, Region" from Plaid's location object
+  //   website  — the merchant's own site, when Plaid's enrichment found one
   // plaidDetailedCategory is Plaid's own classification (e.g.
   // "FOOD_AND_DRINK_COFFEE") and paymentChannel ("online"/"in store"/
   // "other") are left unencrypted — they're generic classification labels,
   // not free text about where you actually shop.
   rawName               String?
   location              String?
+  website               String?
   paymentChannel        String?
   plaidDetailedCategory String?
 

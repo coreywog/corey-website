@@ -4,6 +4,7 @@ import { plaid } from "@/lib/plaid";
 import { decryptText, encryptText } from "@/lib/crypto";
 import { classifyMerchant } from "@/lib/merchantClassify";
 import { loadRules, findRuleMatch } from "@/lib/merchantRules";
+import { mapPlaidCategoryToTaxonomy } from "@/lib/plaidCategoryMap";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -50,11 +51,13 @@ function classifyCategory(
 
 export type SyncResult = { itemId: string; added: number; modified: number; removed: number };
 
-// Plaid's location object has a lot of optional fields — city+region is the
-// useful, low-noise summary for "where was this," not a full street address.
-function formatLocation(location: { city?: string | null; region?: string | null } | null | undefined): string | null {
+// Plaid's location object has a lot of optional fields — street address
+// plus city/region is a useful, low-noise summary of "where was this."
+function formatLocation(
+  location: { address?: string | null; city?: string | null; region?: string | null } | null | undefined,
+): string | null {
   if (!location) return null;
-  const parts = [location.city, location.region].filter((p): p is string => Boolean(p));
+  const parts = [location.address, location.city, location.region].filter((p): p is string => Boolean(p));
   return parts.length > 0 ? parts.join(", ") : null;
 }
 
@@ -62,8 +65,9 @@ function formatLocation(location: { city?: string | null; region?: string | null
 function extractDetail(t: {
   name: string;
   merchant_name?: string | null;
-  location?: { city?: string | null; region?: string | null } | null;
+  location?: { address?: string | null; city?: string | null; region?: string | null } | null;
   payment_channel?: string | null;
+  website?: string | null;
   personal_finance_category?: { detailed?: string | null } | null;
 }) {
   const description = t.merchant_name ?? t.name ?? null;
@@ -75,6 +79,7 @@ function extractDetail(t: {
     description,
     rawName,
     location: formatLocation(t.location),
+    website: t.website ?? null,
     paymentChannel: t.payment_channel ?? null,
     plaidDetailedCategory: t.personal_finance_category?.detailed ?? null,
   };
@@ -83,13 +88,20 @@ function extractDetail(t: {
 // User corrections from the Review tab (MerchantCategoryRule) take priority
 // over the static lib/merchantClassify.ts patterns — a rule exists because
 // the static classifier got it wrong (or didn't recognize the merchant at
-// all), so it should keep winning on every future sync too.
+// all), so it should keep winning on every future sync too. If neither a
+// rule nor the static classifier recognizes the merchant, fall back to
+// Plaid's own categorization (lib/plaidCategoryMap.ts) rather than leaving
+// it at "other" — Plaid's enrichment is usually better than nothing, even
+// though (like the static classifier) it's still just a guess.
+//
 // A rule is human-authored (created from the Review tab), so a match means
 // this classification is already confirmed — `reviewed: true` from the
-// start. The static classifier is just a best-effort guess either way.
+// start. Both the static classifier and the Plaid fallback are guesses
+// either way (`reviewed: false`).
 function classifyMerchantWithRules(
   description: string,
   rules: Awaited<ReturnType<typeof loadRules>>,
+  plaidDetailedCategory: string | null,
 ): { merchantCategory: string; merchantSubcategory: string; reviewed: boolean } {
   const ruleMatch = findRuleMatch(rules, description);
   if (ruleMatch) {
@@ -99,7 +111,12 @@ function classifyMerchantWithRules(
       reviewed: true,
     };
   }
-  return { ...classifyMerchant(description), reviewed: false };
+  const staticGuess = classifyMerchant(description);
+  if (staticGuess.merchantSubcategory !== "other") {
+    return { ...staticGuess, reviewed: false };
+  }
+  const plaidGuess = mapPlaidCategoryToTaxonomy(plaidDetailedCategory);
+  return { ...(plaidGuess ?? staticGuess), reviewed: false };
 }
 
 /**
@@ -151,7 +168,7 @@ export async function syncOneItem(item: {
       // actual spending, matching that script's own gating.
       const merchant =
         category === "spending" && detail.description
-          ? classifyMerchantWithRules(detail.description, rules)
+          ? classifyMerchantWithRules(detail.description, rules, detail.plaidDetailedCategory)
           : null;
 
       // `reviewed` is deliberately absent from `update` below — this upsert
@@ -168,6 +185,7 @@ export async function syncOneItem(item: {
           description: detail.description ? encryptText(detail.description) : null,
           rawName: detail.rawName ? encryptText(detail.rawName) : null,
           location: detail.location ? encryptText(detail.location) : null,
+          website: detail.website ? encryptText(detail.website) : null,
           paymentChannel: detail.paymentChannel,
           plaidDetailedCategory: detail.plaidDetailedCategory,
           merchantCategory: merchant?.merchantCategory ?? null,
@@ -181,6 +199,7 @@ export async function syncOneItem(item: {
           description: detail.description ? encryptText(detail.description) : null,
           rawName: detail.rawName ? encryptText(detail.rawName) : null,
           location: detail.location ? encryptText(detail.location) : null,
+          website: detail.website ? encryptText(detail.website) : null,
           paymentChannel: detail.paymentChannel,
           plaidDetailedCategory: detail.plaidDetailedCategory,
           merchantCategory: merchant?.merchantCategory ?? null,
@@ -205,7 +224,7 @@ export async function syncOneItem(item: {
       );
       const merchant =
         category === "spending" && detail.description
-          ? classifyMerchantWithRules(detail.description, rules)
+          ? classifyMerchantWithRules(detail.description, rules, detail.plaidDetailedCategory)
           : null;
       // Same reasoning as the upsert above: never touch `reviewed` on an
       // update to an existing row.
@@ -219,6 +238,7 @@ export async function syncOneItem(item: {
             description: detail.description ? encryptText(detail.description) : null,
             rawName: detail.rawName ? encryptText(detail.rawName) : null,
             location: detail.location ? encryptText(detail.location) : null,
+            website: detail.website ? encryptText(detail.website) : null,
             paymentChannel: detail.paymentChannel,
             plaidDetailedCategory: detail.plaidDetailedCategory,
             merchantCategory: merchant?.merchantCategory ?? null,
