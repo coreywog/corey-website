@@ -16,6 +16,14 @@ function matches(t: ReviewTxn, q: string): boolean {
   );
 }
 
+function ruleSweepMatches(t: ReviewTxn, sweep: { pattern: string; exactAmount: number | null }): boolean {
+  if (!t.description.toLowerCase().includes(sweep.pattern)) return false;
+  if (sweep.exactAmount !== null && Math.round(Math.abs(t.amount) * 100) !== Math.round(sweep.exactAmount * 100)) {
+    return false;
+  }
+  return true;
+}
+
 export function GlobalReviewList({
   transactions,
   categoryOptions,
@@ -26,10 +34,8 @@ export function GlobalReviewList({
   const [remaining, setRemaining] = useState(transactions);
   const [search, setSearch] = useState("");
 
-  function handleApproved(id: string, rulePattern?: string) {
-    setRemaining((prev) =>
-      prev.filter((t) => !(t.id === id || (rulePattern && t.description.toLowerCase().includes(rulePattern)))),
-    );
+  function handleApproved(id: string, sweep?: { pattern: string; exactAmount: number | null }) {
+    setRemaining((prev) => prev.filter((t) => !(t.id === id || (sweep && ruleSweepMatches(t, sweep)))));
   }
 
   const filtered = useMemo(() => {

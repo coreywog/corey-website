@@ -102,11 +102,12 @@ function extractDetail(t: {
 // all still just guesses (`reviewed: false`).
 async function classifyMerchantWithRules(
   description: string,
+  amount: number,
   rules: Awaited<ReturnType<typeof loadRules>>,
   plaidDetailedCategory: string | null,
   knownPairs: { category: string; subcategory: string }[],
 ): Promise<{ merchantCategory: string; merchantSubcategory: string; reviewed: boolean }> {
-  const ruleMatch = findRuleMatch(rules, description);
+  const ruleMatch = findRuleMatch(rules, description, amount);
   if (ruleMatch) {
     return {
       merchantCategory: ruleMatch.merchantCategory,
@@ -189,7 +190,7 @@ export async function syncOneItem(item: {
       // actual spending, matching that script's own gating.
       const merchant =
         category === "spending" && detail.description
-          ? await classifyMerchantWithRules(detail.description, rules, detail.plaidDetailedCategory, knownPairs)
+          ? await classifyMerchantWithRules(detail.description, amount, rules, detail.plaidDetailedCategory, knownPairs)
           : null;
 
       // `reviewed` is deliberately absent from `update` below — this upsert
@@ -245,7 +246,7 @@ export async function syncOneItem(item: {
       );
       const merchant =
         category === "spending" && detail.description
-          ? await classifyMerchantWithRules(detail.description, rules, detail.plaidDetailedCategory, knownPairs)
+          ? await classifyMerchantWithRules(detail.description, amount, rules, detail.plaidDetailedCategory, knownPairs)
           : null;
       // Same reasoning as the upsert above: never touch `reviewed` on an
       // update to an existing row.

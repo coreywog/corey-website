@@ -8,10 +8,14 @@ const bodySchema = z.object({
   merchantCategory: z.string().trim().min(1).max(60),
   merchantSubcategory: z.string().trim().min(1).max(60),
   // Optional: also teach a lasting rule from this approval (Review tab's
-  // "always match transactions like this" toggle), applied to every past
-  // and future matching transaction — see lib/merchantRules.ts.
+  // "always match by name" / "always match this exact transaction"
+  // toggles), applied to every past and future matching transaction — see
+  // lib/merchantRules.ts. exactAmount narrows the rule to only transactions
+  // with this same dollar amount too (e.g. a recurring loan payment vs. an
+  // occasional charge from the same merchant for a different amount).
   saveAsRule: z.boolean().optional(),
   pattern: z.string().trim().min(1).max(200).optional(),
+  exactAmount: z.number().optional(),
 });
 
 /**
@@ -34,7 +38,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request", details: parsed.error.flatten() }, { status: 400 });
   }
-  const { merchantCategory, merchantSubcategory, saveAsRule, pattern } = parsed.data;
+  const { merchantCategory, merchantSubcategory, saveAsRule, pattern, exactAmount } = parsed.data;
 
   if (saveAsRule && !pattern) {
     return NextResponse.json({ error: "pattern is required when saveAsRule is true" }, { status: 400 });
@@ -44,8 +48,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     let appliedCount = 1;
     if (saveAsRule && pattern) {
       // Applies to every matching transaction (including this one, if its
-      // description contains `pattern`) and marks them all reviewed.
-      appliedCount = await saveRuleAndApply(pattern, merchantCategory, merchantSubcategory);
+      // description contains `pattern`, and — if exactAmount is set — only
+      // ones with this exact dollar amount too) and marks them all reviewed.
+      appliedCount = await saveRuleAndApply(pattern, merchantCategory, merchantSubcategory, exactAmount ?? null);
     }
 
     // Belt and suspenders: ensure this specific transaction is updated even

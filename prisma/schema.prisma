@@ -88,14 +88,21 @@ model PlaidItem {
 // a merchant once fixes it everywhere, past and future. Pattern matching
 // is a plain case-insensitive substring test (see lib/merchantRules.ts),
 // not a regex — kept simple since it's user-authored, not developer-authored.
+//
+// exactAmount narrows a rule from "every transaction with this name" to
+// "every transaction with this name AND this exact dollar amount" — for
+// telling apart e.g. a recurring BMW loan payment (same name, same amount
+// every month) from an occasional BMW service charge that happens to share
+// the same merchant name but not the amount. Null means match on name alone.
 model MerchantCategoryRule {
   id                  String   @id @default(cuid())
   pattern             String
+  exactAmount         Float?
   merchantCategory    String
   merchantSubcategory String
   createdAt           DateTime @default(now())
 
-  @@unique([pattern])
+  @@unique([pattern, exactAmount])
 }
 
 // A cached AI guess for one merchant name (see lib/merchantAiClassify.ts) —
