@@ -98,6 +98,22 @@ model MerchantCategoryRule {
   @@unique([pattern])
 }
 
+// A cached AI guess for one merchant name (see lib/merchantAiClassify.ts) —
+// only ever queried, and written to, when the static classifier and Plaid's
+// own category both come up empty for a transaction. merchantName is the
+// exact-match cache key (lowercased bare merchant name — never the full
+// transaction description, amount, date, or account), so the same merchant
+// is only ever sent to the AI once, no matter how many transactions share
+// it. Just as unconfirmed as any other guess — a match here does not set
+// Transaction.reviewed.
+model MerchantAiGuess {
+  id                  String   @id @default(cuid())
+  merchantName        String   @unique
+  merchantCategory    String
+  merchantSubcategory String
+  createdAt           DateTime @default(now())
+}
+
 model Transaction {
   id        String   @id @default(cuid())
   accountId String

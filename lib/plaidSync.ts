@@ -5,6 +5,7 @@ import { decryptText, encryptText } from "@/lib/crypto";
 import { classifyMerchant } from "@/lib/merchantClassify";
 import { loadRules, findRuleMatch } from "@/lib/merchantRules";
 import { mapPlaidCategoryToTaxonomy } from "@/lib/plaidCategoryMap";
+import { classifyMerchantWithAi } from "@/lib/merchantAiClassify";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -90,19 +91,21 @@ function extractDetail(t: {
 // the static classifier got it wrong (or didn't recognize the merchant at
 // all), so it should keep winning on every future sync too. If neither a
 // rule nor the static classifier recognizes the merchant, fall back to
-// Plaid's own categorization (lib/plaidCategoryMap.ts) rather than leaving
-// it at "other" — Plaid's enrichment is usually better than nothing, even
-// though (like the static classifier) it's still just a guess.
+// Plaid's own categorization (lib/plaidCategoryMap.ts); if even that comes
+// up empty, ask an AI model (lib/merchantAiClassify.ts, opt-in — only the
+// bare merchant name is ever sent, cached so each merchant is looked up at
+// most once) rather than leaving it at "other".
 //
 // A rule is human-authored (created from the Review tab), so a match means
 // this classification is already confirmed — `reviewed: true` from the
-// start. Both the static classifier and the Plaid fallback are guesses
-// either way (`reviewed: false`).
-function classifyMerchantWithRules(
+// start. The static classifier, the Plaid fallback, and the AI fallback are
+// all still just guesses (`reviewed: false`).
+async function classifyMerchantWithRules(
   description: string,
   rules: Awaited<ReturnType<typeof loadRules>>,
   plaidDetailedCategory: string | null,
-): { merchantCategory: string; merchantSubcategory: string; reviewed: boolean } {
+  knownPairs: { category: string; subcategory: string }[],
+): Promise<{ merchantCategory: string; merchantSubcategory: string; reviewed: boolean }> {
   const ruleMatch = findRuleMatch(rules, description);
   if (ruleMatch) {
     return {
@@ -116,7 +119,14 @@ function classifyMerchantWithRules(
     return { ...staticGuess, reviewed: false };
   }
   const plaidGuess = mapPlaidCategoryToTaxonomy(plaidDetailedCategory);
-  return { ...(plaidGuess ?? staticGuess), reviewed: false };
+  if (plaidGuess) {
+    return { ...plaidGuess, reviewed: false };
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
+    const aiGuess = await classifyMerchantWithAi(description, knownPairs);
+    if (aiGuess) return { ...aiGuess, reviewed: false };
+  }
+  return { ...staticGuess, reviewed: false };
 }
 
 /**
@@ -138,6 +148,17 @@ export async function syncOneItem(item: {
   });
   const accountIdByPlaidId = new Map(accounts.map((a) => [a.plaidAccountId, a.id]));
   const rules = await loadRules();
+  // For the AI fallback's "prefer an existing category" guidance — cheap to
+  // fetch once per sync run rather than per transaction.
+  const knownCategoryRows = await prisma.transaction.findMany({
+    where: { category: "spending", merchantCategory: { not: null, notIn: ["other"] }, merchantSubcategory: { not: null } },
+    select: { merchantCategory: true, merchantSubcategory: true },
+    distinct: ["merchantCategory", "merchantSubcategory"],
+  });
+  const knownPairs = knownCategoryRows.map((r) => ({
+    category: r.merchantCategory as string,
+    subcategory: r.merchantSubcategory as string,
+  }));
 
   let cursor = item.cursor ?? undefined;
   let hasMore = true;
@@ -168,7 +189,7 @@ export async function syncOneItem(item: {
       // actual spending, matching that script's own gating.
       const merchant =
         category === "spending" && detail.description
-          ? classifyMerchantWithRules(detail.description, rules, detail.plaidDetailedCategory)
+          ? await classifyMerchantWithRules(detail.description, rules, detail.plaidDetailedCategory, knownPairs)
           : null;
 
       // `reviewed` is deliberately absent from `update` below — this upsert
@@ -224,7 +245,7 @@ export async function syncOneItem(item: {
       );
       const merchant =
         category === "spending" && detail.description
-          ? classifyMerchantWithRules(detail.description, rules, detail.plaidDetailedCategory)
+          ? await classifyMerchantWithRules(detail.description, rules, detail.plaidDetailedCategory, knownPairs)
           : null;
       // Same reasoning as the upsert above: never touch `reviewed` on an
       // update to an existing row.
