@@ -50,6 +50,36 @@ function classifyCategory(
 
 export type SyncResult = { itemId: string; added: number; modified: number; removed: number };
 
+// Plaid's location object has a lot of optional fields — city+region is the
+// useful, low-noise summary for "where was this," not a full street address.
+function formatLocation(location: { city?: string | null; region?: string | null } | null | undefined): string | null {
+  if (!location) return null;
+  const parts = [location.city, location.region].filter((p): p is string => Boolean(p));
+  return parts.length > 0 ? parts.join(", ") : null;
+}
+
+/** Pulls the richer, Plaid-only detail fields out of one sync'd transaction. */
+function extractDetail(t: {
+  name: string;
+  merchant_name?: string | null;
+  location?: { city?: string | null; region?: string | null } | null;
+  payment_channel?: string | null;
+  personal_finance_category?: { detailed?: string | null } | null;
+}) {
+  const description = t.merchant_name ?? t.name ?? null;
+  // Only keep rawName separately when it actually adds information beyond
+  // the cleaned description — no point storing (and later encrypting) a
+  // duplicate of the same string.
+  const rawName = t.name && t.name !== description ? t.name : null;
+  return {
+    description,
+    rawName,
+    location: formatLocation(t.location),
+    paymentChannel: t.payment_channel ?? null,
+    plaidDetailedCategory: t.personal_finance_category?.detailed ?? null,
+  };
+}
+
 // User corrections from the Review tab (MerchantCategoryRule) take priority
 // over the static lib/merchantClassify.ts patterns — a rule exists because
 // the static classifier got it wrong (or didn't recognize the merchant at
@@ -100,17 +130,20 @@ export async function syncOneItem(item: {
       // Plaid: positive amount = money out. Our convention (see lib/finance.ts):
       // negative = outflow, positive = inflow — the opposite, so flip the sign.
       const amount = -t.amount;
-      const description = t.merchant_name ?? t.name ?? null;
+      const detail = extractDetail(t);
       const category = classifyCategory(
         amount,
         t.personal_finance_category?.primary,
         t.personal_finance_category?.detailed,
-        description,
+        detail.description,
       );
       // Same merchant classifier the manual import uses (lib/merchantClassify.ts,
       // ported from scripts/extract_statements.py) — only meaningful for
       // actual spending, matching that script's own gating.
-      const merchant = category === "spending" && description ? classifyMerchantWithRules(description, rules) : null;
+      const merchant =
+        category === "spending" && detail.description
+          ? classifyMerchantWithRules(detail.description, rules)
+          : null;
 
       await prisma.transaction.upsert({
         where: { plaidTransactionId: t.transaction_id },
@@ -118,7 +151,11 @@ export async function syncOneItem(item: {
           date: new Date(t.date),
           amount: encryptText(String(amount)),
           category,
-          description: description ? encryptText(description) : null,
+          description: detail.description ? encryptText(detail.description) : null,
+          rawName: detail.rawName ? encryptText(detail.rawName) : null,
+          location: detail.location ? encryptText(detail.location) : null,
+          paymentChannel: detail.paymentChannel,
+          plaidDetailedCategory: detail.plaidDetailedCategory,
           merchantCategory: merchant?.merchantCategory ?? null,
           merchantSubcategory: merchant?.merchantSubcategory ?? null,
         },
@@ -127,7 +164,11 @@ export async function syncOneItem(item: {
           date: new Date(t.date),
           amount: encryptText(String(amount)),
           category,
-          description: description ? encryptText(description) : null,
+          description: detail.description ? encryptText(detail.description) : null,
+          rawName: detail.rawName ? encryptText(detail.rawName) : null,
+          location: detail.location ? encryptText(detail.location) : null,
+          paymentChannel: detail.paymentChannel,
+          plaidDetailedCategory: detail.plaidDetailedCategory,
           merchantCategory: merchant?.merchantCategory ?? null,
           merchantSubcategory: merchant?.merchantSubcategory ?? null,
           dedupeHash: sha256(t.transaction_id),
@@ -140,14 +181,17 @@ export async function syncOneItem(item: {
     for (const t of response.data.modified) {
       if (t.pending) continue;
       const amount = -t.amount;
-      const description = t.merchant_name ?? t.name ?? null;
+      const detail = extractDetail(t);
       const category = classifyCategory(
         amount,
         t.personal_finance_category?.primary,
         t.personal_finance_category?.detailed,
-        description,
+        detail.description,
       );
-      const merchant = category === "spending" && description ? classifyMerchantWithRules(description, rules) : null;
+      const merchant =
+        category === "spending" && detail.description
+          ? classifyMerchantWithRules(detail.description, rules)
+          : null;
       const updated = await prisma.transaction
         .update({
           where: { plaidTransactionId: t.transaction_id },
@@ -155,7 +199,11 @@ export async function syncOneItem(item: {
             date: new Date(t.date),
             amount: encryptText(String(amount)),
             category,
-            description: description ? encryptText(description) : null,
+            description: detail.description ? encryptText(detail.description) : null,
+            rawName: detail.rawName ? encryptText(detail.rawName) : null,
+            location: detail.location ? encryptText(detail.location) : null,
+            paymentChannel: detail.paymentChannel,
+            plaidDetailedCategory: detail.plaidDetailedCategory,
             merchantCategory: merchant?.merchantCategory ?? null,
             merchantSubcategory: merchant?.merchantSubcategory ?? null,
           },

@@ -31,6 +31,12 @@ export default async function ReviewPage() {
     account: t.account.name,
     description: t.description ? decryptText(t.description) : "(no description)",
     amount: decryptAmount(t.amount),
+    // Only ever present for Plaid-synced rows — statement imports have no
+    // equivalent data to backfill these from.
+    rawName: t.rawName ? decryptText(t.rawName) : null,
+    location: t.location ? decryptText(t.location) : null,
+    paymentChannel: t.paymentChannel,
+    plaidDetailedCategory: t.plaidDetailedCategory,
   }));
 
   // Existing category/subcategory pairs in use — what "current ones" means

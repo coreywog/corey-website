@@ -3,7 +3,17 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type PendingTxn = { id: string; date: string; account: string; description: string; amount: number };
+type PendingTxn = {
+  id: string;
+  date: string;
+  account: string;
+  description: string;
+  amount: number;
+  rawName: string | null;
+  location: string | null;
+  paymentChannel: string | null;
+  plaidDetailedCategory: string | null;
+};
 type CategoryOption = { category: string; subcategory: string };
 type Rule = { id: string; pattern: string; merchantCategory: string; merchantSubcategory: string };
 
@@ -12,6 +22,24 @@ const NEW_VALUE = "__new__";
 function formatAmount(amount: number) {
   const sign = amount < 0 ? "-" : "";
   return `${sign}$${Math.abs(amount).toFixed(2)}`;
+}
+
+// "FOOD_AND_DRINK_COFFEE" -> "Food and drink · Coffee"
+function formatPlaidCategory(detailed: string): string {
+  const words = detailed.toLowerCase().split("_");
+  // Plaid's detailed categories are "<primary words>_<specific words>" with
+  // no fixed split point — primary is usually 2-3 words. Good enough as a
+  // rough "broad · specific" split without needing Plaid's full taxonomy.
+  const mid = Math.min(3, Math.ceil(words.length / 2));
+  const primary = words.slice(0, mid).join(" ");
+  const specific = words.slice(mid).join(" ");
+  return specific ? `${primary} · ${specific}` : primary;
+}
+
+function formatPaymentChannel(channel: string): string {
+  if (channel === "in store") return "In store";
+  if (channel === "online") return "Online";
+  return channel.charAt(0).toUpperCase() + channel.slice(1);
 }
 
 function ReviewRow({
@@ -90,6 +118,32 @@ function ReviewRow({
 
       {open && (
         <div className="flex flex-col gap-3 border-t border-black/[.06] p-3 dark:border-white/[.08]">
+          <div className="flex flex-col gap-1 rounded-md bg-black/[.02] px-3 py-2 text-sm dark:bg-white/[.03]">
+            <div className="font-medium">{txn.description}</div>
+            {txn.rawName && (
+              <div className="text-xs text-zinc-500">
+                Raw from bank: <span className="font-mono">{txn.rawName}</span>
+              </div>
+            )}
+            {(txn.location || txn.paymentChannel) && (
+              <div className="text-xs text-zinc-500">
+                {[txn.location, txn.paymentChannel ? formatPaymentChannel(txn.paymentChannel) : null]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+            )}
+            {txn.plaidDetailedCategory && (
+              <div className="text-xs text-zinc-500">
+                Plaid suggests: {formatPlaidCategory(txn.plaidDetailedCategory)}
+              </div>
+            )}
+            {!txn.rawName && !txn.location && !txn.plaidDetailedCategory && (
+              <div className="text-xs text-zinc-500">
+                No further detail available — this was imported from a bank statement, not live-synced.
+              </div>
+            )}
+          </div>
+
           <div className="flex flex-wrap gap-2">
             <label className="flex flex-1 min-w-[9rem] flex-col gap-1.5">
               <span className="text-xs text-zinc-500">Category</span>

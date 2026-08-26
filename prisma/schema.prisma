@@ -120,6 +120,22 @@ model Transaction {
   merchantSubcategory String?
   description         String?
 
+  // Richer detail available only from a live Plaid sync (statement imports
+  // have no equivalent — banks' PDF/CSV exports don't include any of this).
+  // All encrypted the same way as `description`, since they're just as
+  // derived-from-your-spending as the merchant name itself.
+  //   rawName  — Plaid's uncleaned `name`, often more specific than the
+  //              cleaned `description` (order/location codes, etc.)
+  //   location — "City, Region" from Plaid's location object, when present
+  // plaidDetailedCategory is Plaid's own classification (e.g.
+  // "FOOD_AND_DRINK_COFFEE") and paymentChannel ("online"/"in store"/
+  // "other") are left unencrypted — they're generic classification labels,
+  // not free text about where you actually shop.
+  rawName               String?
+  location              String?
+  paymentChannel        String?
+  plaidDetailedCategory String?
+
   // SHA-256 of the source statement's raw date+description+amount — lets the
   // local import script skip re-importing a transaction it's already seen.
   // For Plaid-synced rows this is sha256(plaidTransactionId) instead, so
