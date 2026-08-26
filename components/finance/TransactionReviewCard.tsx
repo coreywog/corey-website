@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatCategoryLabel } from "@/lib/finance";
+import { SearchableSelect } from "./SearchableSelect";
 
 export type ReviewTxn = {
   id: string;
@@ -98,7 +99,11 @@ export function TransactionReviewCard({
   txn: ReviewTxn;
   categoryOptions: CategoryOption[];
   defaultOpen: boolean;
-  onApproved: (id: string) => void;
+  // rulePattern is passed when "always match" was checked — the caller
+  // uses it to also remove/move any *other* currently-visible transaction
+  // that the same rule just applied to server-side (see lib/merchantRules.ts's
+  // saveRuleAndApply), not just this one card.
+  onApproved: (id: string, rulePattern?: string) => void;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(defaultOpen);
@@ -152,7 +157,7 @@ export function TransactionReviewCard({
         return;
       }
       setApproved(true);
-      onApproved(txn.id);
+      onApproved(txn.id, saveAsRule ? pattern.trim().toLowerCase() : undefined);
       router.refresh(); // re-syncs sidebar counts / other tabs in the background
     } catch {
       setError("Network error — try again.");
@@ -189,24 +194,15 @@ export function TransactionReviewCard({
           <div className="flex flex-wrap items-end gap-1.5">
             <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
               <span className="text-[11px] text-zinc-500">Category</span>
-              <select
+              <SearchableSelect
                 value={category}
-                onChange={(e) => {
-                  setCategory(e.target.value);
+                onChange={(v) => {
+                  setCategory(v);
                   setSubcategory("");
                 }}
-                className={selectClasses}
-              >
-                <option value="" disabled>
-                  Select…
-                </option>
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {formatCategoryLabel(c)}
-                  </option>
-                ))}
-                <option value={NEW_VALUE}>+ New category</option>
-              </select>
+                options={categories.map((c) => ({ value: c, label: formatCategoryLabel(c) }))}
+                extraOption={{ value: NEW_VALUE, label: "+ New category" }}
+              />
             </label>
             {category === NEW_VALUE && (
               <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
@@ -223,21 +219,12 @@ export function TransactionReviewCard({
             {category && (
               <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
                 <span className="text-[11px] text-zinc-500">Subcategory</span>
-                <select
+                <SearchableSelect
                   value={subcategory}
-                  onChange={(e) => setSubcategory(e.target.value)}
-                  className={selectClasses}
-                >
-                  <option value="" disabled>
-                    Select…
-                  </option>
-                  {subcategoriesForCategory.map((s) => (
-                    <option key={s} value={s}>
-                      {formatCategoryLabel(s)}
-                    </option>
-                  ))}
-                  <option value={NEW_VALUE}>+ New subcategory</option>
-                </select>
+                  onChange={setSubcategory}
+                  options={subcategoriesForCategory.map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
+                  extraOption={{ value: NEW_VALUE, label: "+ New subcategory" }}
+                />
               </label>
             )}
             {subcategory === NEW_VALUE && (

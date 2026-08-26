@@ -77,7 +77,10 @@ export function ReviewSidebar({
                 >
                   {isExpanded ? "▾" : "▸"}
                 </button>
-                <Link href={`${pathname}?category=${node.category}`} className={linkClasses(isCategoryActive, true)}>
+                <Link
+                  href={isCategoryActive ? pathname : `${pathname}?category=${node.category}`}
+                  className={linkClasses(isCategoryActive, true)}
+                >
                   {formatCategoryLabel(node.category)}
                   <Badge count={node.needsReview} />
                 </Link>
@@ -90,7 +93,11 @@ export function ReviewSidebar({
                     return (
                       <Link
                         key={sub.subcategory}
-                        href={`${pathname}?category=${node.category}&subcategory=${sub.subcategory}`}
+                        href={
+                          isSubActive
+                            ? `${pathname}?category=${node.category}`
+                            : `${pathname}?category=${node.category}&subcategory=${sub.subcategory}`
+                        }
                         className={linkClasses(isSubActive, true)}
                       >
                         {formatCategoryLabel(sub.subcategory)}

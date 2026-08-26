@@ -3,7 +3,7 @@ import Link from "next/link";
 const TABS = [
   { href: "/finance", label: "Overview" },
   { href: "/finance/daily", label: "Daily" },
-  { href: "/finance/review", label: "Review" },
+  { href: "/finance/review", label: "Transaction Detail" },
 ] as const;
 
 export function FinanceTabs({ current }: { current: (typeof TABS)[number]["href"] }) {

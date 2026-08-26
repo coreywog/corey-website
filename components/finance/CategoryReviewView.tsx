@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { formatCategoryLabel } from "@/lib/finance";
 import { TransactionReviewCard, type ReviewTxn } from "./TransactionReviewCard";
 
 type CategoryOption = { category: string; subcategory: string };
@@ -9,7 +10,9 @@ function matches(t: ReviewTxn, q: string): boolean {
   return (
     t.description.toLowerCase().includes(q) ||
     Boolean(t.rawName?.toLowerCase().includes(q)) ||
-    t.account.toLowerCase().includes(q)
+    t.account.toLowerCase().includes(q) ||
+    Boolean(t.merchantCategory && formatCategoryLabel(t.merchantCategory).toLowerCase().includes(q)) ||
+    Boolean(t.merchantSubcategory && formatCategoryLabel(t.merchantSubcategory).toLowerCase().includes(q))
   );
 }
 
@@ -27,10 +30,14 @@ export function CategoryReviewView({
   const [justApproved, setJustApproved] = useState<ReviewTxn[]>([]);
   const [search, setSearch] = useState("");
 
-  function handleApproved(id: string) {
-    const txn = remaining.find((t) => t.id === id);
-    setRemaining((prev) => prev.filter((t) => t.id !== id));
-    if (txn) setJustApproved((prev) => [{ ...txn, reviewed: true }, ...prev]);
+  function handleApproved(id: string, rulePattern?: string) {
+    const toMove = remaining.filter(
+      (t) => t.id === id || (rulePattern && t.description.toLowerCase().includes(rulePattern)),
+    );
+    if (toMove.length === 0) return;
+    const movedIds = new Set(toMove.map((t) => t.id));
+    setRemaining((prev) => prev.filter((t) => !movedIds.has(t.id)));
+    setJustApproved((prev) => [...toMove.map((t) => ({ ...t, reviewed: true })), ...prev]);
   }
 
   const tabButtonClasses = (active: boolean) =>
@@ -63,7 +70,7 @@ export function CategoryReviewView({
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search transactions…"
+          placeholder="Search transactions, categories…"
           className="min-w-[10rem] flex-1 rounded-md border border-black/[.1] bg-white px-3 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500"
         />
       </div>
