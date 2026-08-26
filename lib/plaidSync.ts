@@ -84,13 +84,22 @@ function extractDetail(t: {
 // over the static lib/merchantClassify.ts patterns — a rule exists because
 // the static classifier got it wrong (or didn't recognize the merchant at
 // all), so it should keep winning on every future sync too.
+// A rule is human-authored (created from the Review tab), so a match means
+// this classification is already confirmed — `reviewed: true` from the
+// start. The static classifier is just a best-effort guess either way.
 function classifyMerchantWithRules(
   description: string,
   rules: Awaited<ReturnType<typeof loadRules>>,
-): { merchantCategory: string; merchantSubcategory: string } {
+): { merchantCategory: string; merchantSubcategory: string; reviewed: boolean } {
   const ruleMatch = findRuleMatch(rules, description);
-  if (ruleMatch) return { merchantCategory: ruleMatch.merchantCategory, merchantSubcategory: ruleMatch.merchantSubcategory };
-  return classifyMerchant(description);
+  if (ruleMatch) {
+    return {
+      merchantCategory: ruleMatch.merchantCategory,
+      merchantSubcategory: ruleMatch.merchantSubcategory,
+      reviewed: true,
+    };
+  }
+  return { ...classifyMerchant(description), reviewed: false };
 }
 
 /**
@@ -145,6 +154,11 @@ export async function syncOneItem(item: {
           ? classifyMerchantWithRules(detail.description, rules)
           : null;
 
+      // `reviewed` is deliberately absent from `update` below — this upsert
+      // also runs for transactions that already exist (e.g. a full resync
+      // after resetting the cursor), and must never silently revert a
+      // transaction a human already approved back to "needs review".
+      // Only a brand-new row gets an initial reviewed value.
       await prisma.transaction.upsert({
         where: { plaidTransactionId: t.transaction_id },
         update: {
@@ -171,6 +185,7 @@ export async function syncOneItem(item: {
           plaidDetailedCategory: detail.plaidDetailedCategory,
           merchantCategory: merchant?.merchantCategory ?? null,
           merchantSubcategory: merchant?.merchantSubcategory ?? null,
+          reviewed: merchant?.reviewed ?? false,
           dedupeHash: sha256(t.transaction_id),
           plaidTransactionId: t.transaction_id,
         },
@@ -192,6 +207,8 @@ export async function syncOneItem(item: {
         category === "spending" && detail.description
           ? classifyMerchantWithRules(detail.description, rules)
           : null;
+      // Same reasoning as the upsert above: never touch `reviewed` on an
+      // update to an existing row.
       const updated = await prisma.transaction
         .update({
           where: { plaidTransactionId: t.transaction_id },

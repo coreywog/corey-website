@@ -136,6 +136,16 @@ model Transaction {
   paymentChannel        String?
   plaidDetailedCategory String?
 
+  // True once a human has explicitly confirmed merchantCategory/
+  // merchantSubcategory are correct (via the Review tab's per-transaction
+  // approve, or because a MerchantCategoryRule — itself human-authored —
+  // produced the classification). False means "just a guess from the
+  // static classifier, or nothing matched at all" — both need a look.
+  // Existing transactions as of this field's introduction were grandfathered
+  // to true if they already had a real category, so this doesn't suddenly
+  // dump hundreds of already-trusted transactions into the review queue.
+  reviewed Boolean @default(false)
+
   // SHA-256 of the source statement's raw date+description+amount — lets the
   // local import script skip re-importing a transaction it's already seen.
   // For Plaid-synced rows this is sha256(plaidTransactionId) instead, so

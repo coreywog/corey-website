@@ -61,7 +61,9 @@ export async function saveRuleAndApply(
 
   const result = await prisma.transaction.updateMany({
     where: { id: { in: matchIds } },
-    data: { merchantCategory, merchantSubcategory },
+    // Teaching a rule is itself a human confirmation — every transaction it
+    // applies to (past and future) counts as reviewed, not just re-guessed.
+    data: { merchantCategory, merchantSubcategory, reviewed: true },
   });
   return result.count;
 }

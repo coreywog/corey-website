@@ -625,3 +625,48 @@ export function formatCategoryLabel(category: string): string {
   const spaced = category.replace(/_/g, " ");
   return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
+
+export type ReviewSubcategoryNode = { subcategory: string; needsReview: number; approved: number };
+export type ReviewCategoryNode = {
+  category: string;
+  needsReview: number;
+  approved: number;
+  subcategories: ReviewSubcategoryNode[];
+};
+
+/**
+ * Groups every categorized spending transaction into a category ->
+ * subcategory tree with needs-review/approved counts at both levels, for
+ * the Review tab's sidebar. Transactions with no real category (null or
+ * "other") are deliberately excluded — those only ever show up in the
+ * global "Needs review" list, never as their own browsable category.
+ */
+export function buildReviewCategoryTree(
+  rows: { merchantCategory: string; merchantSubcategory: string; reviewed: boolean }[],
+): ReviewCategoryNode[] {
+  const byCategory = new Map<string, Map<string, { needsReview: number; approved: number }>>();
+  for (const r of rows) {
+    if (!byCategory.has(r.merchantCategory)) byCategory.set(r.merchantCategory, new Map());
+    const subMap = byCategory.get(r.merchantCategory)!;
+    if (!subMap.has(r.merchantSubcategory)) {
+      subMap.set(r.merchantSubcategory, { needsReview: 0, approved: 0 });
+    }
+    const counts = subMap.get(r.merchantSubcategory)!;
+    if (r.reviewed) counts.approved++;
+    else counts.needsReview++;
+  }
+
+  return [...byCategory.entries()]
+    .map(([category, subMap]) => {
+      const subcategories = [...subMap.entries()]
+        .map(([subcategory, counts]) => ({ subcategory, ...counts }))
+        .sort((a, b) => a.subcategory.localeCompare(b.subcategory));
+      return {
+        category,
+        needsReview: subcategories.reduce((sum, s) => sum + s.needsReview, 0),
+        approved: subcategories.reduce((sum, s) => sum + s.approved, 0),
+        subcategories,
+      };
+    })
+    .sort((a, b) => a.category.localeCompare(b.category));
+}
