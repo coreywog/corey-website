@@ -33,7 +33,7 @@ const MERCHANT_CATEGORY_PATTERNS: SubcategoryPattern[] = [
   ["hotel", /courtyard|marriott|hilton|\bhotel\b|homewood suit|sheraton/i],
   [
     "subscriptions",
-    /hulu|netflix|spotify|crunchyroll|nvidia|epic games|asana|mlb\.?tv|squarespace|google \*|spectrum|comcast|xfinity|apple\.com\/bill/i,
+    /hulu|netflix|spotify|crunchyroll|nvidia|epic games|asana|mlb\.?tv|squarespace|google \*|spectrum|comcast|xfinity|apple\.com\/bill|scribd|audible|patreon|substack/i,
   ],
   ["gym", /la fitness|planet fitness|equinox|\bgym\b|yoga|crossfit/i],
   ["dental", /dentistry|\bdental\b/i],

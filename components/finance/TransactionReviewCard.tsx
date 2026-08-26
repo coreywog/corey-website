@@ -42,43 +42,38 @@ function formatPaymentChannel(channel: string): string {
   return channel.charAt(0).toUpperCase() + channel.slice(1);
 }
 
-/** Everything below the description, condensed onto as few lines as possible. */
+/** Everything below the description, condensed onto a single line. */
 function TransactionDetail({ txn }: { txn: ReviewTxn }) {
-  const secondLine = [
+  const parts = [
+    txn.rawName,
     txn.location,
     txn.paymentChannel ? formatPaymentChannel(txn.paymentChannel) : null,
     txn.plaidDetailedCategory ? `Plaid: ${formatPlaidCategory(txn.plaidDetailedCategory)}` : null,
   ].filter(Boolean);
-  const hasDetail = txn.rawName || secondLine.length > 0 || txn.website;
 
-  if (!hasDetail) {
+  if (parts.length === 0 && !txn.website) {
     return (
-      <div className="text-xs text-zinc-500">
+      <div className="truncate text-xs text-zinc-500">
         No further detail available — imported from a bank statement, not live-synced.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-0.5 text-xs text-zinc-500">
-      {txn.rawName && <div className="truncate font-mono">{txn.rawName}</div>}
-      {(secondLine.length > 0 || txn.website) && (
-        <div className="truncate">
-          {secondLine.join(" · ")}
-          {txn.website && (
-            <>
-              {secondLine.length > 0 && " · "}
-              <a
-                href={txn.website.startsWith("http") ? txn.website : `https://${txn.website}`}
-                target="_blank"
-                rel="noreferrer"
-                className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
-              >
-                {txn.website}
-              </a>
-            </>
-          )}
-        </div>
+    <div className="truncate text-xs text-zinc-500">
+      {parts.join(" · ")}
+      {txn.website && (
+        <>
+          {parts.length > 0 && " · "}
+          <a
+            href={txn.website.startsWith("http") ? txn.website : `https://${txn.website}`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline hover:text-zinc-700 dark:hover:text-zinc-300"
+          >
+            {txn.website}
+          </a>
+        </>
       )}
     </div>
   );

@@ -7,7 +7,6 @@ import { FinanceTabs } from "@/components/finance/FinanceTabs";
 import { ReviewSidebar } from "@/components/finance/ReviewSidebar";
 import { GlobalReviewList } from "@/components/finance/GlobalReviewList";
 import { CategoryReviewView } from "@/components/finance/CategoryReviewView";
-import { SavedRulesList } from "@/components/finance/SavedRulesList";
 import type { ReviewTxn } from "@/components/finance/TransactionReviewCard";
 
 type RawTxn = {
@@ -76,8 +75,6 @@ export default async function ReviewPage({
     where: { category: "spending", reviewed: false },
   });
 
-  const rules = await prisma.merchantCategoryRule.findMany({ orderBy: { createdAt: "desc" } });
-
   let mainContent;
   if (!category) {
     const rawPending = await prisma.transaction.findMany({
@@ -113,10 +110,7 @@ export default async function ReviewPage({
       <FinanceTabs current="/finance/review" />
       <div className="flex gap-6">
         <ReviewSidebar tree={tree} globalNeedsReview={globalNeedsReview} />
-        <div className="flex min-w-0 flex-1 flex-col gap-8">
-          {mainContent}
-          <SavedRulesList rules={rules} />
-        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-8">{mainContent}</div>
       </div>
     </div>
   );

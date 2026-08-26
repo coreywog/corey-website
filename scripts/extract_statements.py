@@ -71,7 +71,8 @@ MERCHANT_CATEGORY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("hotel", re.compile(r"courtyard|marriott|hilton|\bhotel\b|homewood suit|sheraton", re.IGNORECASE)),
     ("subscriptions", re.compile(
         r"hulu|netflix|spotify|crunchyroll|nvidia|epic games|asana|mlb\.?tv|"
-        r"squarespace|google \*|spectrum|comcast|xfinity|apple\.com/bill",
+        r"squarespace|google \*|spectrum|comcast|xfinity|apple\.com/bill|"
+        r"scribd|audible|patreon|substack",
         re.IGNORECASE,
     )),
     ("gym", re.compile(r"la fitness|planet fitness|equinox|\bgym\b|yoga|crossfit", re.IGNORECASE)),
