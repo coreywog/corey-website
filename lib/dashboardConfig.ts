@@ -23,7 +23,18 @@ const filtersSchema = z
   .object({
     accountIds: z.array(z.string().min(1)).optional(),
     merchantCategories: z.array(z.string().min(1)).optional(),
+    // Only meaningful alongside merchantCategories — lets a widget narrow
+    // to specific subcategories within whichever categories are selected,
+    // rather than an entire category at once.
+    merchantSubcategories: z.array(z.string().min(1)).optional(),
     transactionCategory: z.enum(["income", "spending", "transfer", "other"]).optional(),
+  })
+  .optional();
+
+const axisLabelsSchema = z
+  .object({
+    x: z.string().max(60).optional(),
+    y: z.string().max(60).optional(),
   })
   .optional();
 
@@ -45,6 +56,7 @@ export const WidgetConfigSchema = z.object({
   limit: z.number().int().positive().max(100).optional(),
   sort: z.enum(["totalDesc", "totalAsc", "labelAsc"]).optional(), // ignored when groupBy is day/month — see lib/dashboardQuery.ts
   compareToPrevious: z.boolean().optional(), // stat tiles only
+  axisLabels: axisLabelsSchema, // line/bar only — read directly off config by components/dashboards/Widget.tsx
 });
 
 export type WidgetConfig = z.infer<typeof WidgetConfigSchema>;

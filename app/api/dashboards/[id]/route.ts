@@ -3,7 +3,12 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
 
-const patchSchema = z.object({ name: z.string().trim().min(1).max(100) });
+const patchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    published: z.boolean().optional(),
+  })
+  .refine((v) => v.name !== undefined || v.published !== undefined, { message: "Nothing to update" });
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const isAuthed = await requireAdminSession();
@@ -36,7 +41,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   try {
-    const dashboard = await prisma.dashboard.update({ where: { id }, data: { name: parsed.data.name } });
+    const dashboard = await prisma.dashboard.update({
+      where: { id },
+      data: {
+        ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+        ...(parsed.data.published !== undefined ? { published: parsed.data.published } : {}),
+      },
+    });
     return NextResponse.json({ dashboard });
   } catch (err) {
     if (err instanceof Error && "code" in err && err.code === "P2002") {

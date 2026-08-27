@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
 import { decryptAmount, decryptText } from "@/lib/crypto";
 import { buildReviewCategoryTree } from "@/lib/finance";
-import { FinanceTabs } from "@/components/finance/FinanceTabs";
 import { ReviewSidebar } from "@/components/finance/ReviewSidebar";
 import { GlobalReviewList } from "@/components/finance/GlobalReviewList";
 import { CategoryReviewView } from "@/components/finance/CategoryReviewView";
@@ -107,7 +106,7 @@ export default async function ReviewPage({
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-16">
-      <FinanceTabs current="/finance/review" />
+      <h1 className="text-2xl font-semibold tracking-tight">Transaction Detail</h1>
       <div className="flex gap-6">
         <ReviewSidebar tree={tree} globalNeedsReview={globalNeedsReview} />
         <div className="flex min-w-0 flex-1 flex-col gap-8">{mainContent}</div>

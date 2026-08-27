@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { formatCategoryLabel } from "@/lib/finance";
 import { TransactionReviewCard, type ReviewTxn } from "./TransactionReviewCard";
+import { BulkApproveBar, hasSuggestedCategory } from "./BulkApproveBar";
 
 type CategoryOption = { category: string; subcategory: string };
 
@@ -46,6 +47,13 @@ export function CategoryReviewView({
     setJustApproved((prev) => [...toMove.map((t) => ({ ...t, reviewed: true })), ...prev]);
   }
 
+  function handleBulkApproved(ids: string[]) {
+    const idSet = new Set(ids);
+    const toMove = remaining.filter((t) => idSet.has(t.id));
+    setRemaining((prev) => prev.filter((t) => !idSet.has(t.id)));
+    setJustApproved((prev) => [...toMove.map((t) => ({ ...t, reviewed: true })), ...prev]);
+  }
+
   const tabButtonClasses = (active: boolean) =>
     "rounded-full px-3 py-1.5 text-sm font-medium transition-colors " +
     (active
@@ -56,6 +64,7 @@ export function CategoryReviewView({
   const q = search.trim().toLowerCase();
   const filteredRemaining = q ? remaining.filter((t) => matches(t, q)) : remaining;
   const filteredApproved = q ? approvedList.filter((t) => matches(t, q)) : approvedList;
+  const withGuess = useMemo(() => filteredRemaining.filter(hasSuggestedCategory), [filteredRemaining]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -80,6 +89,8 @@ export function CategoryReviewView({
           className="min-w-[10rem] flex-1 rounded-md border border-black/[.1] bg-white px-3 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500"
         />
       </div>
+
+      {tab === "needs-review" && <BulkApproveBar candidates={withGuess} onApproved={handleBulkApproved} />}
 
       {tab === "needs-review" &&
         (filteredRemaining.length === 0 ? (

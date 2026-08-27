@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
 import { plaid } from "@/lib/plaid";
 import { encryptText } from "@/lib/crypto";
+import { syncOneItem } from "@/lib/plaidSync";
 
 const bodySchema = z.object({ publicToken: z.string().min(1) });
 
@@ -58,6 +59,17 @@ export async function POST(request: NextRequest) {
       create: { itemId, accessToken: encryptText(accessToken), institutionName },
     });
 
+    // PayPal (and similarly, some BNPL-style institutions) charges a linked
+    // card directly rather than holding its own balance — Plaid then shows
+    // the same purchase twice (once on PayPal, once on the card a day or
+    // two later), which double-counts spending unless one copy is excluded
+    // (see FinanceAccount.excludeFromCashFlow in prisma/schema.prisma).
+    // Defaulting this on for a newly-connected PayPal account, rather than
+    // requiring it be set by hand every time, is what was missing before —
+    // a fresh PayPal reconnect silently defaulted to false and doubled
+    // cash-flow totals until someone noticed and fixed it manually.
+    const isPayPal = /paypal/i.test(institutionName);
+
     const accounts = await Promise.all(
       accountsResponse.data.accounts.map(async (a) => {
         const { type, kind } = mapAccountTypeKind(a.type, a.subtype ?? null);
@@ -71,10 +83,25 @@ export async function POST(request: NextRequest) {
             kind,
             plaidItemId: item.id,
             plaidAccountId: a.account_id,
+            excludeFromCashFlow: isPayPal,
           },
         });
       }),
     );
+
+    // Pull the initial batch of history right away — otherwise a freshly
+    // connected (or reconnected) Item just sits with cursor=null until
+    // someone happens to hit the manual "Sync" button or a webhook fires,
+    // which on a fresh Item can take a while. The user should see real data
+    // the moment they finish linking, not an empty account.
+    try {
+      await syncOneItem({ id: item.id, itemId: item.itemId, accessToken: item.accessToken, cursor: null });
+    } catch (syncErr) {
+      // Non-fatal — the accounts are already created and the manual "Sync"
+      // button (or the webhook) will pick this up; don't fail the whole
+      // connect flow over it.
+      console.error("Initial post-connect sync failed", syncErr);
+    }
 
     return NextResponse.json({ institutionName, accountCount: accounts.length });
   } catch (err) {

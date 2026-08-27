@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ReactGridLayout, { useContainerWidth, type Layout } from "react-grid-layout";
+import { calcGridCellDimensions } from "react-grid-layout/core";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { Widget, type WidgetWithData } from "./Widget";
@@ -21,6 +22,13 @@ const SAVE_DEBOUNCE_MS = 500;
 const NEW_WIDGET_ID = "__new__";
 const DEFAULT_WIDTH = 12;
 const DEFAULT_HEIGHT = 4;
+const COLS = 12;
+const ROW_HEIGHT = 56;
+const MARGIN: readonly [number, number] = [12, 12];
+// Corners only, per request — not the full 8-handle set react-grid-layout
+// supports, since edge handles (n/s/e/w) weren't asked for and clutter a
+// small tile.
+const RESIZE_HANDLES = ["nw", "ne", "sw", "se"] as const;
 
 type Account = { id: string; name: string };
 type CategoryOption = { category: string; subcategory: string };
@@ -29,19 +37,47 @@ function layoutFromWidgets(list: WidgetWithData[]): Layout {
   return list.map((widget) => ({ i: widget.id, x: widget.x, y: widget.y, w: widget.w, h: widget.h }));
 }
 
+/** Every grid cell not covered by any layout item other than `excludeId`. */
+function emptyCells(layout: Layout, excludeId: string): { x: number; y: number }[] {
+  const occupied = new Set<string>();
+  let bottom = 0;
+  for (const item of layout) {
+    if (item.i === excludeId) continue;
+    bottom = Math.max(bottom, item.y + item.h);
+    for (let x = item.x; x < item.x + item.w; x++) {
+      for (let y = item.y; y < item.y + item.h; y++) {
+        occupied.add(`${x},${y}`);
+      }
+    }
+  }
+  const rows = bottom + 2; // a little slack below the current content
+  const cells: { x: number; y: number }[] = [];
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (!occupied.has(`${x},${y}`)) cells.push({ x, y });
+    }
+  }
+  return cells;
+}
+
 export function DashboardGrid({
   dashboardId,
   widgets,
   accounts,
   categoryOptions,
+  initialPublished,
 }: {
   dashboardId: string;
   widgets: WidgetWithData[];
   accounts: Account[];
   categoryOptions: CategoryOption[];
+  initialPublished: boolean;
 }) {
   const router = useRouter();
   const { width, containerRef, mounted } = useContainerWidth({ initialWidth: 1152 });
+
+  const [published, setPublished] = useState(initialPublished);
+  const [togglingPublish, setTogglingPublish] = useState(false);
 
   const widgetIds = widgets.map((w) => w.id).join(",");
   const [layout, setLayout] = useState<Layout>(() => layoutFromWidgets(widgets));
@@ -66,6 +102,10 @@ export function DashboardGrid({
   );
   const [draft, setDraft] = useState<WidgetDraft | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Set while a drag or resize is in progress (to the id of the item being
+  // moved) so the grid can show dashed "you can drop it here" outlines over
+  // every other open cell — cleared the instant the gesture ends.
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const isAdding = editorState?.mode === "add";
 
   const persistLayout = useCallback(
@@ -121,11 +161,29 @@ export function DashboardGrid({
     }
   }
 
+  async function togglePublished() {
+    const next = !published;
+    setTogglingPublish(true);
+    setPublished(next); // optimistic — this is just a view-mode flip, cheap to revert on failure
+    try {
+      const res = await fetch(`/api/dashboards/${dashboardId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ published: next }),
+      });
+      if (!res.ok) setPublished(!next);
+    } catch {
+      setPublished(!next);
+    } finally {
+      setTogglingPublish(false);
+    }
+  }
+
   // Real widgets, substituting the live draft's result for whichever one is
   // currently being edited — the "preview in the spot" behavior.
   const displayWidgets: WidgetWithData[] = widgets.map((w) => {
     if (editorState?.mode === "edit" && editorState.widget.id === w.id && draft) {
-      return { ...w, type: draft.type, title: draft.title, result: draft.result };
+      return { ...w, type: draft.type, title: draft.title, result: draft.result, config: draft.config };
     }
     return w;
   });
@@ -140,25 +198,54 @@ export function DashboardGrid({
       y: ghostLayoutItem.y,
       w: ghostLayoutItem.w,
       h: ghostLayoutItem.h,
-      config: null,
+      config: draft?.config ?? null,
       result: draft?.result ?? { error: "Fill in the fields to see a preview." },
     });
   }
 
+  const cellDims = calcGridCellDimensions({ width, cols: COLS, rowHeight: ROW_HEIGHT, margin: MARGIN });
+  const openSlots = !published && activeItemId ? emptyCells(layout, activeItemId) : [];
+
   return (
     <>
-      <div ref={containerRef}>
+      <div className="flex items-center justify-between">
+        <span
+          className={
+            "rounded-full px-2.5 py-1 text-xs font-medium " +
+            (published
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+              : "bg-amber-500/10 text-amber-700 dark:text-amber-400")
+          }
+        >
+          {published ? "Published — view only" : "Editing"}
+        </span>
+        <button
+          type="button"
+          onClick={togglePublished}
+          disabled={togglingPublish}
+          className="rounded-md border border-black/[.1] px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.15] dark:text-zinc-300 dark:hover:bg-white/[.05] creamsicle:border-orange-300 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50"
+        >
+          {published ? "Edit dashboard" : "Publish"}
+        </button>
+      </div>
+
+      <div ref={containerRef} className="relative">
         {mounted && (
           <ReactGridLayout
             layout={layout}
             width={width}
-            gridConfig={{ cols: 12, rowHeight: 56, margin: [12, 12] }}
-            dragConfig={{ handle: ".widget-drag-handle" }}
+            gridConfig={{ cols: COLS, rowHeight: ROW_HEIGHT, margin: MARGIN }}
+            dragConfig={{ enabled: !published, handle: ".widget-drag-handle" }}
+            resizeConfig={{ enabled: !published, handles: RESIZE_HANDLES }}
             onLayoutChange={handleLayoutChange}
+            onDragStart={(_layout, _oldItem, newItem) => setActiveItemId(newItem?.i ?? null)}
+            onDragStop={() => setActiveItemId(null)}
+            onResizeStart={(_layout, _oldItem, newItem) => setActiveItemId(newItem?.i ?? null)}
+            onResizeStop={() => setActiveItemId(null)}
           >
             {displayWidgets.map((widget) => (
               <div key={widget.id} className="group relative">
-                {widget.id !== NEW_WIDGET_ID && (
+                {!published && widget.id !== NEW_WIDGET_ID && (
                   <div className="absolute top-1.5 right-1.5 z-10 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
                     {widget.config && (
                       <button
@@ -196,9 +283,32 @@ export function DashboardGrid({
             ))}
           </ReactGridLayout>
         )}
+
+        {/* Snap-target hints — every open cell, shown only while a drag or
+            resize is actively in progress, so it's obvious where else the
+            tile could go. Purely visual, not part of react-grid-layout's own
+            layout tree — absolutely positioned over it using the same pixel
+            math the grid itself uses (calcGridCellDimensions), so they line
+            up exactly. */}
+        {openSlots.length > 0 && (
+          <div className="pointer-events-none absolute inset-0 z-0">
+            {openSlots.map(({ x, y }) => (
+              <div
+                key={`${x},${y}`}
+                className="absolute rounded-lg border-2 border-dashed border-indigo-400/50 dark:border-indigo-300/40"
+                style={{
+                  left: cellDims.offsetX + x * (cellDims.cellWidth + cellDims.gapX),
+                  top: cellDims.offsetY + y * (cellDims.cellHeight + cellDims.gapY),
+                  width: cellDims.cellWidth,
+                  height: cellDims.cellHeight,
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
-      {!editorState && (
+      {!published && !editorState && (
         <button
           type="button"
           onClick={openAdd}
@@ -209,7 +319,7 @@ export function DashboardGrid({
         </button>
       )}
 
-      {editorState && (
+      {!published && editorState && (
         <WidgetEditorPanel
           dashboardId={dashboardId}
           accounts={accounts}

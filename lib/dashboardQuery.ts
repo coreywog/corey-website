@@ -83,9 +83,21 @@ function colorFor(key: string, groupBy: GroupBy): string {
 function buildWhere(config: WidgetConfig, start: string, end: string) {
   return {
     date: { gte: new Date(start), lt: new Date(end) },
-    ...(config.filters?.accountIds?.length ? { accountId: { in: config.filters.accountIds } } : {}),
+    ...(config.filters?.accountIds?.length
+      ? // An explicit account selection is the user asking for exactly
+        // these accounts — respect it even if one of them is normally
+        // excluded (e.g. deliberately looking at PayPal on its own).
+        { accountId: { in: config.filters.accountIds } }
+      : // No explicit accounts picked: same default every other page in
+        // the app uses (see app/(site)/finance/page.tsx) — leave out
+        // accounts like PayPal that duplicate another account's charges,
+        // so aggregate totals aren't doubled.
+        { account: { excludeFromCashFlow: false } }),
     ...(config.filters?.merchantCategories?.length
       ? { merchantCategory: { in: config.filters.merchantCategories } }
+      : {}),
+    ...(config.filters?.merchantSubcategories?.length
+      ? { merchantSubcategory: { in: config.filters.merchantSubcategories } }
       : {}),
     // The metric fixes category for spendingTotal/incomeTotal — an explicit
     // transactionCategory filter would just be redundant (or contradictory)

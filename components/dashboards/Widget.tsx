@@ -34,19 +34,33 @@ function EmptyState() {
   );
 }
 
-function LineWidget({ points }: { points: AggregatedPoint[] }) {
+// recharts' axis `label` prop: undefined renders no title at all, so this
+// only builds one when the user actually set one.
+function axisLabelProp(text: string | undefined, position: "insideBottom" | "insideLeft", angle?: number) {
+  return text ? { value: text, position, angle, style: { fontSize: 11, textAnchor: "middle" as const } } : undefined;
+}
+
+function LineWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabels?: { x?: string; y?: string } }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+      <LineChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
-        <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} minTickGap={32} />
+        <XAxis
+          dataKey="label"
+          tick={{ fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          minTickGap={32}
+          label={axisLabelProp(axisLabels?.x, "insideBottom")}
+        />
         <YAxis
           tick={{ fontSize: 12 }}
           tickLine={false}
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => currencyFormatter.format(v)}
+          label={axisLabelProp(axisLabels?.y, "insideLeft", -90)}
         />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={2} dot={false} isAnimationActive={false} />
@@ -55,19 +69,30 @@ function LineWidget({ points }: { points: AggregatedPoint[] }) {
   );
 }
 
-function BarWidget({ points }: { points: AggregatedPoint[] }) {
+function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabels?: { x?: string; y?: string } }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: 16 }}>
+      <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 28 : 16 }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
-        <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} interval={0} angle={-20} textAnchor="end" height={40} />
+        <XAxis
+          dataKey="label"
+          tick={{ fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          interval={0}
+          angle={-20}
+          textAnchor="end"
+          height={40}
+          label={axisLabelProp(axisLabels?.x, "insideBottom")}
+        />
         <YAxis
           tick={{ fontSize: 12 }}
           tickLine={false}
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => currencyFormatter.format(v)}
+          label={axisLabelProp(axisLabels?.y, "insideLeft", -90)}
         />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Bar dataKey="value" isAnimationActive={false}>
@@ -160,13 +185,13 @@ export function Widget({ widget }: { widget: WidgetWithData }) {
         ) : widget.result.kind === "stat" ? (
           <StatWidget result={widget.result} />
         ) : widget.type === "bar" ? (
-          <BarWidget points={widget.result.points} />
+          <BarWidget points={widget.result.points} axisLabels={widget.config?.axisLabels} />
         ) : widget.type === "pie" ? (
           <PieWidget points={widget.result.points} />
         ) : widget.type === "table" ? (
           <TableWidget points={widget.result.points} />
         ) : (
-          <LineWidget points={widget.result.points} />
+          <LineWidget points={widget.result.points} axisLabels={widget.config?.axisLabels} />
         )}
       </div>
     </div>

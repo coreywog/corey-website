@@ -12,13 +12,20 @@ export default async function DashboardsIndexPage() {
 
   const dashboards = await prisma.dashboard.findMany({
     orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, _count: { select: { widgets: true } } },
+    select: { id: true, name: true, published: true, _count: { select: { widgets: true } } },
   });
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-6 py-16">
-      <h1 className="text-2xl font-semibold tracking-tight">Dashboards</h1>
-      <DashboardList dashboards={dashboards.map((d) => ({ id: d.id, name: d.name, widgetCount: d._count.widgets }))} />
+      <h1 className="text-2xl font-semibold tracking-tight">Create Dashboard</h1>
+      <DashboardList
+        dashboards={dashboards.map((d) => ({
+          id: d.id,
+          name: d.name,
+          widgetCount: d._count.widgets,
+          published: d.published,
+        }))}
+      />
     </div>
   );
 }

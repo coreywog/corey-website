@@ -16,7 +16,12 @@ export type ExistingWidget = {
   config: WidgetConfig;
 };
 
-export type WidgetDraft = { type: WidgetType; title: string | null; result: WidgetWithData["result"] };
+export type WidgetDraft = {
+  type: WidgetType;
+  title: string | null;
+  result: WidgetWithData["result"];
+  config: WidgetConfig | null;
+};
 
 const WIDGET_TYPE_OPTIONS: { value: WidgetType; label: string }[] = [
   { value: "line", label: "Line chart" },
@@ -115,11 +120,16 @@ export function WidgetEditorPanel({
   const [merchantCategories, setMerchantCategories] = useState<string[]>(
     existing?.config.filters?.merchantCategories ?? [],
   );
+  const [merchantSubcategories, setMerchantSubcategories] = useState<string[]>(
+    existing?.config.filters?.merchantSubcategories ?? [],
+  );
   const [transactionCategory, setTransactionCategory] = useState<string>(
     existing?.config.filters?.transactionCategory ?? "",
   );
   const [limit, setLimit] = useState(existing?.config.limit ? String(existing.config.limit) : "");
   const [compareToPrevious, setCompareToPrevious] = useState(existing?.config.compareToPrevious ?? false);
+  const [xAxisLabel, setXAxisLabel] = useState(existing?.config.axisLabels?.x ?? "");
+  const [yAxisLabel, setYAxisLabel] = useState(existing?.config.axisLabels?.y ?? "");
 
   const [preview, setPreview] = useState<WidgetWithData["result"] | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -128,12 +138,21 @@ export function WidgetEditorPanel({
   const [error, setError] = useState<string | null>(null);
 
   const categories = useMemo(() => [...new Set(categoryOptions.map((c) => c.category))].sort(), [categoryOptions]);
+  // Subcategories available to drill into, scoped to whichever categories
+  // are currently selected — picking "Dining" first is what makes its
+  // subcategories ("Coffee shops", "Restaurants", ...) show up at all.
+  const subcategoriesForSelectedCategories = useMemo(
+    () =>
+      [...new Set(categoryOptions.filter((c) => merchantCategories.includes(c.category)).map((c) => c.subcategory))].sort(),
+    [categoryOptions, merchantCategories],
+  );
 
   const needsGroupBy = type !== "stat";
   const showCategoryFilter = groupBy !== "merchantCategory";
   const isTimeSeries = groupBy === "day" || groupBy === "month";
   const showLimit = needsGroupBy && groupBy !== "" && !isTimeSeries && (type === "bar" || type === "pie");
   const showTransactionCategoryFilter = metric === "net" || metric === "transactionCount";
+  const showAxisLabels = type === "line" || type === "bar";
 
   // Memoized, not recomputed-and-thrown-away every render: this is used as
   // a useEffect dependency below (both the preview fetch and the
@@ -159,10 +178,16 @@ export function WidgetEditorPanel({
     const filters: WidgetConfig["filters"] = {
       ...(accountIds.length ? { accountIds } : {}),
       ...(showCategoryFilter && merchantCategories.length ? { merchantCategories } : {}),
+      ...(showCategoryFilter && merchantSubcategories.length ? { merchantSubcategories } : {}),
       ...(showTransactionCategoryFilter && transactionCategory
         ? { transactionCategory: transactionCategory as "income" | "spending" | "transfer" | "other" }
         : {}),
     };
+
+    const axisLabels: WidgetConfig["axisLabels"] =
+      showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim())
+        ? { ...(xAxisLabel.trim() ? { x: xAxisLabel.trim() } : {}), ...(yAxisLabel.trim() ? { y: yAxisLabel.trim() } : {}) }
+        : undefined;
 
     return {
       dataSource: "transactions",
@@ -172,8 +197,9 @@ export function WidgetEditorPanel({
       ...(Object.keys(filters).length ? { filters } : {}),
       ...(showLimit && limit ? { limit: Number(limit) } : {}),
       ...(type === "stat" ? { compareToPrevious } : {}),
+      ...(axisLabels ? { axisLabels } : {}),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- showCategoryFilter/showLimit/showTransactionCategoryFilter/needsGroupBy are all derived from type/metric/groupBy, already listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showCategoryFilter/showLimit/showTransactionCategoryFilter/needsGroupBy/showAxisLabels are all derived from type/metric/groupBy, already listed.
   }, [
     type,
     metric,
@@ -185,9 +211,12 @@ export function WidgetEditorPanel({
     customEnd,
     accountIds,
     merchantCategories,
+    merchantSubcategories,
     transactionCategory,
     limit,
     compareToPrevious,
+    xAxisLabel,
+    yAxisLabel,
   ]);
 
   // Live preview — debounced, cancels a stale in-flight request rather than
@@ -225,7 +254,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, accountIds, merchantCategories, transactionCategory, limit, compareToPrevious]);
+  }, [type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, accountIds, merchantCategories, merchantSubcategories, transactionCategory, limit, compareToPrevious]);
 
   // Reports the current draft up to DashboardGrid, which renders it in the
   // actual grid slot — this is the "preview in the spot" behavior. Runs
@@ -238,6 +267,7 @@ export function WidgetEditorPanel({
       result: !config
         ? { error: "Fill in the fields to see a preview." }
         : (preview ?? { error: previewLoading ? "Loading…" : "Fill in the fields to see a preview." }),
+      config,
     });
     return () => onDraftChange(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onDraftChange is a stable setter from the parent; including it would re-fire this on every parent render.
@@ -305,12 +335,11 @@ export function WidgetEditorPanel({
 
   return (
     <>
-      <div
-        className={
-          "fixed inset-0 z-20 bg-black/30 transition-opacity duration-200 " + (mounted ? "opacity-100" : "opacity-0")
-        }
-        onClick={onClose}
-      />
+      {/* Click-outside-to-close, but no dimming overlay — the grid behind
+          the drawer is exactly what's being configured (the ghost tile's
+          live preview, or the widget you're editing in place), so it needs
+          to stay fully visible, not darkened. */}
+      <div className="fixed inset-0 z-20" onClick={onClose} />
       <div
         className={
           "fixed inset-y-0 left-0 z-30 flex w-full max-w-sm flex-col gap-4 overflow-y-auto border-r border-black/[.1] bg-[var(--background)] p-5 shadow-xl transition-transform duration-200 ease-out dark:border-white/[.15] creamsicle:border-orange-300 " +
@@ -471,12 +500,55 @@ export function WidgetEditorPanel({
                     <button
                       key={c}
                       type="button"
-                      onClick={() => setMerchantCategories((prev) => prev.filter((x) => x !== c))}
+                      onClick={() => {
+                        setMerchantCategories((prev) => prev.filter((x) => x !== c));
+                        // Drop any subcategory that only belonged to the
+                        // category just removed — leaving it selected would
+                        // silently keep filtering by something no longer
+                        // reachable from the UI.
+                        const stillValid = new Set(
+                          categoryOptions
+                            .filter((opt) => opt.category !== c && merchantCategories.includes(opt.category))
+                            .map((opt) => opt.subcategory),
+                        );
+                        setMerchantSubcategories((prev) => prev.filter((s) => stillValid.has(s)));
+                      }}
                       className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
                     >
                       {formatCategoryLabel(c)} ✕
                     </button>
                   ))}
+                </div>
+              )}
+
+              {/* Only appears once at least one category is selected — lets
+                  a widget narrow further, e.g. "Dining" -> just "Coffee
+                  shops", instead of the whole category. */}
+              {subcategoriesForSelectedCategories.length > 0 && (
+                <div className="flex flex-col gap-1 pl-3">
+                  <span className="text-[11px] text-zinc-500">Subcategories (optional — narrows further)</span>
+                  <SearchableSelect
+                    value=""
+                    onChange={(v) => setMerchantSubcategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
+                    options={subcategoriesForSelectedCategories
+                      .filter((s) => !merchantSubcategories.includes(s))
+                      .map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
+                    placeholder="Add subcategory…"
+                  />
+                  {merchantSubcategories.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {merchantSubcategories.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setMerchantSubcategories((prev) => prev.filter((x) => x !== s))}
+                          className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                        >
+                          {formatCategoryLabel(s)} ✕
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -501,6 +573,26 @@ export function WidgetEditorPanel({
           <span className={labelClasses}>Title (optional — auto-generated if left blank)</span>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className={selectClasses} />
         </label>
+
+        {showAxisLabels && (
+          <div className="flex flex-col gap-2">
+            <span className={labelClasses}>Axis titles (optional)</span>
+            <input
+              type="text"
+              value={xAxisLabel}
+              onChange={(e) => setXAxisLabel(e.target.value)}
+              placeholder="X axis title"
+              className={selectClasses}
+            />
+            <input
+              type="text"
+              value={yAxisLabel}
+              onChange={(e) => setYAxisLabel(e.target.value)}
+              placeholder="Y axis title"
+              className={selectClasses}
+            />
+          </div>
+        )}
 
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
