@@ -4,6 +4,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
 import { decryptAmount, decryptText } from "@/lib/crypto";
 import { FinanceTabs } from "@/components/finance/FinanceTabs";
+import { DailyTransactionList } from "@/components/finance/DailyTransactionList";
+import type { ReviewTxn } from "@/components/finance/TransactionReviewCard";
 
 // Same account scope as the Overview tab, so a day's total here matches
 // what that day contributed to the cash-flow chart.
@@ -17,11 +19,6 @@ function addDays(iso: string, days: number) {
   const d = new Date(`${iso}T00:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return isoDate(d);
-}
-
-function formatAmount(amount: number) {
-  const sign = amount < 0 ? "-" : "+";
-  return `${sign}$${Math.abs(amount).toFixed(2)}`;
 }
 
 export default async function DailyPage({
@@ -62,17 +59,48 @@ export default async function DailyPage({
     orderBy: { date: "asc" },
   });
 
-  const txns = rawTxns.map((t) => ({
-    id: t.id,
-    account: t.account.name,
-    category: t.category,
-    merchantCategory: t.merchantCategory,
-    merchantSubcategory: t.merchantSubcategory,
-    description: t.description ? decryptText(t.description) : "(no description)",
-    amount: decryptAmount(t.amount),
-  }));
+  // Same category/subcategory option set the Transaction Detail tab offers —
+  // keeps the picker consistent no matter which tab you categorize from.
+  const categorized = await prisma.transaction.findMany({
+    where: {
+      category: "spending",
+      merchantCategory: { not: null, notIn: ["other"] },
+      merchantSubcategory: { not: null },
+    },
+    select: { merchantCategory: true, merchantSubcategory: true },
+    distinct: ["merchantCategory", "merchantSubcategory"],
+  });
+  const categoryOptions = categorized
+    .map((c) => ({ category: c.merchantCategory as string, subcategory: c.merchantSubcategory as string }))
+    .sort((a, b) => a.category.localeCompare(b.category) || a.subcategory.localeCompare(b.subcategory));
 
-  const spendingTotal = txns.filter((t) => t.category === "spending").reduce((sum, t) => sum + t.amount, 0);
+  const txns = rawTxns.map((t) => {
+    const description = t.description ? decryptText(t.description) : "(no description)";
+    const amount = decryptAmount(t.amount);
+    if (t.category === "spending") {
+      const txn: ReviewTxn = {
+        id: t.id,
+        date: t.date.toISOString().slice(0, 10),
+        account: t.account.name,
+        description,
+        amount,
+        rawName: t.rawName ? decryptText(t.rawName) : null,
+        location: t.location ? decryptText(t.location) : null,
+        website: t.website ? decryptText(t.website) : null,
+        paymentChannel: t.paymentChannel,
+        plaidDetailedCategory: t.plaidDetailedCategory,
+        merchantCategory: t.merchantCategory,
+        merchantSubcategory: t.merchantSubcategory,
+        reviewed: t.reviewed,
+      };
+      return txn;
+    }
+    return { id: t.id, account: t.account.name, category: t.category, description, amount };
+  });
+
+  const spendingTotal = rawTxns
+    .filter((t) => t.category === "spending")
+    .reduce((sum, t) => sum + decryptAmount(t.amount), 0);
   const prevDate = addDays(date, -1);
   const nextDate = addDays(date, 1);
 
@@ -112,23 +140,7 @@ export default async function DailyPage({
       {txns.length === 0 ? (
         <p className="text-sm text-zinc-500">Nothing posted on {date}.</p>
       ) : (
-        <div className="flex flex-col gap-1.5">
-          {txns.map((t) => (
-            <div
-              key={t.id}
-              className="flex items-center justify-between gap-3 rounded-md border border-black/[.06] px-3 py-2.5 dark:border-white/[.08]"
-            >
-              <div className="flex min-w-0 flex-1 items-baseline gap-3">
-                <span className="min-w-0 flex-1 truncate text-sm">{t.description}</span>
-                <span className="shrink-0 text-xs text-zinc-400">
-                  {t.merchantCategory ? `${t.merchantCategory} / ${t.merchantSubcategory}` : t.category}
-                </span>
-                <span className="shrink-0 text-xs text-zinc-400">{t.account}</span>
-              </div>
-              <span className="shrink-0 text-sm font-medium tabular-nums">{formatAmount(t.amount)}</span>
-            </div>
-          ))}
-        </div>
+        <DailyTransactionList transactions={txns} categoryOptions={categoryOptions} />
       )}
     </div>
   );
