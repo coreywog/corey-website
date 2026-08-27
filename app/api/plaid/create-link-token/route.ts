@@ -35,6 +35,13 @@ export async function POST() {
       // app/api/plaid/webhook/route.ts). Only reachable if this is a public
       // HTTPS URL — no effect against a localhost dev server.
       webhook: process.env.PLAID_WEBHOOK_URL || undefined,
+      // 730 is Plaid's max — default is only 90 days, which is why the
+      // first Chase/Amex connect only pulled back to late May. This only
+      // takes effect on a *new* Item: per Plaid's docs, once Transactions
+      // has been added to an Item this can never be changed — extending an
+      // existing connection's history requires removing it and
+      // reconnecting through Link again from scratch.
+      transactions: { days_requested: 730 },
     });
     return NextResponse.json({ linkToken: response.data.link_token });
   } catch (err) {
