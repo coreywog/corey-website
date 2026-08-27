@@ -12,6 +12,11 @@ const dateRangeSchema = z.union([
   z.object({ mode: z.literal("relative"), months: z.union([z.literal(1), z.literal(3), z.literal(6), z.literal(12)]) }),
   z.object({ mode: z.literal("specific"), month: z.string().regex(/^\d{4}-\d{2}$/) }),
   z.object({ mode: z.literal("allTime") }),
+  z.object({
+    mode: z.literal("custom"),
+    start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  }),
 ]);
 
 const filtersSchema = z

@@ -116,7 +116,8 @@ export function listAvailableMonthsFromStrings(dates: string[]): string[] {
 export type DateRangeSelection =
   | { mode: "relative"; months: 1 | 3 | 6 | 12 }
   | { mode: "specific"; month: string } // "YYYY-MM"
-  | { mode: "allTime" };
+  | { mode: "allTime" }
+  | { mode: "custom"; start: string; end: string }; // both "YYYY-MM-DD", start inclusive, end exclusive
 
 // Before any real transaction could exist — "allTime"'s lower bound. A
 // sentinel date rather than an unbounded/null start keeps every caller's
@@ -133,6 +134,9 @@ export function resolveDateRange(selection: DateRangeSelection): { start: string
   if (selection.mode === "specific") {
     const { start, end: monthEnd } = monthRange(selection.month);
     return { start: start.toISOString().slice(0, 10), end: monthEnd.toISOString().slice(0, 10) };
+  }
+  if (selection.mode === "custom") {
+    return { start: selection.start, end: selection.end };
   }
   return { start: monthsAgo(selection.months).toISOString().slice(0, 10), end };
 }
