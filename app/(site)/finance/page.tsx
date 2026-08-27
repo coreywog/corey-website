@@ -5,7 +5,6 @@ import {
   computeMonthlyCashFlow,
   computeDailyCashFlow,
   monthRange,
-  monthsAgo,
   trailingMonths,
 } from "@/lib/finance";
 import { decryptAmount, decryptText } from "@/lib/crypto";
@@ -25,14 +24,22 @@ export default async function FinancePage() {
     redirect("/quietharbor");
   }
 
-  const sixMonthsAgo = monthsAgo(6);
+  // The recap cards below need every one of trailingMonths(6)'s calendar
+  // months in full — the query floor has to be the *start* of the oldest
+  // one (trailingMonths returns oldest-first), not a rolling
+  // today-minus-6-months day-count. That rolling cutoff lands mid-month
+  // (e.g. Feb 27, not Feb 1), which silently fed the oldest recap card only
+  // its last couple of days of data — a real bug, not a rounding quirk;
+  // confirmed by hand against the raw decrypted transactions.
+  const recapMonthKeys = trailingMonths(6);
+  const earliestMonthStart = monthRange(recapMonthKeys[0]).start;
   const rawRecentTxns = await prisma.transaction.findMany({
     where: {
       // excludeFromCashFlow: PayPal-style accounts that charge a linked
       // card directly duplicate that card's own transactions (see
       // prisma/schema.prisma) — left out here so spending isn't doubled.
       account: { type: { in: CASH_FLOW_ACCOUNT_TYPES }, excludeFromCashFlow: false },
-      date: { gte: sixMonthsAgo },
+      date: { gte: earliestMonthStart },
     },
     select: {
       date: true,
@@ -57,7 +64,7 @@ export default async function FinancePage() {
 
   // Trailing 6 calendar months (not the in-progress current month), oldest
   // first — always all 6, even if a month had zero activity.
-  const recapMonths = trailingMonths(6).map((month) => {
+  const recapMonths = recapMonthKeys.map((month) => {
     const { start, end } = monthRange(month);
     const monthTxns = recentTxns.filter((t) => t.date >= start && t.date < end);
     return { month, ...computeMonthlyCashFlow(monthTxns) };
