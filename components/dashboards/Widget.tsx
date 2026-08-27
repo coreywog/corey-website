@@ -2,6 +2,7 @@
 
 import { CartesianGrid, Line, LineChart, Bar, BarChart, Pie, PieChart, Cell, Tooltip, XAxis, YAxis, ResponsiveContainer } from "recharts";
 import type { AggregatedPoint, WidgetResult } from "@/lib/dashboardQuery";
+import type { WidgetConfig } from "@/lib/dashboardConfig";
 
 export type WidgetWithData = {
   id: string;
@@ -12,6 +13,11 @@ export type WidgetWithData = {
   w: number;
   h: number;
   result: WidgetResult | { error: string };
+  // The validated config, so the editor can be opened pre-filled with the
+  // current settings — null when the stored config failed validation (see
+  // lib/dashboardConfig.ts); editing is disabled for those (see
+  // DashboardGrid.tsx), though the widget can still be deleted.
+  config: WidgetConfig | null;
 };
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
