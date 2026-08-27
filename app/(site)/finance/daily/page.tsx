@@ -77,7 +77,7 @@ export default async function DailyPage({
   const nextDate = addDays(date, 1);
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-6 py-16">
+    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-16">
       <FinanceTabs current="/finance/daily" />
 
       <div className="flex flex-wrap items-center justify-between gap-3">

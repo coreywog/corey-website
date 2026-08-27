@@ -106,7 +106,7 @@ export default async function ReviewPage({
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-6 py-16">
+    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-16">
       <FinanceTabs current="/finance/review" />
       <div className="flex gap-6">
         <ReviewSidebar tree={tree} globalNeedsReview={globalNeedsReview} />
