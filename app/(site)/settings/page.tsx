@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { ThemeSettings } from "@/components/ThemeSettings";
 import { ConnectBank } from "@/components/ConnectBank";
 import { SyncPlaidButton } from "@/components/SyncPlaidButton";
+import { DisconnectPlaidButton } from "@/components/DisconnectPlaidButton";
 
 export default async function SettingsPage() {
   // Proxy already gates this route, but never trust that alone — re-verify.
@@ -50,7 +51,13 @@ export default async function SettingsPage() {
                       {item.lastSyncedAt ? `Last synced ${item.lastSyncedAt.toLocaleString()}` : "Never synced"}
                     </p>
                   </div>
-                  <SyncPlaidButton plaidItemId={item.id} />
+                  <div className="flex items-center gap-2">
+                    <SyncPlaidButton plaidItemId={item.id} />
+                    <DisconnectPlaidButton
+                      plaidItemId={item.id}
+                      institutionName={item.institutionName ?? "this connection"}
+                    />
+                  </div>
                 </div>
               </div>
             ))}
