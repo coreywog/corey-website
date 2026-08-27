@@ -35,6 +35,21 @@ export default async function DailyPage({
   const { date: requestedDate } = await searchParams;
   const isValidDate = requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate);
 
+  // Same category/subcategory option set the Transaction Detail tab offers —
+  // keeps the picker consistent no matter which tab you categorize from.
+  // Doesn't depend on the date at all, so kick it off now and only await it
+  // once the date-dependent chain below is settled, instead of adding a
+  // fourth sequential round-trip after everything else.
+  const categorizedPromise = prisma.transaction.findMany({
+    where: {
+      category: "spending",
+      merchantCategory: { not: null, notIn: ["other"] },
+      merchantSubcategory: { not: null },
+    },
+    select: { merchantCategory: true, merchantSubcategory: true },
+    distinct: ["merchantCategory", "merchantSubcategory"],
+  });
+
   let date = isValidDate ? requestedDate! : undefined;
   if (!date) {
     // Default to the most recent day with data, not "today" — today likely
@@ -59,17 +74,7 @@ export default async function DailyPage({
     orderBy: { date: "asc" },
   });
 
-  // Same category/subcategory option set the Transaction Detail tab offers —
-  // keeps the picker consistent no matter which tab you categorize from.
-  const categorized = await prisma.transaction.findMany({
-    where: {
-      category: "spending",
-      merchantCategory: { not: null, notIn: ["other"] },
-      merchantSubcategory: { not: null },
-    },
-    select: { merchantCategory: true, merchantSubcategory: true },
-    distinct: ["merchantCategory", "merchantSubcategory"],
-  });
+  const categorized = await categorizedPromise;
   const categoryOptions = categorized
     .map((c) => ({ category: c.merchantCategory as string, subcategory: c.merchantSubcategory as string }))
     .sort((a, b) => a.category.localeCompare(b.category) || a.subcategory.localeCompare(b.subcategory));

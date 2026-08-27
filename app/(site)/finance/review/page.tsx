@@ -57,12 +57,36 @@ export default async function ReviewPage({
 
   const { category, subcategory } = await searchParams;
 
-  // Sidebar tree — every categorized transaction, lightweight (no
-  // description decryption needed just to count).
-  const treeRows = await prisma.transaction.findMany({
-    where: { category: "spending", merchantCategory: { not: null, notIn: ["other"] }, merchantSubcategory: { not: null } },
-    select: { merchantCategory: true, merchantSubcategory: true, reviewed: true },
-  });
+  // These three queries don't depend on each other — every ~0.5s "click and
+  // wait" on this page was three sequential round-trips to the (remote,
+  // pooled) database, one after another, when they could run concurrently.
+  // Same total DB work, but wall-clock time is now the slowest of the three
+  // instead of the sum of all three.
+  const [treeRows, globalNeedsReview, rawRows] = await Promise.all([
+    // Sidebar tree — every categorized transaction, lightweight (no
+    // description decryption needed just to count).
+    prisma.transaction.findMany({
+      where: { category: "spending", merchantCategory: { not: null, notIn: ["other"] }, merchantSubcategory: { not: null } },
+      select: { merchantCategory: true, merchantSubcategory: true, reviewed: true },
+    }),
+    prisma.transaction.count({ where: { category: "spending", reviewed: false } }),
+    category
+      ? prisma.transaction.findMany({
+          where: {
+            category: "spending",
+            merchantCategory: category,
+            ...(subcategory ? { merchantSubcategory: subcategory } : {}),
+          },
+          include: TXN_INCLUDE,
+          orderBy: { date: "desc" },
+        })
+      : prisma.transaction.findMany({
+          where: { category: "spending", reviewed: false },
+          include: TXN_INCLUDE,
+          orderBy: { date: "desc" },
+        }),
+  ]);
+
   const tree = buildReviewCategoryTree(
     treeRows as { merchantCategory: string; merchantSubcategory: string; reviewed: boolean }[],
   );
@@ -70,31 +94,11 @@ export default async function ReviewPage({
     node.subcategories.map((s) => ({ category: node.category, subcategory: s.subcategory })),
   );
 
-  const globalNeedsReview = await prisma.transaction.count({
-    where: { category: "spending", reviewed: false },
-  });
-
   let mainContent;
   if (!category) {
-    const rawPending = await prisma.transaction.findMany({
-      where: { category: "spending", reviewed: false },
-      include: TXN_INCLUDE,
-      orderBy: { date: "desc" },
-    });
-    mainContent = (
-      <GlobalReviewList transactions={rawPending.map(decryptTxn)} categoryOptions={categoryOptions} />
-    );
+    mainContent = <GlobalReviewList transactions={rawRows.map(decryptTxn)} categoryOptions={categoryOptions} />;
   } else {
-    const rawAll = await prisma.transaction.findMany({
-      where: {
-        category: "spending",
-        merchantCategory: category,
-        ...(subcategory ? { merchantSubcategory: subcategory } : {}),
-      },
-      include: TXN_INCLUDE,
-      orderBy: { date: "desc" },
-    });
-    const all = rawAll.map(decryptTxn);
+    const all = rawRows.map(decryptTxn);
     mainContent = (
       <CategoryReviewView
         needsReview={all.filter((t) => !t.reviewed)}
