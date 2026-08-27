@@ -21,6 +21,7 @@
     "prisma": "^6.19.3",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "react-grid-layout": "^2.2.4",
     "react-plaid-link": "^5.0.0",
     "recharts": "^3.10.1",
     "three": "^0.185.1",
