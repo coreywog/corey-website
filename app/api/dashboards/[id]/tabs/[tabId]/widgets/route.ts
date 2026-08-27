@@ -17,30 +17,30 @@ const createSchema = z.object({
   layout: WidgetLayoutSchema.partial().optional(), // caller may omit; we append below existing content
 });
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ tabId: string }> }) {
   // Proxy already gates this route, but never trust that alone — re-verify.
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id: dashboardId } = await params;
+  const { tabId } = await params;
   const body = await request.json().catch(() => null);
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const dashboard = await prisma.dashboard.findUnique({ where: { id: dashboardId } });
-  if (!dashboard) {
-    return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+  const tab = await prisma.dashboardTab.findUnique({ where: { id: tabId } });
+  if (!tab) {
+    return NextResponse.json({ error: "Tab not found" }, { status: 404 });
   }
 
   try {
     let { x, y, w, h } = parsed.data.layout ?? {};
     if (x === undefined || y === undefined) {
       const existing = await prisma.dashboardWidget.findMany({
-        where: { dashboardId },
+        where: { tabId },
         select: { y: true, h: true },
       });
       const bottom = existing.reduce((max, wgt) => Math.max(max, wgt.y + wgt.h), 0);
@@ -52,7 +52,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const widget = await prisma.dashboardWidget.create({
       data: {
-        dashboardId,
+        tabId,
         type: parsed.data.type,
         title: parsed.data.title ?? null,
         x,

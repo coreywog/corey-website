@@ -73,6 +73,7 @@ function formatDate(iso: string): string {
  */
 export function WidgetEditorPanel({
   dashboardId,
+  tabId,
   accounts,
   categoryOptions,
   existing,
@@ -82,6 +83,7 @@ export function WidgetEditorPanel({
   onDraftChange,
 }: {
   dashboardId: string;
+  tabId: string;
   accounts: Account[];
   categoryOptions: CategoryOption[];
   existing?: ExistingWidget;
@@ -310,12 +312,12 @@ export function WidgetEditorPanel({
         ...(existing ? {} : { layout: ghostLayout }),
       };
       const res = existing
-        ? await fetch(`/api/dashboards/${dashboardId}/widgets/${existing.id}`, {
+        ? await fetch(`/api/dashboards/${dashboardId}/tabs/${tabId}/widgets/${existing.id}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           })
-        : await fetch(`/api/dashboards/${dashboardId}/widgets`, {
+        : await fetch(`/api/dashboards/${dashboardId}/tabs/${tabId}/widgets`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),

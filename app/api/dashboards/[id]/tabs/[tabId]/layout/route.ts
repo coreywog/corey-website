@@ -12,14 +12,14 @@ const bodySchema = z.object({
   widgets: z.array(WidgetLayoutSchema.extend({ id: z.string().min(1) })).min(1),
 });
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ tabId: string }> }) {
   // Proxy already gates this route, but never trust that alone — re-verify.
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { id: dashboardId } = await params;
+  const { tabId } = await params;
   const body = await request.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {
@@ -30,7 +30,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     await prisma.$transaction(
       parsed.data.widgets.map((w) =>
         prisma.dashboardWidget.update({
-          where: { id: w.id, dashboardId },
+          where: { id: w.id, tabId },
           data: { x: w.x, y: w.y, w: w.w, h: w.h },
         }),
       ),

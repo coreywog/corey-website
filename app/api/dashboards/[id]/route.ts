@@ -19,7 +19,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const { id } = await params;
   const dashboard = await prisma.dashboard.findUnique({
     where: { id },
-    include: { widgets: { orderBy: { createdAt: "asc" } } },
+    include: {
+      tabs: { orderBy: { order: "asc" }, include: { widgets: { orderBy: { createdAt: "asc" } } } },
+    },
   });
   if (!dashboard) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

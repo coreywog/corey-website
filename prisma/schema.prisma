@@ -21,15 +21,33 @@ model Dashboard {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  widgets DashboardWidget[]
+  tabs DashboardTab[]
 }
 
-// One chart/stat/table tile on a Dashboard's grid.
-model DashboardWidget {
-  id          String @id @default(cuid())
+// One tab within a Dashboard — its own named grid of widgets (think browser
+// tabs: switching tabs swaps the whole grid below, not just a filter on one
+// shared grid). Every dashboard has at least one tab; deleting a dashboard's
+// last remaining tab is blocked at the API layer, not here.
+model DashboardTab {
+  id          String   @id @default(cuid())
   dashboardId String
-  type        String // "line" | "bar" | "pie" | "stat" | "table"
-  title       String? // null = auto-generated label (see lib/dashboardConfig.ts)
+  name        String
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  dashboard Dashboard         @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  widgets   DashboardWidget[]
+
+  @@index([dashboardId])
+}
+
+// One chart/stat/table tile on a DashboardTab's grid.
+model DashboardWidget {
+  id    String  @id @default(cuid())
+  tabId String
+  type  String // "line" | "bar" | "pie" | "stat" | "table"
+  title String? // null = auto-generated label (see lib/dashboardConfig.ts)
 
   // Grid units (react-grid-layout's x/y/w/h), not pixels — the persisted
   // layout round-trips straight onto react-grid-layout's own {x,y,w,h,i}.
@@ -51,9 +69,9 @@ model DashboardWidget {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  tab DashboardTab @relation(fields: [tabId], references: [id], onDelete: Cascade)
 
-  @@index([dashboardId])
+  @@index([tabId])
 }
 
 model Exercise {
@@ -72,7 +90,7 @@ model WorkoutSession {
 }
 
 model SetEntry {
-  id         String   @id @default(cuid())
+  id         String @id @default(cuid())
   sessionId  String
   exerciseId String
   weight     Float
@@ -122,9 +140,9 @@ model PlaidItem {
   accessToken     String // AES-256-GCM ciphertext (base64), never plaintext
   institutionName String?
   // /transactions/sync cursor — null means "never synced yet, pull everything".
-  cursor       String?
-  lastSyncedAt DateTime?
-  createdAt    DateTime  @default(now())
+  cursor          String?
+  lastSyncedAt    DateTime?
+  createdAt       DateTime  @default(now())
 
   accounts FinanceAccount[]
 }

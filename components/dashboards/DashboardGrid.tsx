@@ -62,12 +62,14 @@ function emptyCells(layout: Layout, excludeId: string): { x: number; y: number }
 
 export function DashboardGrid({
   dashboardId,
+  tabId,
   widgets,
   accounts,
   categoryOptions,
   initialPublished,
 }: {
   dashboardId: string;
+  tabId: string;
   widgets: WidgetWithData[];
   accounts: Account[];
   categoryOptions: CategoryOption[];
@@ -113,7 +115,7 @@ export function DashboardGrid({
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
       if (next.length === 0) return; // nothing to save — e.g. the last widget was just deleted
       saveTimeout.current = setTimeout(() => {
-        fetch(`/api/dashboards/${dashboardId}/layout`, {
+        fetch(`/api/dashboards/${dashboardId}/tabs/${tabId}/layout`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -126,7 +128,7 @@ export function DashboardGrid({
         });
       }, SAVE_DEBOUNCE_MS);
     },
-    [dashboardId],
+    [dashboardId, tabId],
   );
 
   function handleLayoutChange(next: Layout) {
@@ -154,7 +156,7 @@ export function DashboardGrid({
   async function handleDelete(widgetId: string) {
     setDeletingId(widgetId);
     try {
-      const res = await fetch(`/api/dashboards/${dashboardId}/widgets/${widgetId}`, { method: "DELETE" });
+      const res = await fetch(`/api/dashboards/${dashboardId}/tabs/${tabId}/widgets/${widgetId}`, { method: "DELETE" });
       if (res.ok) router.refresh();
     } finally {
       setDeletingId(null);
@@ -171,7 +173,14 @@ export function DashboardGrid({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ published: next }),
       });
-      if (!res.ok) setPublished(!next);
+      if (!res.ok) {
+        setPublished(!next);
+        return;
+      }
+      // published is dashboard-level, not per-tab — refresh so the server
+      // prop other tabs are seeded from (switching tabs remounts this
+      // component) reflects the change too, not just this tab's local state.
+      router.refresh();
     } catch {
       setPublished(!next);
     } finally {
@@ -322,6 +331,7 @@ export function DashboardGrid({
       {!published && editorState && (
         <WidgetEditorPanel
           dashboardId={dashboardId}
+          tabId={tabId}
           accounts={accounts}
           categoryOptions={categoryOptions}
           existing={editorState.mode === "edit" ? editorState.widget : undefined}

@@ -12,7 +12,12 @@ export default async function DashboardsIndexPage() {
 
   const dashboards = await prisma.dashboard.findMany({
     orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true, published: true, _count: { select: { widgets: true } } },
+    select: {
+      id: true,
+      name: true,
+      published: true,
+      tabs: { select: { _count: { select: { widgets: true } } } },
+    },
   });
 
   return (
@@ -22,7 +27,9 @@ export default async function DashboardsIndexPage() {
         dashboards={dashboards.map((d) => ({
           id: d.id,
           name: d.name,
-          widgetCount: d._count.widgets,
+          // No single-query way to count a relation's relation (widgets
+          // nested two levels under Dashboard) — sum each tab's own count.
+          widgetCount: d.tabs.reduce((sum, t) => sum + t._count.widgets, 0),
           published: d.published,
         }))}
       />
