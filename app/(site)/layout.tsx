@@ -1,6 +1,9 @@
 import Link from "next/link";
 
-const NAV_LINKS = [{ href: "/finance", label: "Finances" }];
+const NAV_LINKS = [
+  { href: "/finance", label: "Finances" },
+  { href: "/dashboards", label: "Dashboards" },
+];
 const SETTINGS_LINK = { href: "/settings", label: "Settings" };
 
 const NAV_LINK_CLASSES =
