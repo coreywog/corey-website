@@ -2,8 +2,8 @@ import * as THREE from "three";
 
 /**
  * Small procedurally-drawn textures (canvas-generated, no external image
- * assets) for the low-poly gym scene — a brick pattern for walls and a
- * scalloped tile pattern for roofs. Both tile seamlessly via RepeatWrapping.
+ * assets) for the low-poly 3D scenes (see HubScene.tsx) — all tile
+ * seamlessly via RepeatWrapping.
  */
 
 function makeCanvasTexture(
@@ -20,35 +20,6 @@ function makeCanvasTexture(
   texture.wrapS = THREE.RepeatWrapping;
   texture.wrapT = THREE.RepeatWrapping;
   texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-export function createBrickTexture(
-  repeatX = 3,
-  repeatY = 2,
-): THREE.CanvasTexture {
-  const texture = makeCanvasTexture(128, (ctx) => {
-    const mortarColor = "#b8a888";
-    const brickColor = "#a1503a";
-    const brickShadow = "#8a3f2c";
-    const brickW = 32;
-    const brickH = 16;
-    const gap = 3;
-
-    ctx.fillStyle = mortarColor;
-    ctx.fillRect(0, 0, 128, 128);
-
-    for (let row = 0, y = 0; y < 128; row++, y += brickH) {
-      const offset = row % 2 === 0 ? 0 : brickW / 2;
-      for (let x = -brickW + offset; x < 128; x += brickW) {
-        ctx.fillStyle = brickShadow;
-        ctx.fillRect(x + gap / 2, y + gap / 2, brickW - gap, brickH - gap);
-        ctx.fillStyle = brickColor;
-        ctx.fillRect(x + gap / 2, y + gap / 2, brickW - gap - 2, brickH - gap - 2);
-      }
-    }
-  });
-  texture.repeat.set(repeatX, repeatY);
   return texture;
 }
 
@@ -178,35 +149,3 @@ export function createCobblestoneTexture(
   return texture;
 }
 
-export function createRoofTileTexture(
-  repeatX = 8,
-  repeatY = 3,
-): THREE.CanvasTexture {
-  const texture = makeCanvasTexture(128, (ctx) => {
-    const base = "#7a3324";
-    const tile = "#a1503a";
-    const highlight = "#c06a4a";
-    const tileW = 16;
-    const tileH = 22;
-
-    ctx.fillStyle = base;
-    ctx.fillRect(0, 0, 128, 128);
-
-    for (let row = 0, y = 0; y < 128 + tileH; row++, y += tileH * 0.55) {
-      const offset = row % 2 === 0 ? 0 : tileW / 2;
-      for (let x = -tileW; x < 128 + tileW; x += tileW) {
-        const cx = x + offset + tileW / 2;
-        ctx.fillStyle = tile;
-        ctx.beginPath();
-        ctx.ellipse(cx, y, tileW / 2 - 1, tileH / 2, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = highlight;
-        ctx.beginPath();
-        ctx.ellipse(cx, y - 3, tileW / 3.5, tileH / 3.5, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-  });
-  texture.repeat.set(repeatX, repeatY);
-  return texture;
-}

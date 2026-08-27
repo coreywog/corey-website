@@ -9,7 +9,7 @@ import { Model } from "./Model";
  * Renders a picked-model dropdown + canvas so a .glb dropped into
  * public/models/ can be eyeballed immediately — no scene wiring required.
  * Centers the model and sizes the grid to real-world meters so scale
- * relative to the hub/gym scenes is obvious at a glance.
+ * relative to the hub scene is obvious at a glance.
  */
 export function ModelViewer({ models }: { models: string[] }) {
   const [selected, setSelected] = useState(models[0]);

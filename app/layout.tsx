@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Corey Wogenstahl",
-  description: "Corey Wogenstahl — personal site, resume, and gym progress dashboard.",
+  description: "Corey Wogenstahl — personal site, resume, and finance dashboard.",
 };
 
 // Runs before hydration so the page never flashes the wrong theme —
