@@ -7,6 +7,51 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// A user-built collection of widgets — the customizable dashboard builder.
+// Deliberately single-user (no owner/userId field) — matches every other
+// model in this schema; the site has exactly one admin.
+model Dashboard {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  widgets DashboardWidget[]
+}
+
+// One chart/stat/table tile on a Dashboard's grid.
+model DashboardWidget {
+  id          String @id @default(cuid())
+  dashboardId String
+  type        String // "line" | "bar" | "pie" | "stat" | "table"
+  title       String? // null = auto-generated label (see lib/dashboardConfig.ts)
+
+  // Grid units (react-grid-layout's x/y/w/h), not pixels — the persisted
+  // layout round-trips straight onto react-grid-layout's own {x,y,w,h,i}.
+  x Int
+  y Int
+  w Int
+  h Int
+
+  // The data-binding config (dataSource/metric/groupBy/dateRange/filters —
+  // see lib/dashboardConfig.ts) is JSON, not relational columns: its shape
+  // genuinely varies by widget type and is meant to grow over time, which a
+  // fixed relational shape would fight. Validated with zod on every write;
+  // read defensively (a bad/stale config renders one broken tile, not a
+  // crashed page). configVersion is insurance for a future breaking
+  // config-shape change — always 1 today.
+  configVersion Int  @default(1)
+  config        Json
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+
+  @@index([dashboardId])
+}
+
 model Exercise {
   id       String     @id @default(cuid())
   name     String     @unique

@@ -107,24 +107,34 @@ export function listAvailableMonthsFromStrings(dates: string[]): string[] {
 
 /**
  * A chart's time-window choice — either a rolling window ("last N months",
- * anchored to today) or one specific calendar month picked from a dropdown.
- * Shared by DailyCashFlowChart and SpendingExplorer's RangeSelector so both
- * behave identically.
+ * anchored to today), one specific calendar month picked from a dropdown, or
+ * everything ("allTime"). Shared by DailyCashFlowChart and SpendingExplorer's
+ * RangeSelector (both only ever construct 1|3|6 today) and, as of the
+ * dashboard builder, arbitrary widget configs — hence 12 and "allTime" being
+ * added here rather than as a separate parallel type.
  */
 export type DateRangeSelection =
-  | { mode: "relative"; months: 1 | 3 | 6 }
-  | { mode: "specific"; month: string }; // "YYYY-MM"
+  | { mode: "relative"; months: 1 | 3 | 6 | 12 }
+  | { mode: "specific"; month: string } // "YYYY-MM"
+  | { mode: "allTime" };
+
+// Before any real transaction could exist — "allTime"'s lower bound. A
+// sentinel date rather than an unbounded/null start keeps every caller's
+// `date >= start` comparison uniform, no separate no-lower-bound branch
+// needed anywhere downstream.
+const ALL_TIME_START = "1970-01-01";
 
 /** [start, end) as "YYYY-MM-DD" strings (end exclusive) for a DateRangeSelection. */
 export function resolveDateRange(selection: DateRangeSelection): { start: string; end: string } {
-  if (selection.mode === "specific") {
-    const { start, end } = monthRange(selection.month);
-    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  const end = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  if (selection.mode === "allTime") {
+    return { start: ALL_TIME_START, end };
   }
-  return {
-    start: monthsAgo(selection.months).toISOString().slice(0, 10),
-    end: new Date(Date.now() + 86_400_000).toISOString().slice(0, 10),
-  };
+  if (selection.mode === "specific") {
+    const { start, end: monthEnd } = monthRange(selection.month);
+    return { start: start.toISOString().slice(0, 10), end: monthEnd.toISOString().slice(0, 10) };
+  }
+  return { start: monthsAgo(selection.months).toISOString().slice(0, 10), end };
 }
 
 /** "2026-03" -> "March 2026" */
