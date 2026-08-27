@@ -66,20 +66,20 @@ export function DashboardGrid({
   widgets,
   accounts,
   categoryOptions,
-  initialPublished,
+  published,
 }: {
   dashboardId: string;
   tabId: string;
   widgets: WidgetWithData[];
   accounts: Account[];
   categoryOptions: CategoryOption[];
-  initialPublished: boolean;
+  // Dashboard-level, not per-tab (see DashboardTabs, which owns the toggle
+  // and the header row it lives in) — passed straight through here to gate
+  // drag/resize and the add/edit/delete controls.
+  published: boolean;
 }) {
   const router = useRouter();
   const { width, containerRef, mounted } = useContainerWidth({ initialWidth: 1152 });
-
-  const [published, setPublished] = useState(initialPublished);
-  const [togglingPublish, setTogglingPublish] = useState(false);
 
   const widgetIds = widgets.map((w) => w.id).join(",");
   const [layout, setLayout] = useState<Layout>(() => layoutFromWidgets(widgets));
@@ -163,31 +163,6 @@ export function DashboardGrid({
     }
   }
 
-  async function togglePublished() {
-    const next = !published;
-    setTogglingPublish(true);
-    setPublished(next); // optimistic — this is just a view-mode flip, cheap to revert on failure
-    try {
-      const res = await fetch(`/api/dashboards/${dashboardId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ published: next }),
-      });
-      if (!res.ok) {
-        setPublished(!next);
-        return;
-      }
-      // published is dashboard-level, not per-tab — refresh so the server
-      // prop other tabs are seeded from (switching tabs remounts this
-      // component) reflects the change too, not just this tab's local state.
-      router.refresh();
-    } catch {
-      setPublished(!next);
-    } finally {
-      setTogglingPublish(false);
-    }
-  }
-
   // Real widgets, substituting the live draft's result for whichever one is
   // currently being edited — the "preview in the spot" behavior.
   const displayWidgets: WidgetWithData[] = widgets.map((w) => {
@@ -217,27 +192,6 @@ export function DashboardGrid({
 
   return (
     <>
-      <div className="flex items-center justify-between">
-        <span
-          className={
-            "rounded-full px-2.5 py-1 text-xs font-medium " +
-            (published
-              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-              : "bg-amber-500/10 text-amber-700 dark:text-amber-400")
-          }
-        >
-          {published ? "Published — view only" : "Editing"}
-        </span>
-        <button
-          type="button"
-          onClick={togglePublished}
-          disabled={togglingPublish}
-          className="rounded-md border border-black/[.1] px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.15] dark:text-zinc-300 dark:hover:bg-white/[.05] creamsicle:border-orange-300 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50"
-        >
-          {published ? "Edit dashboard" : "Publish"}
-        </button>
-      </div>
-
       <div ref={containerRef} className="relative">
         {mounted && (
           <ReactGridLayout

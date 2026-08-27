@@ -69,9 +69,9 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-16">
-      <h1 className="text-2xl font-semibold tracking-tight">{dashboard.name}</h1>
       <DashboardTabs
         dashboardId={dashboard.id}
+        dashboardName={dashboard.name}
         tabs={tabs}
         accounts={accounts}
         categoryOptions={categoryOptions}
