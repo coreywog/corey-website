@@ -2,12 +2,13 @@ import { prisma } from "@/lib/prisma";
 import { decryptAmount, decryptText } from "@/lib/crypto";
 import { resolveDateRange, formatMonthLabel, formatCategoryLabel, normalizeMerchantName } from "@/lib/finance";
 import { colorForCategory, colorForKey } from "@/components/finance/categoryColors";
-import type { WidgetConfig, GroupBy, Metric } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, GroupBy, Metric } from "@/lib/dashboardConfig";
 
 export type AggregatedPoint = { key: string; label: string; value: number; color: string };
 export type WidgetResult =
   | { kind: "series"; points: AggregatedPoint[] }
-  | { kind: "stat"; value: number; previousValue?: number };
+  | { kind: "stat"; value: number; previousValue?: number }
+  | { kind: "text"; text: string };
 
 type DecryptedRow = {
   date: Date;
@@ -80,7 +81,7 @@ function colorFor(key: string, groupBy: GroupBy): string {
 }
 
 /** Builds the Prisma `where` shared by the main window and (for stat tiles) the comparison window. */
-function buildWhere(config: WidgetConfig, start: string, end: string) {
+function buildWhere(config: ChartWidgetConfig, start: string, end: string) {
   return {
     date: { gte: new Date(start), lt: new Date(end) },
     ...(config.filters?.accountIds?.length
@@ -146,6 +147,11 @@ async function fetchRows(where: ReturnType<typeof buildWhere>, needsDescription:
  * whatever the widget's config says.
  */
 export async function computeWidgetData(config: WidgetConfig): Promise<WidgetResult> {
+  // A text tile has no data behind it at all — nothing to query.
+  if (config.dataSource === "text") {
+    return { kind: "text", text: config.text };
+  }
+
   const { start, end } = resolveDateRange(config.dateRange);
   const where = buildWhere(config, start, end);
   const needsDescription = config.groupBy === "merchant";

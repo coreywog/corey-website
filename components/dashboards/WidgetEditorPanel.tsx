@@ -3,11 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatCategoryLabel } from "@/lib/finance";
 import { SearchableSelect } from "@/components/finance/SearchableSelect";
+import { GraphIcon, TextIcon, LineChartIcon, BarChartIcon, PieChartIcon, StatIcon, TableIcon } from "./icons";
 import type { WidgetWithData } from "./Widget";
-import type { WidgetConfig, WidgetType, Metric, GroupBy } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, WidgetType, Metric, GroupBy } from "@/lib/dashboardConfig";
+import { WIDGET_COLORS } from "@/lib/dashboardConfig";
 
 type CategoryOption = { category: string; subcategory: string };
 type Account = { id: string; name: string };
+type ChartType = Exclude<WidgetType, "text">;
 
 export type ExistingWidget = {
   id: string;
@@ -23,12 +26,12 @@ export type WidgetDraft = {
   config: WidgetConfig | null;
 };
 
-const WIDGET_TYPE_OPTIONS: { value: WidgetType; label: string }[] = [
-  { value: "line", label: "Line chart" },
-  { value: "bar", label: "Bar chart" },
-  { value: "pie", label: "Pie chart" },
-  { value: "stat", label: "Stat tile" },
-  { value: "table", label: "Table" },
+const CHART_TYPE_OPTIONS: { value: ChartType; label: string; Icon: typeof LineChartIcon }[] = [
+  { value: "line", label: "Line", Icon: LineChartIcon },
+  { value: "bar", label: "Bar", Icon: BarChartIcon },
+  { value: "pie", label: "Pie", Icon: PieChartIcon },
+  { value: "stat", label: "Stat", Icon: StatIcon },
+  { value: "table", label: "Table", Icon: TableIcon },
 ];
 
 const METRIC_OPTIONS: { value: Metric; label: string }[] = [
@@ -59,6 +62,11 @@ const pillClasses = (active: boolean) =>
   (active
     ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 creamsicle:border-orange-600 creamsicle:bg-orange-600 creamsicle:text-white"
     : "border-black/[.12] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05] creamsicle:border-orange-300 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50");
+const squareClasses = (active: boolean) =>
+  "flex h-10 w-10 items-center justify-center rounded-md border transition-colors " +
+  (active
+    ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 creamsicle:border-orange-600 creamsicle:bg-orange-600 creamsicle:text-white"
+    : "border-black/[.12] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05] creamsicle:border-orange-300 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50");
 
 function formatDate(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
@@ -66,10 +74,15 @@ function formatDate(iso: string): string {
 
 /**
  * Add/edit panel for one widget — a left-side drawer, not a centered modal.
- * It no longer renders its own preview box: instead it reports the live
- * config + fetched result up via onDraftChange, and the actual grid slot
- * (DashboardGrid.tsx) shows the preview in place, so sizing it is just
- * dragging/resizing that same tile like any other.
+ * Laid out as two columns once a type is picked: data sources on the left,
+ * chart type/config and (below it) filters-and-style on the right — filters
+ * stay hidden until Graph or Text is actually chosen, so a brand-new widget
+ * starts as just two icons, not a wall of fields (an existing widget being
+ * re-opened skips that reveal — its type was already chosen). It no longer
+ * renders its own preview box: instead it reports the live config + fetched
+ * result up via onDraftChange, and the actual grid slot (DashboardGrid.tsx)
+ * shows the preview in place, so sizing it is just dragging/resizing that
+ * same tile like any other.
  */
 export function WidgetEditorPanel({
   dashboardId,
@@ -101,37 +114,42 @@ export function WidgetEditorPanel({
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  // Only ever the chart half of WidgetConfig — undefined for a brand-new
+  // widget or one whose stored config is a text tile. Every existing?.config
+  // read below goes through this instead of touching the union directly.
+  const chartConfig = existing?.config.dataSource === "transactions" ? existing.config : undefined;
+
   const [type, setType] = useState<WidgetType>(existing?.type ?? "bar");
+  // A brand-new widget starts collapsed to just the two type icons — chart
+  // config and filters/style only reveal once one is clicked. An existing
+  // widget being re-opened already has a type, so skip the reveal.
+  const [typeChosen, setTypeChosen] = useState(Boolean(existing));
   const [title, setTitle] = useState(existing?.title ?? "");
-  const [metric, setMetric] = useState<Metric>(existing?.config.metric ?? "spendingTotal");
-  const [groupBy, setGroupBy] = useState<GroupBy | "">(existing?.config.groupBy ?? "merchantCategory");
-  const [dateMode, setDateMode] = useState<DateRangeMode>(existing?.config.dateRange.mode ?? "relative");
+  const [text, setText] = useState(existing?.config.dataSource === "text" ? existing.config.text : "");
+  const [color, setColor] = useState<(typeof WIDGET_COLORS)[number] | undefined>(chartConfig?.color);
+  const [metric, setMetric] = useState<Metric>(chartConfig?.metric ?? "spendingTotal");
+  const [groupBy, setGroupBy] = useState<GroupBy | "">(chartConfig?.groupBy ?? "merchantCategory");
+  const [dateMode, setDateMode] = useState<DateRangeMode>(chartConfig?.dateRange.mode ?? "relative");
   const [relativeMonths, setRelativeMonths] = useState<1 | 3 | 6 | 12>(
-    existing?.config.dateRange.mode === "relative" ? existing.config.dateRange.months : 6,
+    chartConfig?.dateRange.mode === "relative" ? chartConfig.dateRange.months : 6,
   );
   const [specificMonth, setSpecificMonth] = useState(
-    existing?.config.dateRange.mode === "specific" ? existing.config.dateRange.month : "",
+    chartConfig?.dateRange.mode === "specific" ? chartConfig.dateRange.month : "",
   );
   const [customStart, setCustomStart] = useState(
-    existing?.config.dateRange.mode === "custom" ? existing.config.dateRange.start : "",
+    chartConfig?.dateRange.mode === "custom" ? chartConfig.dateRange.start : "",
   );
-  const [customEnd, setCustomEnd] = useState(
-    existing?.config.dateRange.mode === "custom" ? existing.config.dateRange.end : "",
-  );
-  const [accountIds, setAccountIds] = useState<string[]>(existing?.config.filters?.accountIds ?? []);
-  const [merchantCategories, setMerchantCategories] = useState<string[]>(
-    existing?.config.filters?.merchantCategories ?? [],
-  );
+  const [customEnd, setCustomEnd] = useState(chartConfig?.dateRange.mode === "custom" ? chartConfig.dateRange.end : "");
+  const [accountIds, setAccountIds] = useState<string[]>(chartConfig?.filters?.accountIds ?? []);
+  const [merchantCategories, setMerchantCategories] = useState<string[]>(chartConfig?.filters?.merchantCategories ?? []);
   const [merchantSubcategories, setMerchantSubcategories] = useState<string[]>(
-    existing?.config.filters?.merchantSubcategories ?? [],
+    chartConfig?.filters?.merchantSubcategories ?? [],
   );
-  const [transactionCategory, setTransactionCategory] = useState<string>(
-    existing?.config.filters?.transactionCategory ?? "",
-  );
-  const [limit, setLimit] = useState(existing?.config.limit ? String(existing.config.limit) : "");
-  const [compareToPrevious, setCompareToPrevious] = useState(existing?.config.compareToPrevious ?? false);
-  const [xAxisLabel, setXAxisLabel] = useState(existing?.config.axisLabels?.x ?? "");
-  const [yAxisLabel, setYAxisLabel] = useState(existing?.config.axisLabels?.y ?? "");
+  const [transactionCategory, setTransactionCategory] = useState<string>(chartConfig?.filters?.transactionCategory ?? "");
+  const [limit, setLimit] = useState(chartConfig?.limit ? String(chartConfig.limit) : "");
+  const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
+  const [xAxisLabel, setXAxisLabel] = useState(chartConfig?.axisLabels?.x ?? "");
+  const [yAxisLabel, setYAxisLabel] = useState(chartConfig?.axisLabels?.y ?? "");
 
   const [preview, setPreview] = useState<WidgetWithData["result"] | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -139,6 +157,7 @@ export function WidgetEditorPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isText = type === "text";
   const categories = useMemo(() => [...new Set(categoryOptions.map((c) => c.category))].sort(), [categoryOptions]);
   // Subcategories available to drill into, scoped to whichever categories
   // are currently selected — picking "Dining" first is what makes its
@@ -149,12 +168,20 @@ export function WidgetEditorPanel({
     [categoryOptions, merchantCategories],
   );
 
-  const needsGroupBy = type !== "stat";
+  const needsGroupBy = !isText && type !== "stat";
   const showCategoryFilter = groupBy !== "merchantCategory";
   const isTimeSeries = groupBy === "day" || groupBy === "month";
   const showLimit = needsGroupBy && groupBy !== "" && !isTimeSeries && (type === "bar" || type === "pie");
   const showTransactionCategoryFilter = metric === "net" || metric === "transactionCount";
   const showAxisLabels = type === "line" || type === "bar";
+  const showColor = type === "line" || type === "stat";
+  // Every account explicitly checked, individually, one at a time — not the
+  // same as an empty selection (which means "no filter, use the same
+  // cash-flow-account default every other page uses"). Selecting every
+  // single account by hand is a real, different choice: it also includes
+  // ones normally excluded from cash flow (e.g. PayPal), because the user
+  // asked for them by name.
+  const allAccountsChecked = accounts.length > 0 && accounts.every((a) => accountIds.includes(a.id));
 
   // Memoized, not recomputed-and-thrown-away every render: this is used as
   // a useEffect dependency below (both the preview fetch and the
@@ -164,11 +191,14 @@ export function WidgetEditorPanel({
   // wasted work. Keyed on the actual primitive fields, not on anything
   // derived (`filters`, `dateRange`) that would itself be a fresh object.
   const config: WidgetConfig | null = useMemo(() => {
+    if (isText) {
+      return text.trim() ? { dataSource: "text", text: text.trim() } : null;
+    }
     if (needsGroupBy && !groupBy) return null;
     if (dateMode === "specific" && !specificMonth) return null;
     if (dateMode === "custom" && (!customStart || !customEnd)) return null;
 
-    const dateRange: WidgetConfig["dateRange"] =
+    const dateRange: ChartWidgetConfig["dateRange"] =
       dateMode === "allTime"
         ? { mode: "allTime" }
         : dateMode === "specific"
@@ -177,7 +207,7 @@ export function WidgetEditorPanel({
             ? { mode: "custom", start: customStart, end: customEnd }
             : { mode: "relative", months: relativeMonths };
 
-    const filters: WidgetConfig["filters"] = {
+    const filters: NonNullable<ChartWidgetConfig["filters"]> = {
       ...(accountIds.length ? { accountIds } : {}),
       ...(showCategoryFilter && merchantCategories.length ? { merchantCategories } : {}),
       ...(showCategoryFilter && merchantSubcategories.length ? { merchantSubcategories } : {}),
@@ -186,7 +216,7 @@ export function WidgetEditorPanel({
         : {}),
     };
 
-    const axisLabels: WidgetConfig["axisLabels"] =
+    const axisLabels: ChartWidgetConfig["axisLabels"] =
       showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim())
         ? { ...(xAxisLabel.trim() ? { x: xAxisLabel.trim() } : {}), ...(yAxisLabel.trim() ? { y: yAxisLabel.trim() } : {}) }
         : undefined;
@@ -200,9 +230,12 @@ export function WidgetEditorPanel({
       ...(showLimit && limit ? { limit: Number(limit) } : {}),
       ...(type === "stat" ? { compareToPrevious } : {}),
       ...(axisLabels ? { axisLabels } : {}),
+      ...(showColor && color ? { color } : {}),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- showCategoryFilter/showLimit/showTransactionCategoryFilter/needsGroupBy/showAxisLabels are all derived from type/metric/groupBy, already listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showCategoryFilter/showLimit/showTransactionCategoryFilter/needsGroupBy/showAxisLabels/showColor are all derived from type/metric/groupBy, already listed.
   }, [
+    isText,
+    text,
     type,
     metric,
     groupBy,
@@ -219,16 +252,16 @@ export function WidgetEditorPanel({
     compareToPrevious,
     xAxisLabel,
     yAxisLabel,
+    color,
   ]);
 
   // Live preview — debounced, cancels a stale in-flight request rather than
-  // letting it race a newer one and overwrite the preview with old data.
-  // Reported up to the parent (onDraftChange) rather than rendered here.
+  // letting it race a newer one and overwrite the preview with old data. A
+  // text tile has no data behind it — it's a pure, synchronous derivation of
+  // `text` (see the onDraftChange effect below), so it never touches this
+  // effect or `preview` state at all.
   useEffect(() => {
-    // Nothing to fetch — the onDraftChange effect below already overrides
-    // the displayed message directly from `config` being null, so `preview`
-    // itself doesn't need clearing here.
-    if (!config) return;
+    if (!config || config.dataSource === "text") return;
     let cancelled = false;
     const timeout = setTimeout(async () => {
       setPreviewLoading(true);
@@ -256,30 +289,30 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, accountIds, merchantCategories, merchantSubcategories, transactionCategory, limit, compareToPrevious]);
+  }, [isText, text, type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, accountIds, merchantCategories, merchantSubcategories, transactionCategory, limit, compareToPrevious, color]);
 
   // Reports the current draft up to DashboardGrid, which renders it in the
   // actual grid slot — this is the "preview in the spot" behavior. Runs
   // whenever anything the preview depends on changes, and clears on unmount
   // so closing the panel drops the in-place preview too.
   useEffect(() => {
-    onDraftChange({
-      type,
-      title: title.trim() || null,
-      result: !config
-        ? { error: "Fill in the fields to see a preview." }
-        : (preview ?? { error: previewLoading ? "Loading…" : "Fill in the fields to see a preview." }),
-      config,
-    });
+    const result: WidgetWithData["result"] = !config
+      ? { error: isText ? "Type something to see a preview." : "Fill in the fields to see a preview." }
+      : config.dataSource === "text"
+        ? { kind: "text", text: config.text }
+        : (preview ?? { error: previewLoading ? "Loading…" : "Fill in the fields to see a preview." });
+    onDraftChange({ type, title: title.trim() || null, result, config });
     return () => onDraftChange(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onDraftChange is a stable setter from the parent; including it would re-fire this on every parent render.
-  }, [type, title, config, preview, previewLoading]);
+  }, [type, title, config, preview, previewLoading, isText]);
 
   // The available date range depends on which accounts are in scope —
   // different accounts can have very different histories (see
   // app/api/dashboards/widgets/date-range/route.ts) — so it's re-asked
-  // whenever the account filter changes, debounced the same way.
+  // whenever the account filter changes, debounced the same way. Meaningless
+  // for a text tile, so skipped entirely.
   useEffect(() => {
+    if (isText) return;
     let cancelled = false;
     const timeout = setTimeout(async () => {
       try {
@@ -298,7 +331,7 @@ export function WidgetEditorPanel({
       cancelled = true;
       clearTimeout(timeout);
     };
-  }, [accountIds]);
+  }, [isText, accountIds]);
 
   async function handleSave() {
     if (!config) return;
@@ -335,6 +368,11 @@ export function WidgetEditorPanel({
     }
   }
 
+  function pickType(next: WidgetType) {
+    setType(next);
+    setTypeChosen(true);
+  }
+
   return (
     <>
       {/* Click-outside-to-close, but no dimming overlay — the grid behind
@@ -344,7 +382,7 @@ export function WidgetEditorPanel({
       <div className="fixed inset-0 z-20" onClick={onClose} />
       <div
         className={
-          "fixed inset-y-0 left-0 z-30 flex w-full max-w-sm flex-col gap-4 overflow-y-auto border-r border-black/[.1] bg-[var(--background)] p-5 shadow-xl transition-transform duration-200 ease-out dark:border-white/[.15] creamsicle:border-orange-300 " +
+          "fixed inset-y-0 left-0 z-30 flex w-full max-w-xl flex-col gap-4 overflow-y-auto border-r border-black/[.1] bg-[var(--background)] p-5 shadow-xl transition-transform duration-200 ease-out dark:border-white/[.15] creamsicle:border-orange-300 " +
           (mounted ? "translate-x-0" : "-translate-x-full")
         }
       >
@@ -356,245 +394,331 @@ export function WidgetEditorPanel({
         </div>
 
         <label className="flex flex-col gap-1">
-          <span className={labelClasses}>Chart type</span>
-          <select value={type} onChange={(e) => setType(e.target.value as WidgetType)} className={selectClasses}>
-            {WIDGET_TYPE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className={labelClasses}>Metric</span>
-          <select value={metric} onChange={(e) => setMetric(e.target.value as Metric)} className={selectClasses}>
-            {METRIC_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {needsGroupBy && (
-          <label className="flex flex-col gap-1">
-            <span className={labelClasses}>Group by</span>
-            <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className={selectClasses}>
-              <option value="" disabled>
-                Select…
-              </option>
-              {GROUP_BY_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-
-        {showLimit && (
-          <label className="flex flex-col gap-1">
-            <span className={labelClasses}>Top N (rest folds into &quot;Other&quot;)</span>
-            <input
-              type="number"
-              min={1}
-              max={100}
-              value={limit}
-              onChange={(e) => setLimit(e.target.value)}
-              placeholder="No limit"
-              className={selectClasses}
-            />
-          </label>
-        )}
-
-        {type === "stat" && (
-          <label className="flex items-center gap-2">
-            <input type="checkbox" checked={compareToPrevious} onChange={(e) => setCompareToPrevious(e.target.checked)} />
-            <span className="text-sm">Compare to prior period</span>
-          </label>
-        )}
-
-        <div className="flex flex-col gap-2 border-t border-black/[.06] pt-4 dark:border-white/[.08]">
-          <span className={labelClasses}>Date range</span>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {([1, 3, 6, 12] as const).map((m) => (
-              <button
-                key={m}
-                type="button"
-                onClick={() => {
-                  setDateMode("relative");
-                  setRelativeMonths(m);
-                }}
-                className={pillClasses(dateMode === "relative" && relativeMonths === m)}
-              >
-                {m}mo
-              </button>
-            ))}
-            <button type="button" onClick={() => setDateMode("allTime")} className={pillClasses(dateMode === "allTime")}>
-              All time
-            </button>
-            <button type="button" onClick={() => setDateMode("specific")} className={pillClasses(dateMode === "specific")}>
-              One month
-            </button>
-            <button type="button" onClick={() => setDateMode("custom")} className={pillClasses(dateMode === "custom")}>
-              Custom range
-            </button>
-          </div>
-
-          {dateMode === "specific" && (
-            <input
-              type="month"
-              value={specificMonth}
-              onChange={(e) => setSpecificMonth(e.target.value)}
-              className={selectClasses}
-            />
-          )}
-          {dateMode === "custom" && (
-            <div className="flex items-center gap-2">
-              <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
-              <span className="text-xs text-zinc-500">to</span>
-              <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className={selectClasses} />
-            </div>
-          )}
-
-          {availableRange?.earliest && availableRange?.latest && (
-            <p className="text-[11px] text-zinc-500">
-              Data available: {formatDate(availableRange.earliest)} – {formatDate(availableRange.latest)}
-              {accountIds.length > 0 ? " for the selected accounts" : ""}
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-2 border-t border-black/[.06] pt-4 dark:border-white/[.08]">
-          <span className={labelClasses}>Filters (optional)</span>
-          <div className="flex flex-col gap-1">
-            <span className="text-[11px] text-zinc-500">Accounts</span>
-            <div className="flex max-h-28 flex-col gap-1 overflow-y-auto rounded-md border border-black/[.08] p-2 dark:border-white/[.1]">
-              {accounts.map((a) => (
-                <label key={a.id} className="flex items-center gap-1.5 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={accountIds.includes(a.id)}
-                    onChange={(e) =>
-                      setAccountIds((prev) => (e.target.checked ? [...prev, a.id] : prev.filter((id) => id !== a.id)))
-                    }
-                  />
-                  {a.name}
-                </label>
-              ))}
-            </div>
-          </div>
-
-          {showCategoryFilter && (
-            <div className="flex flex-col gap-1">
-              <span className="text-[11px] text-zinc-500">Categories</span>
-              <SearchableSelect
-                value=""
-                onChange={(v) => setMerchantCategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
-                options={categories
-                  .filter((c) => !merchantCategories.includes(c))
-                  .map((c) => ({ value: c, label: formatCategoryLabel(c) }))}
-                placeholder="Add category…"
-              />
-              {merchantCategories.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {merchantCategories.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => {
-                        setMerchantCategories((prev) => prev.filter((x) => x !== c));
-                        // Drop any subcategory that only belonged to the
-                        // category just removed — leaving it selected would
-                        // silently keep filtering by something no longer
-                        // reachable from the UI.
-                        const stillValid = new Set(
-                          categoryOptions
-                            .filter((opt) => opt.category !== c && merchantCategories.includes(opt.category))
-                            .map((opt) => opt.subcategory),
-                        );
-                        setMerchantSubcategories((prev) => prev.filter((s) => stillValid.has(s)));
-                      }}
-                      className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                    >
-                      {formatCategoryLabel(c)} ✕
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Only appears once at least one category is selected — lets
-                  a widget narrow further, e.g. "Dining" -> just "Coffee
-                  shops", instead of the whole category. */}
-              {subcategoriesForSelectedCategories.length > 0 && (
-                <div className="flex flex-col gap-1 pl-3">
-                  <span className="text-[11px] text-zinc-500">Subcategories (optional — narrows further)</span>
-                  <SearchableSelect
-                    value=""
-                    onChange={(v) => setMerchantSubcategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
-                    options={subcategoriesForSelectedCategories
-                      .filter((s) => !merchantSubcategories.includes(s))
-                      .map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
-                    placeholder="Add subcategory…"
-                  />
-                  {merchantSubcategories.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {merchantSubcategories.map((s) => (
-                        <button
-                          key={s}
-                          type="button"
-                          onClick={() => setMerchantSubcategories((prev) => prev.filter((x) => x !== s))}
-                          className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                        >
-                          {formatCategoryLabel(s)} ✕
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-
-          {showTransactionCategoryFilter && (
-            <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-zinc-500">Transaction type</span>
-              <select value={transactionCategory} onChange={(e) => setTransactionCategory(e.target.value)} className={selectClasses}>
-                <option value="">Any</option>
-                {TRANSACTION_CATEGORY_OPTIONS.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-        </div>
-
-        <label className="flex flex-col gap-1 border-t border-black/[.06] pt-4 dark:border-white/[.08]">
           <span className={labelClasses}>Title (optional — auto-generated if left blank)</span>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className={selectClasses} />
         </label>
 
-        {showAxisLabels && (
-          <div className="flex flex-col gap-2">
-            <span className={labelClasses}>Axis titles (optional)</span>
-            <input
-              type="text"
-              value={xAxisLabel}
-              onChange={(e) => setXAxisLabel(e.target.value)}
-              placeholder="X axis title"
-              className={selectClasses}
-            />
-            <input
-              type="text"
-              value={yAxisLabel}
-              onChange={(e) => setYAxisLabel(e.target.value)}
-              placeholder="Y axis title"
-              className={selectClasses}
-            />
+        <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] items-start gap-4">
+          {/* Left column: which accounts feed this widget — hidden for a
+              text tile, which has no data behind it at all. */}
+          {!isText && (
+            <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
+              <span className={labelClasses}>Data sources</span>
+              <label className="flex items-center gap-2 border-b border-black/[.06] pb-2 text-sm dark:border-white/[.08]">
+                <input
+                  type="checkbox"
+                  checked={allAccountsChecked || accountIds.length === 0}
+                  onChange={() => setAccountIds([])}
+                />
+                All connected accounts
+              </label>
+              <div className="flex flex-col gap-1.5">
+                {accounts.map((a) => (
+                  <label key={a.id} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={accountIds.includes(a.id)}
+                      onChange={(e) =>
+                        setAccountIds((prev) => (e.target.checked ? [...prev, a.id] : prev.filter((id) => id !== a.id)))
+                      }
+                    />
+                    {a.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Right column: what kind of tile, then (once picked) its
+              type-specific config, then filters/style below that. */}
+          <div className={"flex flex-col gap-3" + (isText ? " col-span-2" : "")}>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => pickType("bar")}
+                className={squareClasses(!isText)}
+                title="Graph"
+                aria-label="Graph"
+              >
+                <GraphIcon />
+              </button>
+              <button
+                type="button"
+                onClick={() => pickType("text")}
+                className={squareClasses(isText)}
+                title="Text"
+                aria-label="Text"
+              >
+                <TextIcon />
+              </button>
+            </div>
+
+            {typeChosen && isText && (
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Type what this tile should say"
+                rows={4}
+                className={selectClasses}
+              />
+            )}
+
+            {typeChosen && !isText && (
+              <>
+                <div className="flex flex-wrap gap-1.5">
+                  {CHART_TYPE_OPTIONS.map(({ value, label, Icon }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setType(value)}
+                      className={squareClasses(type === value)}
+                      title={label}
+                      aria-label={label}
+                    >
+                      <Icon />
+                    </button>
+                  ))}
+                </div>
+
+                <label className="flex flex-col gap-1">
+                  <span className={labelClasses}>Metric</span>
+                  <select value={metric} onChange={(e) => setMetric(e.target.value as Metric)} className={selectClasses}>
+                    {METRIC_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {needsGroupBy && (
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClasses}>Group by</span>
+                    <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className={selectClasses}>
+                      <option value="" disabled>
+                        Select…
+                      </option>
+                      {GROUP_BY_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>
+                          {o.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
+                {showLimit && (
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClasses}>Top N (rest folds into &quot;Other&quot;)</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={limit}
+                      onChange={(e) => setLimit(e.target.value)}
+                      placeholder="No limit"
+                      className={selectClasses}
+                    />
+                  </label>
+                )}
+
+                {type === "stat" && (
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={compareToPrevious} onChange={(e) => setCompareToPrevious(e.target.checked)} />
+                    <span className="text-sm">Compare to prior period</span>
+                  </label>
+                )}
+
+                {showAxisLabels && (
+                  <div className="flex flex-col gap-2">
+                    <span className={labelClasses}>Axis titles (optional)</span>
+                    <input
+                      type="text"
+                      value={xAxisLabel}
+                      onChange={(e) => setXAxisLabel(e.target.value)}
+                      placeholder="X axis title"
+                      className={selectClasses}
+                    />
+                    <input
+                      type="text"
+                      value={yAxisLabel}
+                      onChange={(e) => setYAxisLabel(e.target.value)}
+                      placeholder="Y axis title"
+                      className={selectClasses}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Nothing in here applies to a text tile (no color, no data
+                filters) — showing an empty box would just look broken. */}
+            {typeChosen && !isText && (
+              <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
+                <span className={labelClasses}>Filters and style</span>
+
+                {showColor && (
+                  <div className="flex items-center gap-1.5">
+                    {WIDGET_COLORS.map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setColor(color === c ? undefined : c)}
+                        aria-label={`Color ${c}`}
+                        className={
+                          "h-6 w-6 rounded-full border-2 transition-transform " +
+                          (color === c ? "scale-110 border-zinc-900 dark:border-zinc-50" : "border-transparent")
+                        }
+                        style={{ backgroundColor: c }}
+                      />
+                    ))}
+                  </div>
+                )}
+
+                {!isText && (
+                  <>
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[11px] text-zinc-500">Date range</span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {([1, 3, 6, 12] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => {
+                              setDateMode("relative");
+                              setRelativeMonths(m);
+                            }}
+                            className={pillClasses(dateMode === "relative" && relativeMonths === m)}
+                          >
+                            {m}mo
+                          </button>
+                        ))}
+                        <button type="button" onClick={() => setDateMode("allTime")} className={pillClasses(dateMode === "allTime")}>
+                          All time
+                        </button>
+                        <button type="button" onClick={() => setDateMode("specific")} className={pillClasses(dateMode === "specific")}>
+                          One month
+                        </button>
+                        <button type="button" onClick={() => setDateMode("custom")} className={pillClasses(dateMode === "custom")}>
+                          Custom range
+                        </button>
+                      </div>
+
+                      {dateMode === "specific" && (
+                        <input
+                          type="month"
+                          value={specificMonth}
+                          onChange={(e) => setSpecificMonth(e.target.value)}
+                          className={selectClasses}
+                        />
+                      )}
+                      {dateMode === "custom" && (
+                        <div className="flex items-center gap-2">
+                          <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
+                          <span className="text-xs text-zinc-500">to</span>
+                          <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className={selectClasses} />
+                        </div>
+                      )}
+
+                      {availableRange?.earliest && availableRange?.latest && (
+                        <p className="text-[11px] text-zinc-500">
+                          Data available: {formatDate(availableRange.earliest)} – {formatDate(availableRange.latest)}
+                          {accountIds.length > 0 ? " for the selected accounts" : ""}
+                        </p>
+                      )}
+                    </div>
+
+                    {showCategoryFilter && (
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] text-zinc-500">Categories</span>
+                        <SearchableSelect
+                          value=""
+                          onChange={(v) => setMerchantCategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
+                          options={categories
+                            .filter((c) => !merchantCategories.includes(c))
+                            .map((c) => ({ value: c, label: formatCategoryLabel(c) }))}
+                          placeholder="Add category…"
+                        />
+                        {merchantCategories.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {merchantCategories.map((c) => (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => {
+                                  setMerchantCategories((prev) => prev.filter((x) => x !== c));
+                                  // Drop any subcategory that only belonged to
+                                  // the category just removed — leaving it
+                                  // selected would silently keep filtering by
+                                  // something no longer reachable from the UI.
+                                  const stillValid = new Set(
+                                    categoryOptions
+                                      .filter((opt) => opt.category !== c && merchantCategories.includes(opt.category))
+                                      .map((opt) => opt.subcategory),
+                                  );
+                                  setMerchantSubcategories((prev) => prev.filter((s) => stillValid.has(s)));
+                                }}
+                                className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                              >
+                                {formatCategoryLabel(c)} ✕
+                              </button>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Only appears once at least one category is
+                            selected — lets a widget narrow further, e.g.
+                            "Dining" -> just "Coffee shops", instead of the
+                            whole category. */}
+                        {subcategoriesForSelectedCategories.length > 0 && (
+                          <div className="flex flex-col gap-1 pl-3">
+                            <span className="text-[11px] text-zinc-500">Subcategories (optional — narrows further)</span>
+                            <SearchableSelect
+                              value=""
+                              onChange={(v) => setMerchantSubcategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
+                              options={subcategoriesForSelectedCategories
+                                .filter((s) => !merchantSubcategories.includes(s))
+                                .map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
+                              placeholder="Add subcategory…"
+                            />
+                            {merchantSubcategories.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {merchantSubcategories.map((s) => (
+                                  <button
+                                    key={s}
+                                    type="button"
+                                    onClick={() => setMerchantSubcategories((prev) => prev.filter((x) => x !== s))}
+                                    className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                                  >
+                                    {formatCategoryLabel(s)} ✕
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {showTransactionCategoryFilter && (
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-zinc-500">Transaction type</span>
+                        <select value={transactionCategory} onChange={(e) => setTransactionCategory(e.target.value)} className={selectClasses}>
+                          <option value="">Any</option>
+                          {TRANSACTION_CATEGORY_OPTIONS.map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
           </div>
-        )}
+        </div>
 
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 

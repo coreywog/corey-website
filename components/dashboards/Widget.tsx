@@ -40,7 +40,15 @@ function axisLabelProp(text: string | undefined, position: "insideBottom" | "ins
   return text ? { value: text, position, angle, style: { fontSize: 11, textAnchor: "middle" as const } } : undefined;
 }
 
-function LineWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabels?: { x?: string; y?: string } }) {
+function LineWidget({
+  points,
+  axisLabels,
+  color,
+}: {
+  points: AggregatedPoint[];
+  axisLabels?: { x?: string; y?: string };
+  color?: string;
+}) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -63,7 +71,7 @@ function LineWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLab
           label={axisLabelProp(axisLabels?.y, "insideLeft", -90)}
         />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
-        <Line type="monotone" dataKey="value" stroke="#6366f1" strokeWidth={2} dot={false} isAnimationActive={false} />
+        <Line type="monotone" dataKey="value" stroke={color ?? "#6366f1"} strokeWidth={2} dot={false} isAnimationActive={false} />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -121,11 +129,13 @@ function PieWidget({ points }: { points: AggregatedPoint[] }) {
   );
 }
 
-function StatWidget({ result }: { result: Extract<WidgetResult, { kind: "stat" }> }) {
+function StatWidget({ result, color }: { result: Extract<WidgetResult, { kind: "stat" }>; color?: string }) {
   const delta = result.previousValue !== undefined ? result.value - result.previousValue : null;
   return (
     <div className="flex h-full flex-col items-center justify-center gap-1">
-      <div className="text-2xl font-semibold tabular-nums">{currencyFormatter.format(result.value)}</div>
+      <div className="text-2xl font-semibold tabular-nums" style={color ? { color } : undefined}>
+        {currencyFormatter.format(result.value)}
+      </div>
       {delta !== null && (
         <div
           className={
@@ -139,6 +149,12 @@ function StatWidget({ result }: { result: Extract<WidgetResult, { kind: "stat" }
         </div>
       )}
     </div>
+  );
+}
+
+function TextWidget({ text }: { text: string }) {
+  return (
+    <div className="h-full overflow-y-auto whitespace-pre-wrap text-sm text-zinc-700 dark:text-zinc-300">{text}</div>
   );
 }
 
@@ -182,16 +198,25 @@ export function Widget({ widget }: { widget: WidgetWithData }) {
           <div className="flex h-full items-center justify-center text-center text-sm text-red-600 dark:text-red-400">
             {widget.result.error}
           </div>
+        ) : widget.result.kind === "text" ? (
+          <TextWidget text={widget.result.text} />
         ) : widget.result.kind === "stat" ? (
-          <StatWidget result={widget.result} />
+          <StatWidget result={widget.result} color={widget.config?.dataSource === "transactions" ? widget.config.color : undefined} />
         ) : widget.type === "bar" ? (
-          <BarWidget points={widget.result.points} axisLabels={widget.config?.axisLabels} />
+          <BarWidget
+            points={widget.result.points}
+            axisLabels={widget.config?.dataSource === "transactions" ? widget.config.axisLabels : undefined}
+          />
         ) : widget.type === "pie" ? (
           <PieWidget points={widget.result.points} />
         ) : widget.type === "table" ? (
           <TableWidget points={widget.result.points} />
         ) : (
-          <LineWidget points={widget.result.points} axisLabels={widget.config?.axisLabels} />
+          <LineWidget
+            points={widget.result.points}
+            axisLabels={widget.config?.dataSource === "transactions" ? widget.config.axisLabels : undefined}
+            color={widget.config?.dataSource === "transactions" ? widget.config.color : undefined}
+          />
         )}
       </div>
     </div>
