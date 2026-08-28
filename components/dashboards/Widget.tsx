@@ -1,9 +1,12 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   CartesianGrid,
   Line,
   LineChart,
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   Pie,
@@ -12,12 +15,13 @@ import {
   ScatterChart,
   Cell,
   Tooltip,
+  Legend,
   XAxis,
   YAxis,
   ResponsiveContainer,
 } from "recharts";
-import type { AggregatedPoint, ScatterPoint, WidgetResult } from "@/lib/dashboardQuery";
-import type { WidgetConfig } from "@/lib/dashboardConfig";
+import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
+import type { WidgetConfig, ChartWidgetConfig } from "@/lib/dashboardConfig";
 
 export type WidgetWithData = {
   id: string;
@@ -92,6 +96,44 @@ function LineWidget({
   );
 }
 
+function AreaWidget({
+  points,
+  axisLabels,
+  color,
+}: {
+  points: AggregatedPoint[];
+  axisLabels?: { x?: string; y?: string };
+  color?: string;
+}) {
+  if (points.length === 0) return <EmptyState />;
+  const fill = color ?? "#6366f1";
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        <XAxis
+          dataKey="label"
+          tick={{ fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          minTickGap={32}
+          label={axisLabelProp(axisLabels?.x, "insideBottom")}
+        />
+        <YAxis
+          tick={{ fontSize: 12 }}
+          tickLine={false}
+          axisLine={false}
+          width={56}
+          tickFormatter={(v: number) => currencyFormatter.format(v)}
+          label={axisLabelProp(axisLabels?.y, "insideLeft", -90)}
+        />
+        <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
+        <Area type="monotone" dataKey="value" stroke={fill} strokeWidth={2} fill={fill} fillOpacity={0.2} isAnimationActive={false} />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
 function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabels?: { x?: string; y?: string } }) {
   if (points.length === 0) return <EmptyState />;
   return (
@@ -123,6 +165,30 @@ function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabe
             <Cell key={p.key} fill={p.color} />
           ))}
         </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function StackedBarWidget({ points, series }: { points: StackedPoint[]; series: StackedSeries[] }) {
+  if (points.length === 0) return <EmptyState />;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: 28 }}>
+        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        <XAxis dataKey="x" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} interval={0} angle={-20} textAnchor="end" height={40} />
+        <YAxis
+          tick={{ fontSize: 12 }}
+          tickLine={false}
+          axisLine={false}
+          width={56}
+          tickFormatter={(v: number) => currencyFormatter.format(v)}
+        />
+        <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        {series.map((s) => (
+          <Bar key={s.key} dataKey={s.key} name={s.label} stackId="stack" fill={s.color} isAnimationActive={false} />
+        ))}
       </BarChart>
     </ResponsiveContainer>
   );
@@ -237,6 +303,101 @@ function TableWidget({ points }: { points: AggregatedPoint[] }) {
   );
 }
 
+// GitHub-style day grid — one cell per day the "day"-grouped series covers,
+// shaded by value magnitude relative to the max day in range. Weeks run
+// top-to-bottom in columns (Sun..Sat rows), oldest week on the left, same
+// convention as a contributions graph.
+function CalendarWidget({ points, color }: { points: AggregatedPoint[]; color?: string }) {
+  if (points.length === 0) return <EmptyState />;
+  const byDate = new Map(points.map((p) => [p.key, p.value]));
+  const dates = points.map((p) => new Date(`${p.key}T00:00:00.000Z`));
+  const start = new Date(Math.min(...dates.map((d) => d.getTime())));
+  const end = new Date(Math.max(...dates.map((d) => d.getTime())));
+  // Back up to the preceding Sunday so the grid's first column is a full week.
+  const gridStart = new Date(start);
+  gridStart.setUTCDate(gridStart.getUTCDate() - gridStart.getUTCDay());
+
+  const maxAbs = Math.max(1, ...points.map((p) => Math.abs(p.value)));
+  const accent = color ?? "#6366f1";
+  const weeks: { date: Date; iso: string; value: number }[][] = [];
+  const cursor = new Date(gridStart);
+  let week: { date: Date; iso: string; value: number }[] = [];
+  while (cursor <= end) {
+    const iso = cursor.toISOString().slice(0, 10);
+    week.push({ date: new Date(cursor), iso, value: byDate.get(iso) ?? 0 });
+    if (week.length === 7) {
+      weeks.push(week);
+      week = [];
+    }
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  if (week.length > 0) weeks.push(week);
+
+  return (
+    <div className="flex h-full items-center overflow-x-auto">
+      <div className="flex gap-[3px]">
+        {weeks.map((w, wi) => (
+          <div key={wi} className="flex flex-col gap-[3px]">
+            {w.map((d) => {
+              const inRange = d.date >= start && d.date <= end;
+              const opacity = inRange ? 0.12 + 0.88 * (Math.abs(d.value) / maxAbs) : 0;
+              return (
+                <div
+                  key={d.iso}
+                  title={inRange ? `${d.iso}: ${currencyFormatter.format(d.value)}` : undefined}
+                  className="h-3 w-3 rounded-sm"
+                  style={{ backgroundColor: inRange ? accent : "transparent", opacity: inRange ? opacity : 0 }}
+                />
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const DATE_PRESETS = [
+  { label: "1mo", months: 1 as const },
+  { label: "3mo", months: 3 as const },
+  { label: "6mo", months: 6 as const },
+  { label: "1yr", months: 12 as const },
+];
+
+/**
+ * The small "1mo/3mo/6mo/1yr/All" row a widget can opt into (config.
+ * showDateButtons — see lib/dashboardConfig.ts) so a viewer can change its
+ * range without opening the editor. Re-fetches through the same preview
+ * endpoint the editor's own live preview uses, entirely client-side —
+ * never touches the saved config, so it's purely a per-viewer, per-session
+ * override.
+ */
+function DateRangeButtons({
+  active,
+  onChange,
+}: {
+  active: "allTime" | 1 | 3 | 6 | 12 | null;
+  onChange: (next: "allTime" | 1 | 3 | 6 | 12) => void;
+}) {
+  const btnClasses = (isActive: boolean) =>
+    "rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors " +
+    (isActive
+      ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900"
+      : "text-zinc-500 hover:bg-black/[.06] dark:text-zinc-400 dark:hover:bg-white/[.1]");
+  return (
+    <div className="flex shrink-0 items-center gap-1 px-3 pt-2">
+      {DATE_PRESETS.map((p) => (
+        <button key={p.months} type="button" onClick={() => onChange(p.months)} className={btnClasses(active === p.months)}>
+          {p.label}
+        </button>
+      ))}
+      <button type="button" onClick={() => onChange("allTime")} className={btnClasses(active === "allTime")}>
+        All
+      </button>
+    </div>
+  );
+}
+
 /**
  * One dashboard tile. The drag handle is scoped to just the title bar
  * (`.widget-drag-handle`, matched by DashboardGrid's dragConfig) so
@@ -245,41 +406,70 @@ function TableWidget({ points }: { points: AggregatedPoint[] }) {
  */
 export function Widget({ widget }: { widget: WidgetWithData }) {
   const title = widget.title ?? "Widget";
+  const chartConfig = widget.config?.dataSource === "transactions" ? widget.config : undefined;
+  const showDateButtons = Boolean(chartConfig?.showDateButtons);
+
+  const [rangeOverride, setRangeOverride] = useState<"allTime" | 1 | 3 | 6 | 12 | null>(null);
+  const [overrideResult, setOverrideResult] = useState<WidgetResult | { error: string } | null>(null);
+
+  useEffect(() => {
+    if (rangeOverride === null || !chartConfig) return;
+    let cancelled = false;
+    const dateRange: ChartWidgetConfig["dateRange"] =
+      rangeOverride === "allTime" ? { mode: "allTime" } : { mode: "relative", months: rangeOverride };
+    fetch("/api/dashboards/widgets/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: widget.type, config: { ...chartConfig, dateRange } }),
+    })
+      .then((res) => res.json())
+      .then((body) => {
+        if (!cancelled) setOverrideResult(body.result ?? { error: "Failed to load this range." });
+      })
+      .catch(() => {
+        if (!cancelled) setOverrideResult({ error: "Network error." });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chartConfig is a fresh object every render (derived from widget.config); only rangeOverride and the widget identity should re-trigger this.
+  }, [rangeOverride, widget.type, widget.id]);
+
+  const result = rangeOverride !== null && overrideResult ? overrideResult : widget.result;
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-black/[.08] bg-[var(--background)] dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
       <div className="widget-drag-handle cursor-move select-none border-b border-black/[.08] px-3 py-2 text-sm font-medium text-zinc-500 dark:border-white/[.1] dark:text-zinc-500 creamsicle:border-orange-200 creamsicle:text-orange-700">
         {title}
       </div>
+      {showDateButtons && chartConfig && (
+        <DateRangeButtons active={rangeOverride} onChange={setRangeOverride} />
+      )}
       <div className="min-h-0 flex-1 p-3">
-        {"error" in widget.result ? (
+        {"error" in result ? (
           <div className="flex h-full items-center justify-center text-center text-sm text-red-600 dark:text-red-400">
-            {widget.result.error}
+            {result.error}
           </div>
-        ) : widget.result.kind === "text" ? (
-          <TextWidget text={widget.result.text} />
-        ) : widget.result.kind === "scatter" ? (
-          <ScatterWidget
-            points={widget.result.points}
-            axisLabels={widget.config?.dataSource === "transactions" ? widget.config.axisLabels : undefined}
-          />
-        ) : widget.result.kind === "stat" ? (
-          <StatWidget result={widget.result} color={widget.config?.dataSource === "transactions" ? widget.config.color : undefined} />
-        ) : widget.type === "bar" ? (
-          <BarWidget
-            points={widget.result.points}
-            axisLabels={widget.config?.dataSource === "transactions" ? widget.config.axisLabels : undefined}
-          />
+        ) : result.kind === "text" ? (
+          <TextWidget text={result.text} />
+        ) : result.kind === "scatter" ? (
+          <ScatterWidget points={result.points} axisLabels={chartConfig?.axisLabels} />
+        ) : result.kind === "stacked" ? (
+          <StackedBarWidget points={result.points} series={result.series} />
+        ) : result.kind === "stat" ? (
+          <StatWidget result={result} color={chartConfig?.color} />
+        ) : widget.type === "bar" || widget.type === "histogram" ? (
+          <BarWidget points={result.points} axisLabels={chartConfig?.axisLabels} />
         ) : widget.type === "pie" ? (
-          <PieWidget points={widget.result.points} />
+          <PieWidget points={result.points} />
         ) : widget.type === "table" ? (
-          <TableWidget points={widget.result.points} />
+          <TableWidget points={result.points} />
+        ) : widget.type === "calendar" ? (
+          <CalendarWidget points={result.points} color={chartConfig?.color} />
+        ) : widget.type === "area" ? (
+          <AreaWidget points={result.points} axisLabels={chartConfig?.axisLabels} color={chartConfig?.color} />
         ) : (
-          <LineWidget
-            points={widget.result.points}
-            axisLabels={widget.config?.dataSource === "transactions" ? widget.config.axisLabels : undefined}
-            color={widget.config?.dataSource === "transactions" ? widget.config.color : undefined}
-          />
+          <LineWidget points={result.points} axisLabels={chartConfig?.axisLabels} color={chartConfig?.color} />
         )}
       </div>
     </div>

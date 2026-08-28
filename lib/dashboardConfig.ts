@@ -38,7 +38,19 @@ const axisLabelsSchema = z
   })
   .optional();
 
-export const WIDGET_TYPES = ["line", "bar", "pie", "stat", "table", "scatter", "text"] as const;
+export const WIDGET_TYPES = [
+  "line",
+  "area",
+  "bar",
+  "stackedBar",
+  "pie",
+  "stat",
+  "table",
+  "scatter",
+  "histogram",
+  "calendar",
+  "text",
+] as const;
 export type WidgetType = (typeof WIDGET_TYPES)[number];
 
 export const METRICS = ["spendingTotal", "incomeTotal", "net", "transactionCount"] as const;
@@ -66,8 +78,13 @@ const chartConfigSchema = z.object({
   limit: z.number().int().positive().max(1000).optional(),
   sort: z.enum(["totalDesc", "totalAsc", "labelAsc"]).optional(), // ignored when groupBy is day/month — see lib/dashboardQuery.ts
   compareToPrevious: z.boolean().optional(), // stat tiles only
-  axisLabels: axisLabelsSchema, // line/bar only — read directly off config by components/dashboards/Widget.tsx
-  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), // line/stat only, see above — any hex, not just the presets
+  axisLabels: axisLabelsSchema, // line/area/bar/scatter/histogram only — read directly off config by components/dashboards/Widget.tsx
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), // line/area/stat only, see above — any hex, not just the presets
+  // Renders a small "1mo/3mo/6mo/1yr/All" row on the tile itself — on the
+  // live dashboard, not just the editor — that overrides dateRange for
+  // that viewer's session only (re-fetches via the same preview endpoint
+  // the editor uses; never touches the saved config). See Widget.tsx.
+  showDateButtons: z.boolean().optional(),
 });
 
 // A free-text tile — no data behind it at all, just whatever the user

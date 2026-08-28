@@ -10,10 +10,18 @@ export type AggregatedPoint = { key: string; label: string; value: number; color
 // type === "scatter"). x is always a date (recharts numeric axis); y is the
 // transaction's contribution to whichever metric was picked.
 export type ScatterPoint = { x: number; y: number; label: string; color: string };
+// One x-axis bucket (e.g. a month) holding a value per stacked series (e.g.
+// each merchant category) — recharts' own preferred "wide" shape for a
+// stacked bar chart, one <Bar dataKey> per series. Keyed by series `key`,
+// not `label`, so a category whose display label collides with `x`/`label`
+// can't clobber them.
+export type StackedPoint = { x: string; label: string; [seriesKey: string]: number | string };
+export type StackedSeries = { key: string; label: string; color: string };
 export type WidgetResult =
   | { kind: "series"; points: AggregatedPoint[] }
   | { kind: "stat"; value: number; previousValue?: number }
   | { kind: "scatter"; points: ScatterPoint[] }
+  | { kind: "stacked"; points: StackedPoint[]; series: StackedSeries[] }
   | { kind: "text"; text: string };
 
 type DecryptedRow = {
@@ -183,6 +191,85 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     // transactions in a long date range would be a strange default.
     const capped = config.limit && points.length > config.limit ? points.slice(-config.limit) : points;
     return { kind: "scatter", points: capped };
+  }
+
+  // A distribution of transaction sizes, not a bucket per groupBy — bins by
+  // magnitude instead, so (like scatter) it skips the groupBy branch below.
+  if (type === "histogram") {
+    const values: number[] = [];
+    for (const r of rows) {
+      const c = metricContribution(r, config.metric);
+      if (c !== null) values.push(Math.abs(c));
+    }
+    if (values.length === 0) return { kind: "series", points: [] };
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const BIN_COUNT = 12;
+    const binSize = (max - min) / BIN_COUNT || 1; // ||1 guards every value being identical (max === min)
+    const counts = new Array<number>(BIN_COUNT).fill(0);
+    for (const v of values) {
+      const idx = Math.min(BIN_COUNT - 1, Math.max(0, Math.floor((v - min) / binSize)));
+      counts[idx]++;
+    }
+    const money = (n: number) => `$${Math.round(n).toLocaleString()}`;
+    const points: AggregatedPoint[] = counts.map((count, i) => {
+      const lo = min + i * binSize;
+      const hi = lo + binSize;
+      return { key: String(i), label: `${money(lo)}–${money(hi)}`, value: count, color: colorForKey(String(i)) };
+    });
+    return { kind: "series", points };
+  }
+
+  // One series per (top-N) merchant category, stacked per groupBy bucket —
+  // e.g. spending by category, stacked per month. Needs its own "wide" row
+  // shape (one column per series), not the single `value` AggregatedPoint
+  // shape everything else here produces.
+  if (type === "stackedBar" && config.groupBy) {
+    const xGroupBy = config.groupBy;
+    const cellsByX = new Map<string, Map<string, number>>();
+    const xLabels = new Map<string, string>();
+    const categoryTotals = new Map<string, number>();
+    for (const r of rows) {
+      const contribution = metricContribution(r, config.metric);
+      if (contribution === null) continue;
+      const { key: xKey, label: xLabel } = keyAndLabelFor(r, xGroupBy);
+      xLabels.set(xKey, xLabel);
+      const catKey = r.merchantCategory ?? "other";
+      if (!cellsByX.has(xKey)) cellsByX.set(xKey, new Map());
+      const cell = cellsByX.get(xKey)!;
+      cell.set(catKey, (cell.get(catKey) ?? 0) + contribution);
+      categoryTotals.set(catKey, (categoryTotals.get(catKey) ?? 0) + contribution);
+    }
+
+    // Reuses `limit` for "how many categories to stack" here, same as it
+    // means "top N bars" for a plain bar chart — folds the rest into
+    // "Other" rather than letting the legend run to dozens of categories.
+    const topN = config.limit ?? 6;
+    const rankedCategories = [...categoryTotals.entries()].sort((a, b) => b[1] - a[1]).map(([k]) => k);
+    const keptCategories = rankedCategories.slice(0, topN);
+    const hasOverflow = rankedCategories.length > topN;
+    const OTHER_KEY = "__other__";
+    const series: StackedSeries[] = keptCategories.map((k) => ({
+      key: k,
+      label: formatCategoryLabel(k),
+      color: colorForCategory(k),
+    }));
+    if (hasOverflow) series.push({ key: OTHER_KEY, label: "Other", color: colorForKey("Other") });
+
+    const isTimeSeries = xGroupBy === "day" || xGroupBy === "month";
+    const xKeys = [...cellsByX.keys()].sort((a, b) => (isTimeSeries ? a.localeCompare(b) : 0));
+    const points: StackedPoint[] = xKeys.map((xKey) => {
+      const cell = cellsByX.get(xKey)!;
+      const point: StackedPoint = { x: xLabels.get(xKey) ?? xKey, label: xLabels.get(xKey) ?? xKey };
+      let otherSum = 0;
+      for (const [catKey, value] of cell.entries()) {
+        if (keptCategories.includes(catKey)) point[catKey] = round2(value);
+        else otherSum += value;
+      }
+      if (hasOverflow) point[OTHER_KEY] = round2(otherSum);
+      return point;
+    });
+    return { kind: "stacked", points, series };
   }
 
   if (!config.groupBy) {

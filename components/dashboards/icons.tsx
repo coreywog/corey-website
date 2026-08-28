@@ -81,3 +81,42 @@ export function TableIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+export function AreaChartIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} strokeWidth={1.6} strokeLinejoin="round">
+      <path d="M3 14l4-5 3 3 6-7v10.5H3Z" fill="currentColor" fillOpacity={0.25} stroke="currentColor" strokeLinecap="round" />
+      <path d="M2.5 16.5h15" strokeOpacity={0.4} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function StackedBarIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M5 15v-3M5 10.5V9M10 15v-5M10 8.5V5M15 15v-2M15 11.5V9" strokeOpacity={1} />
+      <path d="M2.5 16.5h15" strokeOpacity={0.4} />
+    </svg>
+  );
+}
+
+export function HistogramIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} strokeWidth={1.6} strokeLinejoin="round">
+      <path d="M3 15V12H6V9H9V6H11V9H14V12H17V15Z" fill="currentColor" stroke="none" />
+      <path d="M2.5 16.5h15" strokeOpacity={0.4} strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function CalendarIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="14" height="12" rx="1.5" />
+      <path d="M3 8h14" />
+      <rect x="5.5" y="10" width="2" height="2" fill="currentColor" stroke="none" />
+      <rect x="9" y="10" width="2" height="2" fill="currentColor" stroke="none" fillOpacity={0.5} />
+      <rect x="12.5" y="10" width="2" height="2" fill="currentColor" stroke="none" fillOpacity={0.25} />
+    </svg>
+  );
+}

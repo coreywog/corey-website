@@ -3,7 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatCategoryLabel } from "@/lib/finance";
 import { SearchableSelect } from "@/components/finance/SearchableSelect";
-import { GraphIcon, TextIcon, LineChartIcon, BarChartIcon, PieChartIcon, StatIcon, TableIcon, ScatterIcon } from "./icons";
+import {
+  GraphIcon,
+  TextIcon,
+  LineChartIcon,
+  AreaChartIcon,
+  BarChartIcon,
+  StackedBarIcon,
+  PieChartIcon,
+  StatIcon,
+  TableIcon,
+  ScatterIcon,
+  HistogramIcon,
+  CalendarIcon,
+} from "./icons";
 import { Widget, type WidgetWithData } from "./Widget";
 import type { WidgetConfig, ChartWidgetConfig, WidgetType, Metric, GroupBy } from "@/lib/dashboardConfig";
 import { WIDGET_COLORS } from "@/lib/dashboardConfig";
@@ -28,9 +41,13 @@ export type WidgetDraft = {
 
 const CHART_TYPE_OPTIONS: { value: ChartType; label: string; Icon: typeof LineChartIcon }[] = [
   { value: "line", label: "Line", Icon: LineChartIcon },
+  { value: "area", label: "Area", Icon: AreaChartIcon },
   { value: "bar", label: "Bar", Icon: BarChartIcon },
+  { value: "stackedBar", label: "Stacked bar", Icon: StackedBarIcon },
   { value: "pie", label: "Pie", Icon: PieChartIcon },
   { value: "scatter", label: "Scatter", Icon: ScatterIcon },
+  { value: "histogram", label: "Histogram", Icon: HistogramIcon },
+  { value: "calendar", label: "Calendar", Icon: CalendarIcon },
   { value: "stat", label: "Stat", Icon: StatIcon },
   { value: "table", label: "Table", Icon: TableIcon },
 ];
@@ -180,6 +197,7 @@ export function WidgetEditorPanel({
   const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
   const [xAxisLabel, setXAxisLabel] = useState(chartConfig?.axisLabels?.x ?? "");
   const [yAxisLabel, setYAxisLabel] = useState(chartConfig?.axisLabels?.y ?? "");
+  const [showDateButtons, setShowDateButtons] = useState(chartConfig?.showDateButtons ?? false);
 
   const [preview, setPreview] = useState<WidgetWithData["result"] | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -202,13 +220,19 @@ export function WidgetEditorPanel({
   // instead of one point per bucket, so it has no groupBy at all — closer
   // kin to a stat tile in that respect, even though it renders a chart.
   const isScatter = type === "scatter";
-  const needsGroupBy = !isText && !isScatter && type !== "stat";
+  const isHistogram = type === "histogram";
+  const isStackedBar = type === "stackedBar";
+  const isCalendar = type === "calendar";
+  // None of these three group by a picked field the normal way: scatter and
+  // histogram plot/bin raw transactions, and calendar's grouping is always
+  // "day" — forced below in the config useMemo, not offered as a choice.
+  const needsGroupBy = !isText && !isScatter && !isHistogram && !isCalendar && type !== "stat";
   const showCategoryFilter = groupBy !== "merchantCategory";
   const isTimeSeries = groupBy === "day" || groupBy === "month";
-  const showLimit = needsGroupBy && groupBy !== "" && !isTimeSeries && (type === "bar" || type === "pie");
+  const showLimit = (needsGroupBy && groupBy !== "" && !isTimeSeries && (type === "bar" || type === "pie")) || isStackedBar;
   const showTransactionCategoryFilter = metric === "net" || metric === "transactionCount";
-  const showAxisLabels = type === "line" || type === "bar" || isScatter;
-  const showColor = type === "line" || type === "stat";
+  const showAxisLabels = type === "line" || type === "area" || type === "bar" || isScatter || isHistogram;
+  const showColor = type === "line" || type === "area" || type === "stat" || isCalendar;
   // Every account explicitly checked, individually, one at a time — not the
   // same as an empty selection (which means "no filter, use the same
   // cash-flow-account default every other page uses"). Selecting every
@@ -258,15 +282,16 @@ export function WidgetEditorPanel({
     return {
       dataSource: "transactions",
       metric,
-      ...(needsGroupBy ? { groupBy: groupBy as GroupBy } : {}),
+      ...(needsGroupBy ? { groupBy: groupBy as GroupBy } : isCalendar ? { groupBy: "day" as const } : {}),
       dateRange,
       ...(Object.keys(filters).length ? { filters } : {}),
       ...((showLimit || isScatter) && limit ? { limit: Number(limit) } : {}),
       ...(type === "stat" ? { compareToPrevious } : {}),
       ...(axisLabels ? { axisLabels } : {}),
       ...(showColor && color ? { color } : {}),
+      ...(showDateButtons ? { showDateButtons } : {}),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- showCategoryFilter/showLimit/showTransactionCategoryFilter/needsGroupBy/showAxisLabels/showColor are all derived from type/metric/groupBy, already listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showCategoryFilter/showLimit/showTransactionCategoryFilter/needsGroupBy/isCalendar/showAxisLabels/showColor are all derived from type/metric/groupBy, already listed.
   }, [
     isText,
     text,
@@ -287,6 +312,7 @@ export function WidgetEditorPanel({
     xAxisLabel,
     yAxisLabel,
     color,
+    showDateButtons,
   ]);
 
   // Live preview — debounced, cancels a stale in-flight request rather than
@@ -535,10 +561,11 @@ export function WidgetEditorPanel({
                 <label className="flex flex-col gap-1">
                   <span className={labelClasses}>Metric</span>
                   <select value={metric} onChange={(e) => setMetric(e.target.value as Metric)} className={selectClasses}>
-                    {/* "Transaction count" is meaningless per-point (every
-                        scatter point is exactly one transaction) — hidden
-                        rather than allowed to produce a flat line of dots. */}
-                    {METRIC_OPTIONS.filter((o) => !isScatter || o.value !== "transactionCount").map((o) => (
+                    {/* "Transaction count" is meaningless per-transaction —
+                        every scatter point or histogram sample is exactly
+                        one, so it'd produce a flat line of dots or a single
+                        useless bin. Hidden rather than allowed through. */}
+                    {METRIC_OPTIONS.filter((o) => !(isScatter || isHistogram) || o.value !== "transactionCount").map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
@@ -565,7 +592,11 @@ export function WidgetEditorPanel({
                 {(showLimit || isScatter) && (
                   <label className="flex flex-col gap-1">
                     <span className={labelClasses}>
-                      {isScatter ? "Max points (most recent)" : 'Top N (rest folds into "Other")'}
+                      {isScatter
+                        ? "Max points (most recent)"
+                        : isStackedBar
+                          ? 'Top N categories to stack (rest folds into "Other")'
+                          : 'Top N (rest folds into "Other")'}
                     </span>
                     <input
                       type="number"
@@ -605,6 +636,11 @@ export function WidgetEditorPanel({
                     />
                   </div>
                 )}
+
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={showDateButtons} onChange={(e) => setShowDateButtons(e.target.checked)} />
+                  <span className="text-sm">Show date-range buttons on the tile itself</span>
+                </label>
               </>
             )}
 
@@ -613,55 +649,6 @@ export function WidgetEditorPanel({
             {typeChosen && !isText && (
               <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
                 <span className={labelClasses}>Filters and style</span>
-
-                {showColor && (
-                  <div className="flex items-center gap-1.5">
-                    {WIDGET_COLORS.map((c) => (
-                      <button
-                        key={c}
-                        type="button"
-                        onClick={() => (color === c ? clearColor() : pickColor(c))}
-                        aria-label={`Color ${c}`}
-                        className={
-                          "h-6 w-6 rounded-full border-2 transition-transform " +
-                          (color === c ? "scale-110 border-zinc-900 dark:border-zinc-50" : "border-transparent")
-                        }
-                        style={{ backgroundColor: c }}
-                      />
-                    ))}
-                    {/* Open picker — its swatch face always shows some
-                        color, so it doubles as a 7th preset once you've
-                        used it once (defaults to the first preset only for
-                        its own display, not as a selection). */}
-                    <input
-                      type="color"
-                      value={color ?? WIDGET_COLORS[0]}
-                      onChange={(e) => pickColor(e.target.value)}
-                      title="Custom color"
-                      aria-label="Custom color"
-                      className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
-                    />
-                    <input
-                      type="text"
-                      value={hexDraft}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setHexDraft(v);
-                        if (HEX_COLOR_PATTERN.test(v)) setColor(v);
-                      }}
-                      onBlur={() => {
-                        // Reverts a half-typed, never-valid hex back to
-                        // whatever color is actually in effect, rather than
-                        // leaving the field stuck showing something that
-                        // was never applied.
-                        if (!HEX_COLOR_PATTERN.test(hexDraft)) setHexDraft(color ?? "");
-                      }}
-                      placeholder="#RRGGBB"
-                      maxLength={7}
-                      className={selectClasses + " w-24 font-mono text-xs"}
-                    />
-                  </div>
-                )}
 
                 {!isText && (
                   <>
@@ -830,31 +817,86 @@ export function WidgetEditorPanel({
       </div>
 
       {/* A dedicated, always-in-the-same-spot preview, docked to the
-          drawer's own right edge — the actual grid slot this widget will
-          occupy (still driven by the same draft via onDraftChange, for
-          sizing/dragging) can end up scrolled away or easy to miss. A
-          sibling of the drawer, not a child: the drawer's overflow-y-auto
-          implicitly clips overflow-x too (a real CSS quirk — declaring only
-          one axis forces the other to `auto` as well), so an absolutely-
-          positioned child would just get cut off. left-[36rem] matches the
-          drawer's own max-w-xl exactly, which is safe only because this
-          whole panel is hidden below `lg` (1024px) — comfortably wider than
-          the drawer's 576px cap, so the drawer is always at that exact
-          width whenever this is visible. Hidden below `lg` at all: the
-          drag/resize grid builder is a desktop tool already, and there's no
-          room for a second panel next to a narrow drawer. */}
+          drawer's own right edge and stretched to fill the rest of the
+          screen — the actual grid slot this widget will occupy (still
+          driven by the same draft via onDraftChange, for sizing/dragging)
+          can end up scrolled away, or just too small to read while you're
+          mid-edit. Translucent + backdrop-blur rather than a solid panel:
+          the real dashboard grid is still visible (softened, not a hard
+          cut) behind it instead of being fully hidden. A sibling of the
+          drawer, not a child: the drawer's overflow-y-auto implicitly clips
+          overflow-x too (a real CSS quirk — declaring only one axis forces
+          the other to `auto` as well), so an absolutely-positioned child
+          would just get cut off. left-[36rem] matches the drawer's own
+          max-w-xl exactly, which is safe only because this whole panel is
+          hidden below `lg` (1024px) — comfortably wider than the drawer's
+          576px cap, so the drawer is always at that exact width whenever
+          this is visible. Hidden below `lg` at all: the drag/resize grid
+          builder is a desktop tool already, and there's no room for a
+          second panel next to a narrow drawer. */}
       <div
         className={
-          "fixed inset-y-0 left-[36rem] z-30 hidden w-80 flex-col gap-2 border-r border-black/[.1] bg-[var(--background)] p-4 transition-transform duration-200 ease-out lg:flex dark:border-white/[.15] creamsicle:border-orange-300 " +
+          "fixed inset-y-0 left-[36rem] right-0 z-30 hidden flex-col gap-3 overflow-y-auto border-l border-black/[.1] bg-[var(--background)]/70 p-5 backdrop-blur-xl transition-transform duration-200 ease-out lg:flex dark:border-white/[.15] creamsicle:border-orange-300 " +
           (mounted ? "translate-x-0" : "-translate-x-full")
         }
       >
         <span className={labelClasses}>Preview</span>
-        <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-black/[.08] dark:border-white/[.1]">
+        <div className="h-96 shrink-0 overflow-hidden rounded-xl border border-black/[.08] dark:border-white/[.1]">
           <Widget
             widget={{ id: "__preview__", type, title: title.trim() || null, x: 0, y: 0, w: 0, h: 0, result: draftResult, config }}
           />
         </div>
+
+        {typeChosen && showColor && (
+          <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+            <span className={labelClasses}>Color</span>
+            <div className="flex items-center gap-1.5">
+              {WIDGET_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => (color === c ? clearColor() : pickColor(c))}
+                  aria-label={`Color ${c}`}
+                  className={
+                    "h-6 w-6 rounded-full border-2 transition-transform " +
+                    (color === c ? "scale-110 border-zinc-900 dark:border-zinc-50" : "border-transparent")
+                  }
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+              {/* Open picker — its swatch face always shows some color, so
+                  it doubles as a 7th preset once you've used it once
+                  (defaults to the first preset only for its own display,
+                  not as a selection). */}
+              <input
+                type="color"
+                value={color ?? WIDGET_COLORS[0]}
+                onChange={(e) => pickColor(e.target.value)}
+                title="Custom color"
+                aria-label="Custom color"
+                className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+              />
+              <input
+                type="text"
+                value={hexDraft}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setHexDraft(v);
+                  if (HEX_COLOR_PATTERN.test(v)) setColor(v);
+                }}
+                onBlur={() => {
+                  // Reverts a half-typed, never-valid hex back to whatever
+                  // color is actually in effect, rather than leaving the
+                  // field stuck showing something that was never applied.
+                  if (!HEX_COLOR_PATTERN.test(hexDraft)) setHexDraft(color ?? "");
+                }}
+                placeholder="#RRGGBB"
+                maxLength={7}
+                className={selectClasses + " w-24 font-mono text-xs"}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
