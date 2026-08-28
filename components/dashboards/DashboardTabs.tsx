@@ -38,6 +38,7 @@ export function DashboardTabs({
   tabs,
   accounts,
   categoryOptions,
+  merchantOptions,
   initialPublished,
 }: {
   dashboardId: string;
@@ -45,6 +46,7 @@ export function DashboardTabs({
   tabs: Tab[];
   accounts: Account[];
   categoryOptions: CategoryOption[];
+  merchantOptions: string[];
   initialPublished: boolean;
 }) {
   const router = useRouter();
@@ -222,6 +224,7 @@ export function DashboardTabs({
           widgets={activeTab.widgets}
           accounts={accounts}
           categoryOptions={categoryOptions}
+          merchantOptions={merchantOptions}
           published={published}
         />
       )}

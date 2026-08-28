@@ -53,10 +53,22 @@ function EmptyState() {
   );
 }
 
+type AxisLabels = NonNullable<ChartWidgetConfig["axisLabels"]>;
+
 // recharts' axis `label` prop: undefined renders no title at all, so this
-// only builds one when the user actually set one.
-function axisLabelProp(text: string | undefined, position: "insideBottom" | "insideLeft", angle?: number) {
-  return text ? { value: text, position, angle, style: { fontSize: 11, textAnchor: "middle" as const } } : undefined;
+// only builds one when the user actually set one. Position and font size
+// are both user-adjustable (see the editor's Axis titles section) — insideBottom/
+// insideLeft and 11px are just the defaults when they haven't touched them.
+function axisLabelProp(axisLabels: AxisLabels | undefined, axis: "x" | "y") {
+  const text = axis === "x" ? axisLabels?.x : axisLabels?.y;
+  if (!text) return undefined;
+  const position = axis === "x" ? (axisLabels?.xPosition ?? "insideBottom") : (axisLabels?.yPosition ?? "insideLeft");
+  return {
+    value: text,
+    position,
+    angle: axis === "y" ? -90 : undefined,
+    style: { fontSize: axisLabels?.fontSize ?? 11, textAnchor: "middle" as const },
+  };
 }
 
 function LineWidget({
@@ -65,7 +77,7 @@ function LineWidget({
   color,
 }: {
   points: AggregatedPoint[];
-  axisLabels?: { x?: string; y?: string };
+  axisLabels?: AxisLabels;
   color?: string;
 }) {
   if (points.length === 0) return <EmptyState />;
@@ -79,7 +91,7 @@ function LineWidget({
           tickLine={false}
           axisLine={false}
           minTickGap={32}
-          label={axisLabelProp(axisLabels?.x, "insideBottom")}
+          label={axisLabelProp(axisLabels, "x")}
         />
         <YAxis
           tick={{ fontSize: 12 }}
@@ -87,7 +99,7 @@ function LineWidget({
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => currencyFormatter.format(v)}
-          label={axisLabelProp(axisLabels?.y, "insideLeft", -90)}
+          label={axisLabelProp(axisLabels, "y")}
         />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Line type="monotone" dataKey="value" stroke={color ?? "#6366f1"} strokeWidth={2} dot={false} isAnimationActive={false} />
@@ -102,7 +114,7 @@ function AreaWidget({
   color,
 }: {
   points: AggregatedPoint[];
-  axisLabels?: { x?: string; y?: string };
+  axisLabels?: AxisLabels;
   color?: string;
 }) {
   if (points.length === 0) return <EmptyState />;
@@ -117,7 +129,7 @@ function AreaWidget({
           tickLine={false}
           axisLine={false}
           minTickGap={32}
-          label={axisLabelProp(axisLabels?.x, "insideBottom")}
+          label={axisLabelProp(axisLabels, "x")}
         />
         <YAxis
           tick={{ fontSize: 12 }}
@@ -125,7 +137,7 @@ function AreaWidget({
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => currencyFormatter.format(v)}
-          label={axisLabelProp(axisLabels?.y, "insideLeft", -90)}
+          label={axisLabelProp(axisLabels, "y")}
         />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Area type="monotone" dataKey="value" stroke={fill} strokeWidth={2} fill={fill} fillOpacity={0.2} isAnimationActive={false} />
@@ -134,7 +146,7 @@ function AreaWidget({
   );
 }
 
-function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabels?: { x?: string; y?: string } }) {
+function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabels?: AxisLabels }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -149,7 +161,7 @@ function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabe
           angle={-20}
           textAnchor="end"
           height={40}
-          label={axisLabelProp(axisLabels?.x, "insideBottom")}
+          label={axisLabelProp(axisLabels, "x")}
         />
         <YAxis
           tick={{ fontSize: 12 }}
@@ -157,7 +169,7 @@ function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabe
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => currencyFormatter.format(v)}
-          label={axisLabelProp(axisLabels?.y, "insideLeft", -90)}
+          label={axisLabelProp(axisLabels, "y")}
         />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Bar dataKey="value" isAnimationActive={false}>
@@ -214,7 +226,7 @@ function shortDate(ms: number): string {
   return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLabels?: { x?: string; y?: string } }) {
+function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLabels?: AxisLabels }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -228,7 +240,7 @@ function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLab
           tickLine={false}
           axisLine={false}
           tickFormatter={shortDate}
-          label={axisLabelProp(axisLabels?.x, "insideBottom")}
+          label={axisLabelProp(axisLabels, "x")}
         />
         <YAxis
           dataKey="y"
@@ -237,7 +249,7 @@ function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLab
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => currencyFormatter.format(v)}
-          label={axisLabelProp(axisLabels?.y, "insideLeft", -90)}
+          label={axisLabelProp(axisLabels, "y")}
         />
         <Tooltip
           formatter={(v, name) => (name === "y" ? currencyFormatter.format(Number(v)) : shortDate(Number(v)))}

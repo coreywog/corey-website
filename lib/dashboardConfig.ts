@@ -27,14 +27,31 @@ const filtersSchema = z
     // to specific subcategories within whichever categories are selected,
     // rather than an entire category at once.
     merchantSubcategories: z.array(z.string().min(1)).optional(),
+    // Narrows to specific merchants directly — e.g. just "Amazon", not the
+    // whole "Shopping" category. Independent of merchantCategories/
+    // merchantSubcategories, not nested under them: unlike subcategory
+    // (which only narrows within an already-picked category), picking a
+    // merchant doesn't require picking a category first. Merchant names
+    // aren't a plain DB column (they're derived from the encrypted
+    // description — see lib/finance.ts's normalizeMerchantName), so this
+    // filters in application code after decryption, not in SQL — see
+    // lib/dashboardQuery.ts.
+    merchants: z.array(z.string().min(1)).optional(),
     transactionCategory: z.enum(["income", "spending", "transfer", "other"]).optional(),
   })
   .optional();
 
+// Matches recharts' own CartesianLabelPosition values — not every value it
+// supports, just the ones that make sense for "move the axis title".
+export const AXIS_X_POSITIONS = ["insideBottom", "bottom"] as const;
+export const AXIS_Y_POSITIONS = ["insideLeft", "left"] as const;
 const axisLabelsSchema = z
   .object({
     x: z.string().max(60).optional(),
     y: z.string().max(60).optional(),
+    xPosition: z.enum(AXIS_X_POSITIONS).optional(),
+    yPosition: z.enum(AXIS_Y_POSITIONS).optional(),
+    fontSize: z.number().int().min(8).max(24).optional(),
   })
   .optional();
 

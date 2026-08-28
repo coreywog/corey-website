@@ -1,6 +1,8 @@
 import { redirect, notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
+import { decryptText } from "@/lib/crypto";
+import { normalizeMerchantName } from "@/lib/finance";
 import { WidgetConfigSchema, type WidgetType } from "@/lib/dashboardConfig";
 import { computeWidgetData } from "@/lib/dashboardQuery";
 import { DashboardTabs } from "@/components/dashboards/DashboardTabs";
@@ -55,17 +57,28 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
 
   // Options for the widget editor's filter/category pickers — same source
   // as the Review tab's category picker (app/(site)/finance/review).
-  const [accounts, categorized] = await Promise.all([
+  const [accounts, categorized, spendingDescriptions] = await Promise.all([
     prisma.financeAccount.findMany({ where: { archived: false }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.transaction.findMany({
       where: { category: "spending", merchantCategory: { not: null, notIn: ["other"] }, merchantSubcategory: { not: null } },
       select: { merchantCategory: true, merchantSubcategory: true },
       distinct: ["merchantCategory", "merchantSubcategory"],
     }),
+    // Merchant name isn't a plain column — it's derived from the encrypted
+    // description (see lib/finance.ts's normalizeMerchantName) — so getting
+    // the distinct list for the picker means decrypting every one, same
+    // cost class as the Transaction Detail tab's own full sweep.
+    prisma.transaction.findMany({
+      where: { category: "spending", description: { not: null } },
+      select: { description: true },
+    }),
   ]);
   const categoryOptions = categorized
     .map((c) => ({ category: c.merchantCategory as string, subcategory: c.merchantSubcategory as string }))
     .sort((a, b) => a.category.localeCompare(b.category) || a.subcategory.localeCompare(b.subcategory));
+  const merchantOptions = [
+    ...new Set(spendingDescriptions.map((t) => normalizeMerchantName(decryptText(t.description as string)))),
+  ].sort();
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-16">
@@ -75,6 +88,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
         tabs={tabs}
         accounts={accounts}
         categoryOptions={categoryOptions}
+        merchantOptions={merchantOptions}
         initialPublished={dashboard.published}
       />
     </div>

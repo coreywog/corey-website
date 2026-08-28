@@ -66,6 +66,7 @@ export function DashboardGrid({
   widgets,
   accounts,
   categoryOptions,
+  merchantOptions,
   published,
 }: {
   dashboardId: string;
@@ -73,6 +74,7 @@ export function DashboardGrid({
   widgets: WidgetWithData[];
   accounts: Account[];
   categoryOptions: CategoryOption[];
+  merchantOptions: string[];
   // Dashboard-level, not per-tab (see DashboardTabs, which owns the toggle
   // and the header row it lives in) — passed straight through here to gate
   // drag/resize and the add/edit/delete controls.
@@ -288,6 +290,7 @@ export function DashboardGrid({
           tabId={tabId}
           accounts={accounts}
           categoryOptions={categoryOptions}
+          merchantOptions={merchantOptions}
           existing={editorState.mode === "edit" ? editorState.widget : undefined}
           ghostLayout={
             isAdding && ghostLayoutItem

@@ -19,7 +19,7 @@ import {
 } from "./icons";
 import { Widget, type WidgetWithData } from "./Widget";
 import type { WidgetConfig, ChartWidgetConfig, WidgetType, Metric, GroupBy } from "@/lib/dashboardConfig";
-import { WIDGET_COLORS } from "@/lib/dashboardConfig";
+import { WIDGET_COLORS, AXIS_X_POSITIONS, AXIS_Y_POSITIONS } from "@/lib/dashboardConfig";
 
 type CategoryOption = { category: string; subcategory: string };
 type Account = { id: string; name: string };
@@ -70,6 +70,7 @@ const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
 
 const TRANSACTION_CATEGORY_OPTIONS = ["income", "spending", "transfer", "other"] as const;
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+const RECENT_COLORS_KEY = "dashboardWidgetRecentColors";
 
 // What's actually in the "transactions" data source — every account draws
 // from the same table, so unlike a real multi-source tool there's no
@@ -105,6 +106,14 @@ function formatDate(iso: string): string {
   return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
+// `<input type="month">` shows whatever format the browser/OS picked (often
+// just numbers, no obvious month name) — this spells out what's actually
+// selected, e.g. "2026-07" -> "July 2026".
+function formatMonthValue(value: string): string | null {
+  if (!/^\d{4}-\d{2}$/.test(value)) return null;
+  return new Date(`${value}-01T00:00:00.000Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
 /**
  * Add/edit panel for one widget — a left-side drawer, not a centered modal.
  * Laid out as two columns once a type is picked: data sources on the left,
@@ -122,6 +131,7 @@ export function WidgetEditorPanel({
   tabId,
   accounts,
   categoryOptions,
+  merchantOptions,
   existing,
   ghostLayout,
   onClose,
@@ -132,6 +142,7 @@ export function WidgetEditorPanel({
   tabId: string;
   accounts: Account[];
   categoryOptions: CategoryOption[];
+  merchantOptions: string[];
   existing?: ExistingWidget;
   // The not-yet-real widget's current position/size in the grid (add mode
   // only) — read at Save time so the size the user dragged it to is what
@@ -164,10 +175,34 @@ export function WidgetEditorPanel({
   // `color` so an in-progress, not-yet-valid value (e.g. "#12") doesn't get
   // stomped by a controlled input snapping back to the last valid color.
   const [hexDraft, setHexDraft] = useState(chartConfig?.color ?? "");
+  // Last 8 colors actually applied, most-recent-first — a per-browser
+  // convenience (not data that needs to sync anywhere), so localStorage
+  // rather than anything server-side. Read via a lazy initializer (runs
+  // once, on mount) rather than an effect — this component only ever
+  // mounts client-side (opened by a button click), so `window` is always
+  // there by the time it runs; guarded anyway since a private window or
+  // blocked site data still throws.
+  const [recentColors, setRecentColors] = useState<string[]>(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(RECENT_COLORS_KEY) ?? "[]");
+      return Array.isArray(stored) ? stored.filter((c) => typeof c === "string").slice(0, 8) : [];
+    } catch {
+      return []; // Private window, blocked site data, etc. — recents just start empty.
+    }
+  });
 
   function pickColor(next: string) {
     setColor(next);
     setHexDraft(next);
+    setRecentColors((prev) => {
+      const updated = [next, ...prev.filter((c) => c !== next)].slice(0, 8);
+      try {
+        window.localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(updated));
+      } catch {
+        // Non-critical — recents just won't persist this time.
+      }
+      return updated;
+    });
   }
 
   function clearColor() {
@@ -192,11 +227,23 @@ export function WidgetEditorPanel({
   const [merchantSubcategories, setMerchantSubcategories] = useState<string[]>(
     chartConfig?.filters?.merchantSubcategories ?? [],
   );
+  const [merchants, setMerchants] = useState<string[]>(chartConfig?.filters?.merchants ?? []);
+  // Which column's filter picker is expanded under "Columns available" —
+  // at most one at a time, closed (null) by default so a fresh widget
+  // isn't already showing an open picker nobody asked for.
+  const [openColumnFilter, setOpenColumnFilter] = useState<"category" | "merchant" | null>(null);
   const [transactionCategory, setTransactionCategory] = useState<string>(chartConfig?.filters?.transactionCategory ?? "");
   const [limit, setLimit] = useState(chartConfig?.limit ? String(chartConfig.limit) : "");
   const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
   const [xAxisLabel, setXAxisLabel] = useState(chartConfig?.axisLabels?.x ?? "");
   const [yAxisLabel, setYAxisLabel] = useState(chartConfig?.axisLabels?.y ?? "");
+  const [xAxisPosition, setXAxisPosition] = useState<(typeof AXIS_X_POSITIONS)[number]>(
+    chartConfig?.axisLabels?.xPosition ?? "insideBottom",
+  );
+  const [yAxisPosition, setYAxisPosition] = useState<(typeof AXIS_Y_POSITIONS)[number]>(
+    chartConfig?.axisLabels?.yPosition ?? "insideLeft",
+  );
+  const [axisFontSize, setAxisFontSize] = useState(chartConfig?.axisLabels?.fontSize ?? 11);
   const [showDateButtons, setShowDateButtons] = useState(chartConfig?.showDateButtons ?? false);
 
   const [preview, setPreview] = useState<WidgetWithData["result"] | null>(null);
@@ -269,6 +316,7 @@ export function WidgetEditorPanel({
       ...(accountIds.length ? { accountIds } : {}),
       ...(showCategoryFilter && merchantCategories.length ? { merchantCategories } : {}),
       ...(showCategoryFilter && merchantSubcategories.length ? { merchantSubcategories } : {}),
+      ...(merchants.length ? { merchants } : {}),
       ...(showTransactionCategoryFilter && transactionCategory
         ? { transactionCategory: transactionCategory as "income" | "spending" | "transfer" | "other" }
         : {}),
@@ -276,7 +324,11 @@ export function WidgetEditorPanel({
 
     const axisLabels: ChartWidgetConfig["axisLabels"] =
       showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim())
-        ? { ...(xAxisLabel.trim() ? { x: xAxisLabel.trim() } : {}), ...(yAxisLabel.trim() ? { y: yAxisLabel.trim() } : {}) }
+        ? {
+            ...(xAxisLabel.trim() ? { x: xAxisLabel.trim(), xPosition: xAxisPosition } : {}),
+            ...(yAxisLabel.trim() ? { y: yAxisLabel.trim(), yPosition: yAxisPosition } : {}),
+            fontSize: axisFontSize,
+          }
         : undefined;
 
     return {
@@ -306,11 +358,15 @@ export function WidgetEditorPanel({
     accountIds,
     merchantCategories,
     merchantSubcategories,
+    merchants,
     transactionCategory,
     limit,
     compareToPrevious,
     xAxisLabel,
     yAxisLabel,
+    xAxisPosition,
+    yAxisPosition,
+    axisFontSize,
     color,
     showDateButtons,
   ]);
@@ -349,7 +405,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, accountIds, merchantCategories, merchantSubcategories, transactionCategory, limit, compareToPrevious, color]);
+  }, [isText, text, type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, accountIds, merchantCategories, merchantSubcategories, merchants, transactionCategory, limit, compareToPrevious, color]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -496,13 +552,140 @@ export function WidgetEditorPanel({
               </div>
 
               <div className="flex flex-col gap-1 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
-                <span className="text-[11px] text-zinc-500">Columns available (used via Metric / Group by)</span>
-                {TRANSACTION_FIELDS.map((f) => (
-                  <div key={f.name} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
-                    <span className="w-3 font-mono font-medium text-zinc-400 dark:text-zinc-500">{f.kind}</span>
-                    {f.name}
-                  </div>
-                ))}
+                <span className="text-[11px] text-zinc-500">Columns available — click one to filter by it</span>
+                {TRANSACTION_FIELDS.map((f) => {
+                  const filterKey = f.name === "Category" && showCategoryFilter ? "category" : f.name === "Merchant" ? "merchant" : null;
+                  const hasActiveFilter =
+                    f.name === "Category"
+                      ? merchantCategories.length > 0 || merchantSubcategories.length > 0
+                      : f.name === "Merchant"
+                        ? merchants.length > 0
+                        : f.name === "Account"
+                          ? accountIds.length > 0
+                          : false;
+                  return (
+                    <div key={f.name}>
+                      <button
+                        type="button"
+                        disabled={!filterKey}
+                        onClick={() => filterKey && setOpenColumnFilter((prev) => (prev === filterKey ? null : filterKey))}
+                        className={
+                          "flex w-full items-center gap-2 rounded px-1 py-0.5 text-xs text-zinc-600 dark:text-zinc-400 " +
+                          (filterKey
+                            ? "cursor-pointer hover:bg-black/[.03] hover:text-zinc-900 dark:hover:bg-white/[.05] dark:hover:text-zinc-100"
+                            : "cursor-default")
+                        }
+                      >
+                        <span className="w-3 font-mono font-medium text-zinc-400 dark:text-zinc-500">{f.kind}</span>
+                        <span className="flex-1 text-left">{f.name}</span>
+                        {/* Little dot marking a column that's actively narrowing this widget's data — a quick "what's filtered?" glance without opening every picker. */}
+                        {hasActiveFilter && (
+                          <span
+                            className="h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500 creamsicle:bg-orange-500"
+                            title="Filtered"
+                          />
+                        )}
+                      </button>
+
+                      {filterKey === "category" && openColumnFilter === "category" && (
+                        <div className="flex flex-col gap-1 py-1 pl-5">
+                          <SearchableSelect
+                            value=""
+                            onChange={(v) => setMerchantCategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
+                            options={categories
+                              .filter((c) => !merchantCategories.includes(c))
+                              .map((c) => ({ value: c, label: formatCategoryLabel(c) }))}
+                            placeholder="Add category…"
+                          />
+                          {merchantCategories.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {merchantCategories.map((c) => (
+                                <button
+                                  key={c}
+                                  type="button"
+                                  onClick={() => {
+                                    setMerchantCategories((prev) => prev.filter((x) => x !== c));
+                                    // Drop any subcategory that only belonged
+                                    // to the category just removed — leaving
+                                    // it selected would silently keep
+                                    // filtering by something no longer
+                                    // reachable from the UI.
+                                    const stillValid = new Set(
+                                      categoryOptions
+                                        .filter((opt) => opt.category !== c && merchantCategories.includes(opt.category))
+                                        .map((opt) => opt.subcategory),
+                                    );
+                                    setMerchantSubcategories((prev) => prev.filter((s) => stillValid.has(s)));
+                                  }}
+                                  className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                                >
+                                  {formatCategoryLabel(c)} ✕
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Only appears once at least one category is
+                              selected — lets a widget narrow further, e.g.
+                              "Dining" -> just "Coffee shops", instead of the
+                              whole category. */}
+                          {subcategoriesForSelectedCategories.length > 0 && (
+                            <div className="flex flex-col gap-1 pt-1 pl-3">
+                              <span className="text-[11px] text-zinc-500">Subcategories (narrows further)</span>
+                              <SearchableSelect
+                                value=""
+                                onChange={(v) => setMerchantSubcategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
+                                options={subcategoriesForSelectedCategories
+                                  .filter((s) => !merchantSubcategories.includes(s))
+                                  .map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
+                                placeholder="Add subcategory…"
+                              />
+                              {merchantSubcategories.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {merchantSubcategories.map((s) => (
+                                    <button
+                                      key={s}
+                                      type="button"
+                                      onClick={() => setMerchantSubcategories((prev) => prev.filter((x) => x !== s))}
+                                      className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                                    >
+                                      {formatCategoryLabel(s)} ✕
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {filterKey === "merchant" && openColumnFilter === "merchant" && (
+                        <div className="flex flex-col gap-1 py-1 pl-5">
+                          <SearchableSelect
+                            value=""
+                            onChange={(v) => setMerchants((prev) => (prev.includes(v) ? prev : [...prev, v]))}
+                            options={merchantOptions.filter((m) => !merchants.includes(m)).map((m) => ({ value: m, label: m }))}
+                            placeholder="Add merchant…"
+                          />
+                          {merchants.length > 0 && (
+                            <div className="flex flex-wrap gap-1">
+                              {merchants.map((m) => (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => setMerchants((prev) => prev.filter((x) => x !== m))}
+                                  className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                                >
+                                  {m} ✕
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -620,20 +803,54 @@ export function WidgetEditorPanel({
                 {showAxisLabels && (
                   <div className="flex flex-col gap-2">
                     <span className={labelClasses}>Axis titles (optional)</span>
-                    <input
-                      type="text"
-                      value={xAxisLabel}
-                      onChange={(e) => setXAxisLabel(e.target.value)}
-                      placeholder="X axis title"
-                      className={selectClasses}
-                    />
-                    <input
-                      type="text"
-                      value={yAxisLabel}
-                      onChange={(e) => setYAxisLabel(e.target.value)}
-                      placeholder="Y axis title"
-                      className={selectClasses}
-                    />
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={xAxisLabel}
+                        onChange={(e) => setXAxisLabel(e.target.value)}
+                        placeholder="X axis title"
+                        className={selectClasses + " flex-1"}
+                      />
+                      <select
+                        value={xAxisPosition}
+                        onChange={(e) => setXAxisPosition(e.target.value as (typeof AXIS_X_POSITIONS)[number])}
+                        className={selectClasses}
+                        title="Where the X axis title sits"
+                      >
+                        <option value="insideBottom">Inside</option>
+                        <option value="bottom">Below chart</option>
+                      </select>
+                    </div>
+                    <div className="flex gap-1.5">
+                      <input
+                        type="text"
+                        value={yAxisLabel}
+                        onChange={(e) => setYAxisLabel(e.target.value)}
+                        placeholder="Y axis title"
+                        className={selectClasses + " flex-1"}
+                      />
+                      <select
+                        value={yAxisPosition}
+                        onChange={(e) => setYAxisPosition(e.target.value as (typeof AXIS_Y_POSITIONS)[number])}
+                        className={selectClasses}
+                        title="Where the Y axis title sits"
+                      >
+                        <option value="insideLeft">Inside</option>
+                        <option value="left">Left of chart</option>
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-2">
+                      <span className="text-[11px] text-zinc-500">Text size</span>
+                      <input
+                        type="number"
+                        min={8}
+                        max={24}
+                        value={axisFontSize}
+                        onChange={(e) => setAxisFontSize(Number(e.target.value) || 11)}
+                        className={selectClasses + " w-16"}
+                      />
+                      <span className="text-[11px] text-zinc-500">px</span>
+                    </label>
                   </div>
                 )}
 
@@ -680,12 +897,17 @@ export function WidgetEditorPanel({
                       </div>
 
                       {dateMode === "specific" && (
-                        <input
-                          type="month"
-                          value={specificMonth}
-                          onChange={(e) => setSpecificMonth(e.target.value)}
-                          className={selectClasses}
-                        />
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="month"
+                            value={specificMonth}
+                            onChange={(e) => setSpecificMonth(e.target.value)}
+                            className={selectClasses}
+                          />
+                          {formatMonthValue(specificMonth) && (
+                            <span className="text-xs text-zinc-500">{formatMonthValue(specificMonth)}</span>
+                          )}
+                        </div>
                       )}
                       {dateMode === "custom" && (
                         <div className="flex items-center gap-2">
@@ -702,78 +924,6 @@ export function WidgetEditorPanel({
                         </p>
                       )}
                     </div>
-
-                    {showCategoryFilter && (
-                      <div className="flex flex-col gap-1">
-                        <span className="text-[11px] text-zinc-500">Categories</span>
-                        <SearchableSelect
-                          value=""
-                          onChange={(v) => setMerchantCategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
-                          options={categories
-                            .filter((c) => !merchantCategories.includes(c))
-                            .map((c) => ({ value: c, label: formatCategoryLabel(c) }))}
-                          placeholder="Add category…"
-                        />
-                        {merchantCategories.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
-                            {merchantCategories.map((c) => (
-                              <button
-                                key={c}
-                                type="button"
-                                onClick={() => {
-                                  setMerchantCategories((prev) => prev.filter((x) => x !== c));
-                                  // Drop any subcategory that only belonged to
-                                  // the category just removed — leaving it
-                                  // selected would silently keep filtering by
-                                  // something no longer reachable from the UI.
-                                  const stillValid = new Set(
-                                    categoryOptions
-                                      .filter((opt) => opt.category !== c && merchantCategories.includes(opt.category))
-                                      .map((opt) => opt.subcategory),
-                                  );
-                                  setMerchantSubcategories((prev) => prev.filter((s) => stillValid.has(s)));
-                                }}
-                                className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                              >
-                                {formatCategoryLabel(c)} ✕
-                              </button>
-                            ))}
-                          </div>
-                        )}
-
-                        {/* Only appears once at least one category is
-                            selected — lets a widget narrow further, e.g.
-                            "Dining" -> just "Coffee shops", instead of the
-                            whole category. */}
-                        {subcategoriesForSelectedCategories.length > 0 && (
-                          <div className="flex flex-col gap-1 pl-3">
-                            <span className="text-[11px] text-zinc-500">Subcategories (optional — narrows further)</span>
-                            <SearchableSelect
-                              value=""
-                              onChange={(v) => setMerchantSubcategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
-                              options={subcategoriesForSelectedCategories
-                                .filter((s) => !merchantSubcategories.includes(s))
-                                .map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
-                              placeholder="Add subcategory…"
-                            />
-                            {merchantSubcategories.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {merchantSubcategories.map((s) => (
-                                  <button
-                                    key={s}
-                                    type="button"
-                                    onClick={() => setMerchantSubcategories((prev) => prev.filter((x) => x !== s))}
-                                    className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                                  >
-                                    {formatCategoryLabel(s)} ✕
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
 
                     {showTransactionCategoryFilter && (
                       <label className="flex flex-col gap-1">
@@ -882,7 +1032,7 @@ export function WidgetEditorPanel({
                 onChange={(e) => {
                   const v = e.target.value;
                   setHexDraft(v);
-                  if (HEX_COLOR_PATTERN.test(v)) setColor(v);
+                  if (HEX_COLOR_PATTERN.test(v)) pickColor(v);
                 }}
                 onBlur={() => {
                   // Reverts a half-typed, never-valid hex back to whatever
@@ -895,6 +1045,25 @@ export function WidgetEditorPanel({
                 className={selectClasses + " w-24 font-mono text-xs"}
               />
             </div>
+
+            {recentColors.length > 0 && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] text-zinc-500">Recent</span>
+                {recentColors.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    onClick={() => pickColor(c)}
+                    aria-label={`Color ${c}`}
+                    className={
+                      "h-5 w-5 rounded-full border-2 transition-transform " +
+                      (color === c ? "scale-110 border-zinc-900 dark:border-zinc-50" : "border-transparent")
+                    }
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

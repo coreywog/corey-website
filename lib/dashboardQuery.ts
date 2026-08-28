@@ -152,6 +152,13 @@ async function fetchRows(where: ReturnType<typeof buildWhere>, needsDescription:
   }));
 }
 
+/** No-op when `merchants` is unset — same shape either way, so every caller can run rows through this unconditionally. */
+function filterByMerchant(rows: DecryptedRow[], merchants: string[] | undefined): DecryptedRow[] {
+  if (!merchants?.length) return rows;
+  const wanted = new Set(merchants);
+  return rows.filter((r) => r.description && wanted.has(normalizeMerchantName(r.description)));
+}
+
 /**
  * Turns one widget's data-binding config into chart-ready data. Composes
  * lib/finance.ts's existing date/label helpers rather than duplicating
@@ -168,8 +175,12 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
 
   const { start, end } = resolveDateRange(config.dateRange);
   const where = buildWhere(config, start, end);
-  const needsDescription = config.groupBy === "merchant";
-  const rows = await fetchRows(where, needsDescription);
+  // Merchant names aren't a plain DB column (see filtersSchema's own
+  // comment in lib/dashboardConfig.ts) — decrypting descriptions is the
+  // only way to filter or group by one, so either need turns it on.
+  const merchantFilter = config.filters?.merchants;
+  const needsDescription = config.groupBy === "merchant" || Boolean(merchantFilter?.length);
+  const rows = filterByMerchant(await fetchRows(where, needsDescription), merchantFilter);
 
   // Scatter is the one chart type that plots raw transactions instead of an
   // aggregated bucket per groupBy — one point per row, not one point per
@@ -289,7 +300,7 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     const prevEnd = start;
     const prevStart = new Date(new Date(start).getTime() - spanMs).toISOString().slice(0, 10);
     const prevWhere = buildWhere(config, prevStart, prevEnd);
-    const prevRows = await fetchRows(prevWhere, false);
+    const prevRows = filterByMerchant(await fetchRows(prevWhere, needsDescription), merchantFilter);
     let previousValue = 0;
     for (const r of prevRows) {
       const c = metricContribution(r, config.metric);
