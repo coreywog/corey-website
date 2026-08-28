@@ -1,7 +1,22 @@
 "use client";
 
-import { CartesianGrid, Line, LineChart, Bar, BarChart, Pie, PieChart, Cell, Tooltip, XAxis, YAxis, ResponsiveContainer } from "recharts";
-import type { AggregatedPoint, WidgetResult } from "@/lib/dashboardQuery";
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  Bar,
+  BarChart,
+  Pie,
+  PieChart,
+  Scatter,
+  ScatterChart,
+  Cell,
+  Tooltip,
+  XAxis,
+  YAxis,
+  ResponsiveContainer,
+} from "recharts";
+import type { AggregatedPoint, ScatterPoint, WidgetResult } from "@/lib/dashboardQuery";
 import type { WidgetConfig } from "@/lib/dashboardConfig";
 
 export type WidgetWithData = {
@@ -129,6 +144,49 @@ function PieWidget({ points }: { points: AggregatedPoint[] }) {
   );
 }
 
+function shortDate(ms: number): string {
+  return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLabels?: { x?: string; y?: string } }) {
+  if (points.length === 0) return <EmptyState />;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <ScatterChart margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+        <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+        <XAxis
+          dataKey="x"
+          type="number"
+          domain={["dataMin", "dataMax"]}
+          tick={{ fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          tickFormatter={shortDate}
+          label={axisLabelProp(axisLabels?.x, "insideBottom")}
+        />
+        <YAxis
+          dataKey="y"
+          tick={{ fontSize: 12 }}
+          tickLine={false}
+          axisLine={false}
+          width={56}
+          tickFormatter={(v: number) => currencyFormatter.format(v)}
+          label={axisLabelProp(axisLabels?.y, "insideLeft", -90)}
+        />
+        <Tooltip
+          formatter={(v, name) => (name === "y" ? currencyFormatter.format(Number(v)) : shortDate(Number(v)))}
+          labelFormatter={() => ""}
+        />
+        <Scatter data={points} isAnimationActive={false}>
+          {points.map((p, i) => (
+            <Cell key={i} fill={p.color} />
+          ))}
+        </Scatter>
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+}
+
 function StatWidget({ result, color }: { result: Extract<WidgetResult, { kind: "stat" }>; color?: string }) {
   const delta = result.previousValue !== undefined ? result.value - result.previousValue : null;
   return (
@@ -200,6 +258,11 @@ export function Widget({ widget }: { widget: WidgetWithData }) {
           </div>
         ) : widget.result.kind === "text" ? (
           <TextWidget text={widget.result.text} />
+        ) : widget.result.kind === "scatter" ? (
+          <ScatterWidget
+            points={widget.result.points}
+            axisLabels={widget.config?.dataSource === "transactions" ? widget.config.axisLabels : undefined}
+          />
         ) : widget.result.kind === "stat" ? (
           <StatWidget result={widget.result} color={widget.config?.dataSource === "transactions" ? widget.config.color : undefined} />
         ) : widget.type === "bar" ? (

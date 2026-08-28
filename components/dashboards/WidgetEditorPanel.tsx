@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatCategoryLabel } from "@/lib/finance";
 import { SearchableSelect } from "@/components/finance/SearchableSelect";
-import { GraphIcon, TextIcon, LineChartIcon, BarChartIcon, PieChartIcon, StatIcon, TableIcon } from "./icons";
-import type { WidgetWithData } from "./Widget";
+import { GraphIcon, TextIcon, LineChartIcon, BarChartIcon, PieChartIcon, StatIcon, TableIcon, ScatterIcon } from "./icons";
+import { Widget, type WidgetWithData } from "./Widget";
 import type { WidgetConfig, ChartWidgetConfig, WidgetType, Metric, GroupBy } from "@/lib/dashboardConfig";
 import { WIDGET_COLORS } from "@/lib/dashboardConfig";
 
@@ -30,6 +30,7 @@ const CHART_TYPE_OPTIONS: { value: ChartType; label: string; Icon: typeof LineCh
   { value: "line", label: "Line", Icon: LineChartIcon },
   { value: "bar", label: "Bar", Icon: BarChartIcon },
   { value: "pie", label: "Pie", Icon: PieChartIcon },
+  { value: "scatter", label: "Scatter", Icon: ScatterIcon },
   { value: "stat", label: "Stat", Icon: StatIcon },
   { value: "table", label: "Table", Icon: TableIcon },
 ];
@@ -51,6 +52,21 @@ const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
 ];
 
 const TRANSACTION_CATEGORY_OPTIONS = ["income", "spending", "transfer", "other"] as const;
+const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+// What's actually in the "transactions" data source — every account draws
+// from the same table, so unlike a real multi-source tool there's no
+// per-account variation to show here. Purely informational (see Metric/
+// Group by above for where these actually get used); D/T/# mark date/text/
+// numeric the same way the very first sketch of this panel did.
+const TRANSACTION_FIELDS: { name: string; kind: "D" | "T" | "#" }[] = [
+  { name: "Date", kind: "D" },
+  { name: "Amount", kind: "#" },
+  { name: "Merchant", kind: "T" },
+  { name: "Category", kind: "T" },
+  { name: "Subcategory", kind: "T" },
+  { name: "Account", kind: "T" },
+];
 
 type DateRangeMode = "relative" | "specific" | "allTime" | "custom";
 
@@ -126,7 +142,21 @@ export function WidgetEditorPanel({
   const [typeChosen, setTypeChosen] = useState(Boolean(existing));
   const [title, setTitle] = useState(existing?.title ?? "");
   const [text, setText] = useState(existing?.config.dataSource === "text" ? existing.config.text : "");
-  const [color, setColor] = useState<(typeof WIDGET_COLORS)[number] | undefined>(chartConfig?.color);
+  const [color, setColor] = useState<string | undefined>(chartConfig?.color);
+  // What's actually typed in the hex text field — kept separate from
+  // `color` so an in-progress, not-yet-valid value (e.g. "#12") doesn't get
+  // stomped by a controlled input snapping back to the last valid color.
+  const [hexDraft, setHexDraft] = useState(chartConfig?.color ?? "");
+
+  function pickColor(next: string) {
+    setColor(next);
+    setHexDraft(next);
+  }
+
+  function clearColor() {
+    setColor(undefined);
+    setHexDraft("");
+  }
   const [metric, setMetric] = useState<Metric>(chartConfig?.metric ?? "spendingTotal");
   const [groupBy, setGroupBy] = useState<GroupBy | "">(chartConfig?.groupBy ?? "merchantCategory");
   const [dateMode, setDateMode] = useState<DateRangeMode>(chartConfig?.dateRange.mode ?? "relative");
@@ -168,12 +198,16 @@ export function WidgetEditorPanel({
     [categoryOptions, merchantCategories],
   );
 
-  const needsGroupBy = !isText && type !== "stat";
+  // Scatter plots one point per raw transaction (see lib/dashboardQuery.ts)
+  // instead of one point per bucket, so it has no groupBy at all — closer
+  // kin to a stat tile in that respect, even though it renders a chart.
+  const isScatter = type === "scatter";
+  const needsGroupBy = !isText && !isScatter && type !== "stat";
   const showCategoryFilter = groupBy !== "merchantCategory";
   const isTimeSeries = groupBy === "day" || groupBy === "month";
   const showLimit = needsGroupBy && groupBy !== "" && !isTimeSeries && (type === "bar" || type === "pie");
   const showTransactionCategoryFilter = metric === "net" || metric === "transactionCount";
-  const showAxisLabels = type === "line" || type === "bar";
+  const showAxisLabels = type === "line" || type === "bar" || isScatter;
   const showColor = type === "line" || type === "stat";
   // Every account explicitly checked, individually, one at a time — not the
   // same as an empty selection (which means "no filter, use the same
@@ -227,7 +261,7 @@ export function WidgetEditorPanel({
       ...(needsGroupBy ? { groupBy: groupBy as GroupBy } : {}),
       dateRange,
       ...(Object.keys(filters).length ? { filters } : {}),
-      ...(showLimit && limit ? { limit: Number(limit) } : {}),
+      ...((showLimit || isScatter) && limit ? { limit: Number(limit) } : {}),
       ...(type === "stat" ? { compareToPrevious } : {}),
       ...(axisLabels ? { axisLabels } : {}),
       ...(showColor && color ? { color } : {}),
@@ -269,7 +303,7 @@ export function WidgetEditorPanel({
         const res = await fetch("/api/dashboards/widgets/preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(config),
+          body: JSON.stringify({ type, config }),
         });
         if (cancelled) return;
         if (res.ok) {
@@ -291,20 +325,28 @@ export function WidgetEditorPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
   }, [isText, text, type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, accountIds, merchantCategories, merchantSubcategories, transactionCategory, limit, compareToPrevious, color]);
 
+  // Shared by the dedicated preview panel below (rendered right next to the
+  // form, since the actual grid tile can be scrolled away or hard to spot)
+  // and by the onDraftChange report-up just after it (which still drives
+  // the in-place ghost-tile preview in the real grid). Memoized so its
+  // identity only changes when one of these actually does — otherwise it'd
+  // be a fresh object every render, defeating the effect below the same way
+  // an inline literal would.
+  const draftResult: WidgetWithData["result"] = useMemo(() => {
+    if (!config) return { error: isText ? "Type something to see a preview." : "Fill in the fields to see a preview." };
+    if (config.dataSource === "text") return { kind: "text", text: config.text };
+    return preview ?? { error: previewLoading ? "Loading…" : "Fill in the fields to see a preview." };
+  }, [config, isText, preview, previewLoading]);
+
   // Reports the current draft up to DashboardGrid, which renders it in the
-  // actual grid slot — this is the "preview in the spot" behavior. Runs
-  // whenever anything the preview depends on changes, and clears on unmount
-  // so closing the panel drops the in-place preview too.
+  // actual grid slot too — sizing/dragging the ghost tile still works the
+  // same way. Runs whenever anything the preview depends on changes, and
+  // clears on unmount so closing the panel drops the in-place preview too.
   useEffect(() => {
-    const result: WidgetWithData["result"] = !config
-      ? { error: isText ? "Type something to see a preview." : "Fill in the fields to see a preview." }
-      : config.dataSource === "text"
-        ? { kind: "text", text: config.text }
-        : (preview ?? { error: previewLoading ? "Loading…" : "Fill in the fields to see a preview." });
-    onDraftChange({ type, title: title.trim() || null, result, config });
+    onDraftChange({ type, title: title.trim() || null, result: draftResult, config });
     return () => onDraftChange(null);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- onDraftChange is a stable setter from the parent; including it would re-fire this on every parent render.
-  }, [type, title, config, preview, previewLoading, isText]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onDraftChange is a stable setter from the parent; draftResult is derived fresh from config/preview/previewLoading/isText every render, all already tracked.
+  }, [type, title, config, draftResult]);
 
   // The available date range depends on which accounts are in scope —
   // different accounts can have very different histories (see
@@ -426,6 +468,16 @@ export function WidgetEditorPanel({
                   </label>
                 ))}
               </div>
+
+              <div className="flex flex-col gap-1 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
+                <span className="text-[11px] text-zinc-500">Columns available (used via Metric / Group by)</span>
+                {TRANSACTION_FIELDS.map((f) => (
+                  <div key={f.name} className="flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400">
+                    <span className="w-3 font-mono font-medium text-zinc-400 dark:text-zinc-500">{f.kind}</span>
+                    {f.name}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
@@ -483,7 +535,10 @@ export function WidgetEditorPanel({
                 <label className="flex flex-col gap-1">
                   <span className={labelClasses}>Metric</span>
                   <select value={metric} onChange={(e) => setMetric(e.target.value as Metric)} className={selectClasses}>
-                    {METRIC_OPTIONS.map((o) => (
+                    {/* "Transaction count" is meaningless per-point (every
+                        scatter point is exactly one transaction) — hidden
+                        rather than allowed to produce a flat line of dots. */}
+                    {METRIC_OPTIONS.filter((o) => !isScatter || o.value !== "transactionCount").map((o) => (
                       <option key={o.value} value={o.value}>
                         {o.label}
                       </option>
@@ -507,13 +562,15 @@ export function WidgetEditorPanel({
                   </label>
                 )}
 
-                {showLimit && (
+                {(showLimit || isScatter) && (
                   <label className="flex flex-col gap-1">
-                    <span className={labelClasses}>Top N (rest folds into &quot;Other&quot;)</span>
+                    <span className={labelClasses}>
+                      {isScatter ? "Max points (most recent)" : 'Top N (rest folds into "Other")'}
+                    </span>
                     <input
                       type="number"
                       min={1}
-                      max={100}
+                      max={isScatter ? 1000 : 100}
                       value={limit}
                       onChange={(e) => setLimit(e.target.value)}
                       placeholder="No limit"
@@ -563,7 +620,7 @@ export function WidgetEditorPanel({
                       <button
                         key={c}
                         type="button"
-                        onClick={() => setColor(color === c ? undefined : c)}
+                        onClick={() => (color === c ? clearColor() : pickColor(c))}
                         aria-label={`Color ${c}`}
                         className={
                           "h-6 w-6 rounded-full border-2 transition-transform " +
@@ -572,6 +629,37 @@ export function WidgetEditorPanel({
                         style={{ backgroundColor: c }}
                       />
                     ))}
+                    {/* Open picker — its swatch face always shows some
+                        color, so it doubles as a 7th preset once you've
+                        used it once (defaults to the first preset only for
+                        its own display, not as a selection). */}
+                    <input
+                      type="color"
+                      value={color ?? WIDGET_COLORS[0]}
+                      onChange={(e) => pickColor(e.target.value)}
+                      title="Custom color"
+                      aria-label="Custom color"
+                      className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                    />
+                    <input
+                      type="text"
+                      value={hexDraft}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setHexDraft(v);
+                        if (HEX_COLOR_PATTERN.test(v)) setColor(v);
+                      }}
+                      onBlur={() => {
+                        // Reverts a half-typed, never-valid hex back to
+                        // whatever color is actually in effect, rather than
+                        // leaving the field stuck showing something that
+                        // was never applied.
+                        if (!HEX_COLOR_PATTERN.test(hexDraft)) setHexDraft(color ?? "");
+                      }}
+                      placeholder="#RRGGBB"
+                      maxLength={7}
+                      className={selectClasses + " w-24 font-mono text-xs"}
+                    />
                   </div>
                 )}
 
@@ -738,6 +826,34 @@ export function WidgetEditorPanel({
           >
             {saving ? "Saving…" : "Save"}
           </button>
+        </div>
+      </div>
+
+      {/* A dedicated, always-in-the-same-spot preview, docked to the
+          drawer's own right edge — the actual grid slot this widget will
+          occupy (still driven by the same draft via onDraftChange, for
+          sizing/dragging) can end up scrolled away or easy to miss. A
+          sibling of the drawer, not a child: the drawer's overflow-y-auto
+          implicitly clips overflow-x too (a real CSS quirk — declaring only
+          one axis forces the other to `auto` as well), so an absolutely-
+          positioned child would just get cut off. left-[36rem] matches the
+          drawer's own max-w-xl exactly, which is safe only because this
+          whole panel is hidden below `lg` (1024px) — comfortably wider than
+          the drawer's 576px cap, so the drawer is always at that exact
+          width whenever this is visible. Hidden below `lg` at all: the
+          drag/resize grid builder is a desktop tool already, and there's no
+          room for a second panel next to a narrow drawer. */}
+      <div
+        className={
+          "fixed inset-y-0 left-[36rem] z-30 hidden w-80 flex-col gap-2 border-r border-black/[.1] bg-[var(--background)] p-4 transition-transform duration-200 ease-out lg:flex dark:border-white/[.15] creamsicle:border-orange-300 " +
+          (mounted ? "translate-x-0" : "-translate-x-full")
+        }
+      >
+        <span className={labelClasses}>Preview</span>
+        <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-black/[.08] dark:border-white/[.1]">
+          <Widget
+            widget={{ id: "__preview__", type, title: title.trim() || null, x: 0, y: 0, w: 0, h: 0, result: draftResult, config }}
+          />
         </div>
       </div>
     </>

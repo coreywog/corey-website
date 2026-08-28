@@ -34,3 +34,17 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* react-grid-layout/react-resizable give their drag/resize handles
+   tabIndex, so grabbing a corner to resize a dashboard widget (see
+   components/dashboards/DashboardGrid.tsx) leaves the browser's default
+   focus ring sitting on the tile — a blue square behind the resize handle
+   that has nothing to do with keyboard navigation. These are mouse/touch
+   drag targets, not tab-navigable content, so it's safe to drop the ring
+   here specifically rather than disabling focus outlines globally. */
+.react-grid-item:focus,
+.react-grid-item:focus-visible,
+.react-resizable-handle:focus,
+.react-resizable-handle:focus-visible {
+  outline: none;
+}

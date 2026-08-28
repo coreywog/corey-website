@@ -2,12 +2,18 @@ import { prisma } from "@/lib/prisma";
 import { decryptAmount, decryptText } from "@/lib/crypto";
 import { resolveDateRange, formatMonthLabel, formatCategoryLabel, normalizeMerchantName } from "@/lib/finance";
 import { colorForCategory, colorForKey } from "@/components/finance/categoryColors";
-import type { WidgetConfig, ChartWidgetConfig, GroupBy, Metric } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, WidgetType, GroupBy, Metric } from "@/lib/dashboardConfig";
 
 export type AggregatedPoint = { key: string; label: string; value: number; color: string };
+// One raw transaction, not a bucket — scatter is the one chart type that
+// isn't an aggregation at all (see computeWidgetData's early branch on
+// type === "scatter"). x is always a date (recharts numeric axis); y is the
+// transaction's contribution to whichever metric was picked.
+export type ScatterPoint = { x: number; y: number; label: string; color: string };
 export type WidgetResult =
   | { kind: "series"; points: AggregatedPoint[] }
   | { kind: "stat"; value: number; previousValue?: number }
+  | { kind: "scatter"; points: ScatterPoint[] }
   | { kind: "text"; text: string };
 
 type DecryptedRow = {
@@ -146,7 +152,7 @@ async function fetchRows(where: ReturnType<typeof buildWhere>, needsDescription:
  * merchantCategory"); this is the generic version, parameterized by
  * whatever the widget's config says.
  */
-export async function computeWidgetData(config: WidgetConfig): Promise<WidgetResult> {
+export async function computeWidgetData(config: WidgetConfig, type: WidgetType): Promise<WidgetResult> {
   // A text tile has no data behind it at all — nothing to query.
   if (config.dataSource === "text") {
     return { kind: "text", text: config.text };
@@ -156,6 +162,28 @@ export async function computeWidgetData(config: WidgetConfig): Promise<WidgetRes
   const where = buildWhere(config, start, end);
   const needsDescription = config.groupBy === "merchant";
   const rows = await fetchRows(where, needsDescription);
+
+  // Scatter is the one chart type that plots raw transactions instead of an
+  // aggregated bucket per groupBy — one point per row, not one point per
+  // group, so it doesn't go through the groupBy branch below at all.
+  if (type === "scatter") {
+    const points: ScatterPoint[] = [];
+    for (const r of rows) {
+      const value = metricContribution(r, config.metric);
+      if (value === null) continue;
+      points.push({
+        x: r.date.getTime(),
+        y: round2(value),
+        label: formatCategoryLabel(r.merchantCategory ?? "other"),
+        color: colorForCategory(r.merchantCategory ?? "other"),
+      });
+    }
+    points.sort((a, b) => a.x - b.x);
+    // Most recent N, not first N — a stale scatter of only the oldest
+    // transactions in a long date range would be a strange default.
+    const capped = config.limit && points.length > config.limit ? points.slice(-config.limit) : points;
+    return { kind: "scatter", points: capped };
+  }
 
   if (!config.groupBy) {
     let value = 0;

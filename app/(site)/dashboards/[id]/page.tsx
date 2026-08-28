@@ -1,7 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
-import { WidgetConfigSchema } from "@/lib/dashboardConfig";
+import { WidgetConfigSchema, type WidgetType } from "@/lib/dashboardConfig";
 import { computeWidgetData } from "@/lib/dashboardQuery";
 import { DashboardTabs } from "@/components/dashboards/DashboardTabs";
 import type { WidgetWithData } from "@/components/dashboards/Widget";
@@ -43,7 +43,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
             return { ...base, config: null, result: { error: "This widget's configuration is out of date." } };
           }
           try {
-            return { ...base, config: parsed.data, result: await computeWidgetData(parsed.data) };
+            return { ...base, config: parsed.data, result: await computeWidgetData(parsed.data, row.type as WidgetType) };
           } catch (err) {
             console.error(`Failed to compute widget ${row.id}`, err);
             return { ...base, config: parsed.data, result: { error: "Failed to load this widget." } };

@@ -38,7 +38,7 @@ const axisLabelsSchema = z
   })
   .optional();
 
-export const WIDGET_TYPES = ["line", "bar", "pie", "stat", "table", "text"] as const;
+export const WIDGET_TYPES = ["line", "bar", "pie", "stat", "table", "scatter", "text"] as const;
 export type WidgetType = (typeof WIDGET_TYPES)[number];
 
 export const METRICS = ["spendingTotal", "incomeTotal", "net", "transactionCount"] as const;
@@ -47,10 +47,11 @@ export type Metric = (typeof METRICS)[number];
 export const GROUP_BYS = ["day", "month", "merchantCategory", "merchantSubcategory", "account", "merchant"] as const;
 export type GroupBy = (typeof GROUP_BYS)[number];
 
-// A handful of preset accent colors (not an open color picker) — applied to
-// the line stroke / stat number only; bar/pie/table keep their own
-// per-category palette from lib/dashboardQuery.ts, where a single override
-// wouldn't make sense.
+// Quick-pick swatches shown alongside the open color picker/hex input in
+// the editor — not the exhaustive set of allowed values (see `color` below,
+// any hex works). Applied to the line stroke / stat number only; bar/pie/
+// table keep their own per-category palette from lib/dashboardQuery.ts,
+// where a single override wouldn't make sense.
 export const WIDGET_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899"] as const;
 
 const chartConfigSchema = z.object({
@@ -59,11 +60,14 @@ const chartConfigSchema = z.object({
   groupBy: z.enum(GROUP_BYS).optional(), // omitted for stat tiles
   dateRange: dateRangeSchema,
   filters: filtersSchema,
-  limit: z.number().int().positive().max(100).optional(),
+  // 1000 to give scatter (one point per transaction) room — bar/pie's "Top
+  // N" only ever needs a handful in practice, but nothing enforces that
+  // distinction here; the editor's own input just caps lower for those.
+  limit: z.number().int().positive().max(1000).optional(),
   sort: z.enum(["totalDesc", "totalAsc", "labelAsc"]).optional(), // ignored when groupBy is day/month — see lib/dashboardQuery.ts
   compareToPrevious: z.boolean().optional(), // stat tiles only
   axisLabels: axisLabelsSchema, // line/bar only — read directly off config by components/dashboards/Widget.tsx
-  color: z.enum(WIDGET_COLORS).optional(), // line/stat only, see above
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), // line/stat only, see above — any hex, not just the presets
 });
 
 // A free-text tile — no data behind it at all, just whatever the user

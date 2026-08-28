@@ -45,8 +45,22 @@ export function BarChartIcon({ className }: IconProps) {
 
 export function PieChartIcon({ className }: IconProps) {
   return (
-    <svg {...base} className={className} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M10 3v7l6 3a7 7 0 1 0-6-10Z" />
+    <svg {...base} className={className} strokeWidth={1.6} strokeLinejoin="round">
+      <circle cx="10" cy="10" r="7" />
+      <path d="M10 3a7 7 0 0 1 7 7h-7Z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function ScatterIcon({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} strokeWidth={1.6} strokeLinecap="round">
+      <path d="M3 3v14h14" strokeOpacity={0.4} />
+      <circle cx="7" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="10.5" cy="7" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="13" cy="10.5" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="15.5" cy="6" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="14.5" r="1.2" fill="currentColor" stroke="none" />
     </svg>
   );
 }
