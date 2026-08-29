@@ -8,21 +8,30 @@
 - Click-to-select in the live preview (bars/slices/rows) replacing chip-button lists for Colors/Style, with a full-shape highlight (translucent overlay, not just an outline) → ✅ done
 - Color/Colors and Style laid out as two side-by-side columns when both apply, to cut down on scrolling → ✅ done
 - Delete dashboard flow: button next to Edit/Publish, gated behind a "type the dashboard name to confirm" modal → ✅ done
-- Fixed bar/category-name squishing: `axisLabels` gained independent X/Y tick font sizes (separate from the axis *title* font), reorganized side by side as "X axis"/"Y axis" with labels above → ✅ done
+- Fixed bar/category-name squishing: `axisLabels` gained independent X/Y tick font sizes, and a checkbox to hide an axis's tick labels entirely → ✅ done
 - Draggable axis titles: removed the inside/outside position dropdown entirely — titles default to below/left and are repositioned by dragging them in the live preview (`xOffset`/`yOffset` persisted as `dx`/`dy`) → ✅ done
-- Removed the "Filters and style" leftover section and the $/plain-number value-format toggle (schema field kept, unused for now) → ✅ done
-- **New: multi-series charts.** Line, area, bar, stacked bar, and histogram can now plot 2–6 independently-configured series (own metric + category each) via a collapsible "Line 1"/"Line 2" editor UI with a "+ Add line" button. `computeMultiSeries` (lib/dashboardQuery.ts) runs one query per series sharing date range/accounts/groupBy, merging results; histogram series share bin edges so bars are comparable bin-for-bin → ✅ done
+- New "Text" section (axis titles, tick sizes, font family selector) relocated into the preview-panel column, laid out side by side with Date focus buttons (each half-width, matching Color/Style's own two-column treatment) → ✅ done
+- Fixed axis-title clipping: the chart's own margin now grows with the configured title size (it never did, even before today, since the Y title never had any left-margin room reserved at all) — this is what "Title size doesn't work" actually was → ✅ done
+- New `relativeMonth`/`monthsWindow` date modes — a single calendar month at a fixed offset ("N months ago", 0 = this month) or the N most recently completed months as one merged range, both genuinely fluid (roll forward with the calendar, not frozen) → ✅ done
+- Blank widget titles are now real auto-generated titles ("Spending — July"), recomputed live so they track a fluid date range's resolved period → ✅ done
+- **New: multi-series charts.** Line, area, bar, stacked bar, and histogram can now plot 2–6 independently-configured series (own metric + category each) via a collapsible "Line 1"/"Line 2" editor UI with a "+ Add line" button (now type-aware: "+ Add bar" for bar/histogram/stackedBar). `computeMultiSeries` (lib/dashboardQuery.ts) runs one query per series sharing date range/accounts/groupBy, merging results; histogram series share bin edges so bars are comparable bin-for-bin → ✅ done
 - Pie charts: new "Slice labels" control (none / $ value / percent, inside or outside the chart) → ✅ done
+- New "Show values on each bar/point" toggle — data labels via a shared `LabelList` helper across every chart type → ✅ done
+- Left sidebar: the currently-open dashboard (or Finances) is now highlighted, matching the Finance review sidebar's active-row treatment → ✅ done
+- **New: Data Management computed columns.** `lib/datasetFormula.ts` — a small hand-rolled arithmetic expression language (+ − × ÷, parens, `ABS()`/`ROUND()`, `[Column Name]` references), not `eval()`. New `Dataset.computedColumns` field (definitions only, evaluated fresh from the raw columns on every read — never materialized per-row). New `PATCH /api/data-hub/datasets/[id]` to re-type a raw column or edit the computed-column list. `DatasetTable` (read-only) replaced by `DatasetTableEditor`: per-column type dropdown, computed columns with a formula preview + remove button, and an "+ Add computed column" form with clickable column-name chips → ✅ done
 
 ## Code Changes
-- Files modified (across the whole day): `components/dashboards/Widget.tsx`, `components/dashboards/WidgetEditorPanel.tsx`, `components/dashboards/DashboardTabs.tsx`, `components/finance/CategoryReviewView.tsx`, `components/finance/GlobalReviewList.tsx`, `lib/dashboardConfig.ts`, `lib/dashboardQuery.ts`, `lib/finance.ts`
-- New files created: `components/finance/DateQuickFilter.tsx`
-- Git commits (chronological): `c584800`, `0ac1187`, `c2f0efb`, `8b5de73`, `1a804c7`, `f250d6f` — all pushed to `origin/main`
+- Files modified (across the whole day): `components/dashboards/Widget.tsx`, `components/dashboards/WidgetEditorPanel.tsx`, `components/dashboards/DashboardTabs.tsx`, `components/finance/CategoryReviewView.tsx`, `components/finance/GlobalReviewList.tsx`, `components/nav/DashboardNavList.tsx`, `lib/dashboardConfig.ts`, `lib/dashboardQuery.ts`, `lib/finance.ts`, `app/(site)/data-hub/page.tsx`, `app/api/data-hub/datasets/[id]/route.ts`, `prisma/schema.prisma`
+- New files created: `components/finance/DateQuickFilter.tsx`, `components/nav/DashboardNavLink.tsx`, `components/dataHub/DatasetTableEditor.tsx`, `lib/datasetFormula.ts`
+- Deleted: `components/dataHub/DatasetTable.tsx` (superseded by `DatasetTableEditor`)
+- Migration applied to the live Neon DB: `20260830000000_add_dataset_computed_columns` (`Dataset.computedColumns Json @default("[]")`) — `npx prisma migrate deploy` run and confirmed, `npx prisma generate` run after
+- Git commits (chronological): `c584800`, `0ac1187`, `c2f0efb`, `8b5de73`, `1a804c7`, `f250d6f`, `e33e983`, `b232550`, `e43671d`, `a653b06`, `a663d8c`, `92a3d5c`, `534e559`, `6c514a3` — all pushed to `origin/main`
 
 ## Uncommitted Work
 - None — working tree clean aside from the pre-existing untracked dirs that aren't part of this project's scope (`app/(site)/dev/records/`, `components/claw/`, `components/records/`, `components/scene/`, `lib/claw/`, `lib/menu/`, `lib/random.ts`, `lib/records/`, `lib/scene/`)
 
 ## What's Next
-- Multi-series bar/histogram/stackedBar widgets don't support click-to-select-a-series in the preview (that mechanism is keyed on `AggregatedPoint.key`, which doesn't map cleanly onto a multi-series "which series did you click" model) — per-series color is set directly in the Line 1/Line 2 editor rows instead, which covers the same need a different way. Not currently planned as follow-up unless it turns out to be missed.
+- Computed-column formulas can only reference raw CSV columns, not other computed columns (no dependency-ordering/cycle detection built) — a deliberate v1 scope cut, not a bug; worth revisiting if chained computed columns turn out to be wanted.
+- Multi-series bar/histogram/stackedBar widgets don't support click-to-select-a-series in the preview — per-series color is set directly in the Line 1/Line 2 editor rows instead. Not currently planned as follow-up unless it turns out to be missed.
 - Legacy "specific month" (one-month) widgets: still readable/editable if one exists, but there's no UI entry point to newly create one — no action needed unless one turns up.
-- Blockers/notes: none. `tsc --noEmit`, `eslint .` (whole repo), and a full `next build` were run clean after every change today.
+- Blockers/notes: none. `tsc --noEmit`, `eslint .` (whole repo), and a full `next build` were run clean after every change today; the new formula engine was also verified against the real database with a disposable dataset (create → compute → reload → evaluate → clean up).
