@@ -679,6 +679,10 @@ export function WidgetEditorPanel({
   // Metric picker — only for the chart types that can actually plot more
   // than one series at once (see computeMultiSeries in lib/dashboardQuery.ts).
   const showMultiSeries = type === "line" || type === "area" || type === "bar" || isStackedBar || isHistogram;
+  // What one series actually renders as for this chart type — "Line 1"
+  // reads fine for a line chart, but was showing up even for a histogram/
+  // bar/stackedBar, which draw bars, not lines.
+  const seriesNoun = type === "line" ? "Line" : type === "area" ? "Area" : "Bar";
   // Every account explicitly checked, individually, one at a time — not the
   // same as an empty selection (which means "no filter, use the same
   // cash-flow-account default every other page uses"). Selecting every
@@ -1544,7 +1548,7 @@ export function WidgetEditorPanel({
                 {showMultiSeries && (
                   <label className="flex items-center gap-2">
                     <input type="checkbox" checked={multiSeries} onChange={(e) => setMultiSeries(e.target.checked)} />
-                    <span className="text-sm">Multiple series (e.g. two lines on one chart)</span>
+                    <span className="text-sm">Multiple series (e.g. two {seriesNoun.toLowerCase()}s on one chart)</span>
                   </label>
                 )}
 
@@ -1553,7 +1557,7 @@ export function WidgetEditorPanel({
                     <span className={labelClasses}>Series</span>
                     {seriesList.map((s, i) => {
                       const isExpanded = expandedSeriesId === s.id;
-                      const displayName = s.label.trim() || `Line ${i + 1}`;
+                      const displayName = s.label.trim() || `${seriesNoun} ${i + 1}`;
                       return (
                         <div key={s.id} className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-2 dark:border-white/[.1]">
                           <div className="flex items-center gap-2">
@@ -1584,7 +1588,7 @@ export function WidgetEditorPanel({
                                 type="text"
                                 value={s.label}
                                 onChange={(e) => updateSeriesLine(s.id, { label: e.target.value })}
-                                placeholder={`Line ${i + 1} (optional name)`}
+                                placeholder={`${seriesNoun} ${i + 1} (optional name)`}
                                 className={selectClasses}
                               />
                               <select
@@ -1655,7 +1659,7 @@ export function WidgetEditorPanel({
                     })}
                     {seriesList.length < 6 && (
                       <button type="button" onClick={addSeriesLine} className={pillClasses(false) + " self-start"}>
-                        + Add line
+                        + Add {seriesNoun.toLowerCase()}
                       </button>
                     )}
                   </div>

@@ -324,7 +324,7 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
 
   const seriesInfo: StackedSeries[] = resolved.map(({ entry }, i) => ({
     key: entry.id,
-    label: entry.label?.trim() || `Line ${i + 1}`,
+    label: entry.label?.trim() || `Series ${i + 1}`,
     color: entry.color ?? colorForKey(entry.id),
   }));
 

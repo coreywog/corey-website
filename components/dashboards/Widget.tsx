@@ -88,6 +88,20 @@ function tickProp(axisLabels: AxisLabels | undefined, axis: "x" | "y"): false | 
   };
 }
 
+/** Extra chart margin (beyond the tick labels' own space, which recharts
+ * already reserves on its own) an axis title needs to render without being
+ * clipped — it sits *outside* the plot area now (position "bottom"/"left",
+ * see axisLabelProp), so bumping "Title size" bigger needs the container to
+ * actually make room, not just change what gets drawn into the same fixed
+ * few pixels. One line of text at that font size, plus Label's own default
+ * 5px offset from the axis, plus a little breathing room. Returns 0 when
+ * that axis has no title at all. */
+function axisTitleMargin(axisLabels: AxisLabels | undefined, axis: "x" | "y"): number {
+  const hasTitle = Boolean(axis === "x" ? axisLabels?.x : axisLabels?.y);
+  if (!hasTitle) return 0;
+  return (axisLabels?.fontSize ?? 11) + 14;
+}
+
 /** Small value label rendered on/above each bar or line/area point — off
  * unless config.showDataLabels is set. Reuses formatValue so it respects
  * the same $/plain-number choice as the axis ticks/tooltip. */
@@ -270,7 +284,7 @@ function LineWidget({
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+      <LineChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
@@ -326,7 +340,7 @@ function AreaWidget({
   const fill = color ?? "#6366f1";
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+      <AreaChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         <FillPatternDefs items={[{ pattern: fillPattern ?? "solid", color: fill }]} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
@@ -411,7 +425,7 @@ function BarWidget({
   };
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 28 : 16 }}>
+      <BarChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: 16 + axisTitleMargin(axisLabels, "x") }}>
         <FillPatternDefs items={points.map((p) => ({ pattern: patternFor(p.key) ?? "solid", color: p.color }))} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
@@ -466,7 +480,7 @@ function StackedBarWidget({
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 28 : 16 }}>
+      <BarChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: 16 + axisTitleMargin(axisLabels, "x") }}>
         <FillPatternDefs items={series.map((s) => ({ pattern: fillPattern ?? "solid", color: s.color }))} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
@@ -523,7 +537,7 @@ function MultiLineWidget({
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+      <LineChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
@@ -569,7 +583,7 @@ function MultiAreaWidget({
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+      <AreaChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
@@ -724,7 +738,7 @@ function ScatterWidget({
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <ScatterChart margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+      <ScatterChart margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
         <XAxis
           dataKey="x"
