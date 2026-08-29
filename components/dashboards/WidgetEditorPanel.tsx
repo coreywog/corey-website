@@ -1870,6 +1870,7 @@ export function WidgetEditorPanel({
         </div>
 
         {typeChosen && !isText && (
+          <div className={showAxisLabels ? "grid grid-cols-2 gap-3" : "flex flex-col gap-3"}>
           <div className="flex flex-col gap-1.5 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
             <span className={labelClasses}>Date focus buttons</span>
 
@@ -2027,9 +2028,8 @@ export function WidgetEditorPanel({
               </div>
             )}
           </div>
-        )}
 
-        {typeChosen && showAxisLabels && (
+          {showAxisLabels && (
           <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
             <span className={labelClasses}>Text</span>
 
@@ -2109,6 +2109,8 @@ export function WidgetEditorPanel({
                 ))}
               </select>
             </label>
+          </div>
+          )}
           </div>
         )}
 
