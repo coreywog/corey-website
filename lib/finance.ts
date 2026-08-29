@@ -115,6 +115,12 @@ export function listAvailableMonthsFromStrings(dates: string[]): string[] {
  */
 export type DateRangeSelection =
   | { mode: "relative"; months: 1 | 3 | 6 | 12 }
+  // Same idea as "relative" months, at day granularity — "Today"/
+  // "Yesterday"/etc. buttons. Genuinely fluid: recomputed from "now" every
+  // time resolveDateRange runs, never a frozen date baked in at whatever
+  // moment the widget was configured (that was a real bug — see the git
+  // history for the shortcut buttons this replaced).
+  | { mode: "relativeDays"; days: 0 | 1 | 2 | 7 | 30 }
   | { mode: "specific"; month: string } // "YYYY-MM"
   | { mode: "allTime" }
   // Both "YYYY-MM-DD", start inclusive, end exclusive. `end` omitted means
@@ -142,6 +148,9 @@ export function resolveDateRange(selection: DateRangeSelection): { start: string
   }
   if (selection.mode === "custom") {
     return { start: selection.start, end: selection.end ?? end };
+  }
+  if (selection.mode === "relativeDays") {
+    return { start: new Date(Date.now() - selection.days * 86_400_000).toISOString().slice(0, 10), end };
   }
   return { start: monthsAgo(selection.months).toISOString().slice(0, 10), end };
 }

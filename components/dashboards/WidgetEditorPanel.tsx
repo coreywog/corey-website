@@ -86,7 +86,28 @@ const TRANSACTION_FIELDS: { name: string; kind: "D" | "T" | "#" }[] = [
   { name: "Account", kind: "T" },
 ];
 
-type DateRangeMode = "relative" | "specific" | "allTime" | "custom";
+type ColumnFilterKey = "date" | "amount" | "merchant" | "category" | "subcategory" | "account";
+// Every field is filterable now, independent of whatever it's also used
+// for (Group By, Metric) — grouping by Category while filtering to three
+// specific categories is a completely normal thing to want at once.
+const COLUMN_FILTER_KEYS: Record<string, ColumnFilterKey> = {
+  Date: "date",
+  Amount: "amount",
+  Merchant: "merchant",
+  Category: "category",
+  Subcategory: "subcategory",
+  Account: "account",
+};
+
+function FilterChip({ label }: { label: string }) {
+  return (
+    <span className="rounded-full border border-black/[.1] px-2 py-0.5 text-[11px] text-zinc-500 dark:border-white/[.15] dark:text-zinc-400">
+      {label}
+    </span>
+  );
+}
+
+type DateRangeMode = "relative" | "relativeDays" | "specific" | "allTime" | "custom";
 
 const selectClasses =
   "rounded-md border border-black/[.1] bg-white px-2 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500";
@@ -114,20 +135,17 @@ function formatMonthValue(value: string): string | null {
   return new Date(`${value}-01T00:00:00.000Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
-// Quick fills for the custom range's start date — computed fresh at click
-// time (not stored), so "Yesterday" always means yesterday relative to
-// whenever the widget is actually being edited.
-const RELATIVE_DATE_SHORTCUTS = [
-  { label: "Today", daysAgo: 0 },
-  { label: "Yesterday", daysAgo: 1 },
-  { label: "2 days ago", daysAgo: 2 },
-  { label: "7 days ago", daysAgo: 7 },
-  { label: "30 days ago", daysAgo: 30 },
+// "Today"/"Yesterday"/etc. as real dateMode options (dateRange mode
+// "relativeDays" — see lib/finance.ts) rather than a one-time quick-fill
+// that baked a frozen date into the custom range: this way they stay fluid,
+// recomputed relative to "now" every time the widget actually renders.
+const RELATIVE_DAY_OPTIONS = [
+  { label: "Today", days: 0 },
+  { label: "Yesterday", days: 1 },
+  { label: "2 days", days: 2 },
+  { label: "7 days", days: 7 },
+  { label: "30 days", days: 30 },
 ] as const;
-
-function relativeDateString(daysAgo: number): string {
-  return new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
-}
 
 /**
  * Add/edit panel for one widget — a left-side drawer, not a centered modal.
@@ -290,6 +308,9 @@ export function WidgetEditorPanel({
   const [relativeMonths, setRelativeMonths] = useState<1 | 3 | 6 | 12>(
     chartConfig?.dateRange.mode === "relative" ? chartConfig.dateRange.months : 6,
   );
+  const [relativeDaysAgo, setRelativeDaysAgo] = useState<0 | 1 | 2 | 7 | 30>(
+    chartConfig?.dateRange.mode === "relativeDays" ? chartConfig.dateRange.days : 1,
+  );
   const [specificMonth, setSpecificMonth] = useState(
     chartConfig?.dateRange.mode === "specific" ? chartConfig.dateRange.month : "",
   );
@@ -312,10 +333,17 @@ export function WidgetEditorPanel({
     chartConfig?.filters?.merchantSubcategories ?? [],
   );
   const [merchants, setMerchants] = useState<string[]>(chartConfig?.filters?.merchants ?? []);
+  const [amountMin, setAmountMin] = useState(chartConfig?.filters?.amountMin?.toString() ?? "");
+  const [amountMax, setAmountMax] = useState(chartConfig?.filters?.amountMax?.toString() ?? "");
   // Which column's filter picker is expanded under "Columns available" —
   // at most one at a time, closed (null) by default so a fresh widget
-  // isn't already showing an open picker nobody asked for.
-  const [openColumnFilter, setOpenColumnFilter] = useState<"category" | "merchant" | null>(null);
+  // isn't already showing an open picker nobody asked for. Every column can
+  // be filtered now, including one that's also the current Group By/Metric
+  // — grouping by category and filtering to just three categories is a
+  // completely normal thing to want at the same time.
+  const [openColumnFilter, setOpenColumnFilter] = useState<
+    "date" | "amount" | "merchant" | "category" | "subcategory" | "account" | null
+  >(null);
   const [transactionCategory, setTransactionCategory] = useState<string>(chartConfig?.filters?.transactionCategory ?? "");
   const [limit, setLimit] = useState(chartConfig?.limit ? String(chartConfig.limit) : "");
   const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
@@ -342,14 +370,10 @@ export function WidgetEditorPanel({
 
   const isText = type === "text";
   const categories = useMemo(() => [...new Set(categoryOptions.map((c) => c.category))].sort(), [categoryOptions]);
-  // Subcategories available to drill into, scoped to whichever categories
-  // are currently selected — picking "Dining" first is what makes its
-  // subcategories ("Coffee shops", "Restaurants", ...) show up at all.
-  const subcategoriesForSelectedCategories = useMemo(
-    () =>
-      [...new Set(categoryOptions.filter((c) => merchantCategories.includes(c.category)).map((c) => c.subcategory))].sort(),
-    [categoryOptions, merchantCategories],
-  );
+  // Subcategory is its own independently filterable column now (not nested
+  // under Category) — every subcategory site-wide, not scoped to whichever
+  // categories happen to also be selected.
+  const allSubcategories = useMemo(() => [...new Set(categoryOptions.map((c) => c.subcategory))].sort(), [categoryOptions]);
 
   // Scatter plots one point per raw transaction (see lib/dashboardQuery.ts)
   // instead of one point per bucket, so it has no groupBy at all — closer
@@ -362,7 +386,6 @@ export function WidgetEditorPanel({
   // histogram plot/bin raw transactions, and calendar's grouping is always
   // "day" — forced below in the config useMemo, not offered as a choice.
   const needsGroupBy = !isText && !isScatter && !isHistogram && !isCalendar && type !== "stat";
-  const showCategoryFilter = groupBy !== "merchantCategory";
   const isTimeSeries = groupBy === "day" || groupBy === "month";
   const showLimit = (needsGroupBy && groupBy !== "" && !isTimeSeries && (type === "bar" || type === "pie")) || isStackedBar;
   const showTransactionCategoryFilter = metric === "net" || metric === "transactionCount";
@@ -379,6 +402,22 @@ export function WidgetEditorPanel({
   // ones normally excluded from cash flow (e.g. PayPal), because the user
   // asked for them by name.
   const allAccountsChecked = accounts.length > 0 && accounts.every((a) => accountIds.includes(a.id));
+
+  // One-line summary shown under "Date" when its picker is collapsed —
+  // unlike the other columns, Date always has *some* range set, so this
+  // always renders something rather than being conditional on chips.
+  const dateRangeSummary =
+    dateMode === "allTime"
+      ? "All time"
+      : dateMode === "relativeDays"
+        ? (RELATIVE_DAY_OPTIONS.find((d) => d.days === relativeDaysAgo)?.label ?? "Recent")
+        : dateMode === "specific"
+          ? formatMonthValue(specificMonth) || "Pick a month"
+          : dateMode === "custom"
+            ? customStart
+              ? `${formatDate(customStart)} – ${openEnded ? "latest" : customEnd ? formatDate(customEnd) : "?"}`
+              : "Pick a range"
+            : `Last ${relativeMonths} month${relativeMonths === 1 ? "" : "s"}`;
 
   // Memoized, not recomputed-and-thrown-away every render: this is used as
   // a useEffect dependency below (both the preview fetch and the
@@ -398,20 +437,30 @@ export function WidgetEditorPanel({
     const dateRange: ChartWidgetConfig["dateRange"] =
       dateMode === "allTime"
         ? { mode: "allTime" }
-        : dateMode === "specific"
-          ? { mode: "specific", month: specificMonth }
-          : dateMode === "custom"
-            ? { mode: "custom", start: customStart, ...(openEnded ? {} : { end: customEnd }) }
-            : { mode: "relative", months: relativeMonths };
+        : dateMode === "relativeDays"
+          ? { mode: "relativeDays", days: relativeDaysAgo }
+          : dateMode === "specific"
+            ? { mode: "specific", month: specificMonth }
+            : dateMode === "custom"
+              ? { mode: "custom", start: customStart, ...(openEnded ? {} : { end: customEnd }) }
+              : { mode: "relative", months: relativeMonths };
 
+    const parsedAmountMin = amountMin.trim() ? Number(amountMin) : undefined;
+    const parsedAmountMax = amountMax.trim() ? Number(amountMax) : undefined;
+
+    // Every column can be filtered regardless of whether it's also the
+    // current Group By/metric — "grouped by category, but only these three
+    // categories" is a completely normal thing to want at the same time.
     const filters: NonNullable<ChartWidgetConfig["filters"]> = {
       ...(accountIds.length ? { accountIds } : {}),
-      ...(showCategoryFilter && merchantCategories.length ? { merchantCategories } : {}),
-      ...(showCategoryFilter && merchantSubcategories.length ? { merchantSubcategories } : {}),
+      ...(merchantCategories.length ? { merchantCategories } : {}),
+      ...(merchantSubcategories.length ? { merchantSubcategories } : {}),
       ...(merchants.length ? { merchants } : {}),
       ...(showTransactionCategoryFilter && transactionCategory
         ? { transactionCategory: transactionCategory as "income" | "spending" | "transfer" | "other" }
         : {}),
+      ...(parsedAmountMin !== undefined && !Number.isNaN(parsedAmountMin) ? { amountMin: parsedAmountMin } : {}),
+      ...(parsedAmountMax !== undefined && !Number.isNaN(parsedAmountMax) ? { amountMax: parsedAmountMax } : {}),
     };
 
     const axisLabels: ChartWidgetConfig["axisLabels"] =
@@ -437,7 +486,7 @@ export function WidgetEditorPanel({
       ...(showMultiColor && colorMode === "specific" && Object.keys(pointColors).length ? { colorOverrides: pointColors } : {}),
       ...(dateButtons.length ? { dateButtons } : {}),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- showCategoryFilter/showLimit/showTransactionCategoryFilter/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/showTransactionCategoryFilter/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
   }, [
     isText,
     text,
@@ -446,6 +495,7 @@ export function WidgetEditorPanel({
     groupBy,
     dateMode,
     relativeMonths,
+    relativeDaysAgo,
     specificMonth,
     customStart,
     customEnd,
@@ -454,6 +504,8 @@ export function WidgetEditorPanel({
     merchantCategories,
     merchantSubcategories,
     merchants,
+    amountMin,
+    amountMax,
     transactionCategory,
     limit,
     compareToPrevious,
@@ -504,7 +556,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, transactionCategory, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo]);
+  }, [isText, text, type, metric, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, transactionCategory, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -627,219 +679,296 @@ export function WidgetEditorPanel({
         </label>
 
         <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] items-start gap-4">
-          {/* Left column: which accounts feed this widget — hidden for a
-              text tile, which has no data behind it at all. */}
+          {/* Left column: every field, each independently filterable — click
+              one to open its picker. Hidden for a text tile, which has no
+              data behind it at all. */}
           {!isText && (
-            <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
-              <span className={labelClasses}>Data sources</span>
-              <label className="flex items-center gap-2 border-b border-black/[.06] pb-2 text-sm dark:border-white/[.08]">
-                <input
-                  type="checkbox"
-                  checked={allAccountsChecked || accountIds.length === 0}
-                  onChange={() => setAccountIds([])}
-                />
-                All connected accounts
-              </label>
-              <div className="flex flex-col gap-1.5">
-                {accounts.map((a) => (
-                  <label key={a.id} className="flex items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      checked={accountIds.includes(a.id)}
-                      onChange={(e) =>
-                        setAccountIds((prev) => (e.target.checked ? [...prev, a.id] : prev.filter((id) => id !== a.id)))
-                      }
-                    />
-                    {a.name}
-                  </label>
-                ))}
-              </div>
-
-              <div className="flex flex-col gap-1 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
-                <span className="text-[11px] text-zinc-500">Columns available — click one to filter by it</span>
-                {TRANSACTION_FIELDS.map((f) => {
-                  const filterKey = f.name === "Category" && showCategoryFilter ? "category" : f.name === "Merchant" ? "merchant" : null;
-                  // Highlights the column(s) actually powering this graph
-                  // right now — Amount via whichever metric is picked (every
-                  // metric operates on it), everything else via groupBy.
-                  // Replaces the old "is this filtered?" dot: at a glance,
-                  // this shows what's *driving* the chart, not just what's
-                  // narrowing it.
-                  const isUsedInGraph =
-                    f.name === "Amount"
-                      ? true
-                      : f.name === "Date"
-                        ? groupBy === "day" || groupBy === "month"
-                        : f.name === "Merchant"
-                          ? groupBy === "merchant"
-                          : f.name === "Category"
-                            ? groupBy === "merchantCategory"
-                            : f.name === "Subcategory"
-                              ? groupBy === "merchantSubcategory"
-                              : f.name === "Account"
-                                ? groupBy === "account"
-                                : false;
-                  const hasChips =
-                    f.name === "Category"
-                      ? merchantCategories.length > 0 || merchantSubcategories.length > 0
+            <div className="flex flex-col gap-1 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
+              <span className={labelClasses}>Data sources — click a column to filter by it</span>
+              {TRANSACTION_FIELDS.map((f) => {
+                const filterKey = COLUMN_FILTER_KEYS[f.name];
+                // Highlights the column(s) actually powering this graph
+                // right now — Amount via whichever metric is picked (every
+                // metric operates on it), everything else via groupBy. At a
+                // glance, this shows what's *driving* the chart — separate
+                // from whether it's also filtered, which every column can
+                // be regardless (grouping by Category while also filtering
+                // to three specific categories is completely normal).
+                const isUsedInGraph =
+                  f.name === "Amount"
+                    ? true
+                    : f.name === "Date"
+                      ? groupBy === "day" || groupBy === "month"
                       : f.name === "Merchant"
-                        ? merchants.length > 0
-                        : false;
-                  return (
-                    <div
-                      key={f.name}
-                      className={
-                        "rounded " +
-                        (isUsedInGraph
-                          ? "border-l-2 border-indigo-500 bg-indigo-500/[.06] creamsicle:border-orange-500 creamsicle:bg-orange-500/[.08]"
-                          : "border-l-2 border-transparent")
-                      }
+                        ? groupBy === "merchant"
+                        : f.name === "Category"
+                          ? groupBy === "merchantCategory"
+                          : f.name === "Subcategory"
+                            ? groupBy === "merchantSubcategory"
+                            : f.name === "Account"
+                              ? groupBy === "account"
+                              : false;
+                const isOpen = openColumnFilter === filterKey;
+                return (
+                  <div
+                    key={f.name}
+                    className={
+                      "rounded " +
+                      (isUsedInGraph
+                        ? "border-l-2 border-indigo-500 bg-indigo-500/[.06] creamsicle:border-orange-500 creamsicle:bg-orange-500/[.08]"
+                        : "border-l-2 border-transparent")
+                    }
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenColumnFilter((prev) => (prev === filterKey ? null : filterKey))}
+                      className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-xs text-zinc-600 hover:bg-black/[.03] hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/[.05] dark:hover:text-zinc-100"
                     >
-                      <button
-                        type="button"
-                        disabled={!filterKey}
-                        onClick={() => filterKey && setOpenColumnFilter((prev) => (prev === filterKey ? null : filterKey))}
-                        className={
-                          "flex w-full items-center gap-2 rounded px-1 py-0.5 text-xs text-zinc-600 dark:text-zinc-400 " +
-                          (filterKey
-                            ? "cursor-pointer hover:bg-black/[.03] hover:text-zinc-900 dark:hover:bg-white/[.05] dark:hover:text-zinc-100"
-                            : "cursor-default")
-                        }
-                      >
-                        <span className="w-3 font-mono font-medium text-zinc-400 dark:text-zinc-500">{f.kind}</span>
-                        <span className="flex-1 text-left">{f.name}</span>
-                      </button>
+                      <span className="w-3 font-mono font-medium text-zinc-400 dark:text-zinc-500">{f.kind}</span>
+                      <span className="flex-1 text-left">{f.name}</span>
+                    </button>
 
-                      {/* Persistent, collapsed summary of this column's active
-                          filter — visible whether or not the picker itself is
-                          open, so you can see what's filtered without
-                          re-opening every column. The picker to add more
-                          still only appears while open (below). */}
-                      {hasChips && openColumnFilter !== filterKey && (
-                        <div className="flex flex-wrap gap-1 py-1 pl-5">
-                          {f.name === "Category" &&
-                            [...merchantCategories.map((c) => formatCategoryLabel(c)), ...merchantSubcategories.map((s) => formatCategoryLabel(s))].map(
-                              (label) => (
-                                <span
-                                  key={label}
-                                  className="rounded-full border border-black/[.1] px-2 py-0.5 text-[11px] text-zinc-500 dark:border-white/[.15] dark:text-zinc-400"
-                                >
-                                  {label}
-                                </span>
-                              ),
+                    {/* Persistent, collapsed summary of this column's active
+                        filter — visible whether or not the picker itself is
+                        open, so you can see what's filtered without
+                        re-opening every column. The picker to add more
+                        still only appears while open (below). */}
+                    {!isOpen && (
+                      <div className="flex flex-wrap gap-1 py-1 pl-5 empty:hidden">
+                        {f.name === "Date" && (
+                          <span className="text-[11px] text-zinc-500">{dateRangeSummary}</span>
+                        )}
+                        {f.name === "Amount" &&
+                          (amountMin || amountMax) &&
+                          [
+                            amountMin ? `min $${amountMin}` : null,
+                            amountMax ? `max $${amountMax}` : null,
+                          ]
+                            .filter((v): v is string => v !== null)
+                            .map((label) => <FilterChip key={label} label={label} />)}
+                        {f.name === "Category" && merchantCategories.map((c) => <FilterChip key={c} label={formatCategoryLabel(c)} />)}
+                        {f.name === "Subcategory" &&
+                          merchantSubcategories.map((s) => <FilterChip key={s} label={formatCategoryLabel(s)} />)}
+                        {f.name === "Merchant" && merchants.map((m) => <FilterChip key={m} label={m} />)}
+                        {f.name === "Account" &&
+                          (accountIds.length === 0 ? (
+                            <span className="text-[11px] text-zinc-500">All accounts</span>
+                          ) : (
+                            accountIds.map((id) => (
+                              <FilterChip key={id} label={accounts.find((a) => a.id === id)?.name ?? id} />
+                            ))
+                          ))}
+                      </div>
+                    )}
+
+                    {isOpen && filterKey === "date" && (
+                      <div className="flex flex-col gap-1.5 py-1 pl-5">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {([1, 3, 6, 12] as const).map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => {
+                                setDateMode("relative");
+                                setRelativeMonths(m);
+                              }}
+                              className={pillClasses(dateMode === "relative" && relativeMonths === m)}
+                            >
+                              {m}mo
+                            </button>
+                          ))}
+                          {RELATIVE_DAY_OPTIONS.map((d) => (
+                            <button
+                              key={d.label}
+                              type="button"
+                              onClick={() => {
+                                setDateMode("relativeDays");
+                                setRelativeDaysAgo(d.days);
+                              }}
+                              className={pillClasses(dateMode === "relativeDays" && relativeDaysAgo === d.days)}
+                            >
+                              {d.label}
+                            </button>
+                          ))}
+                          <button type="button" onClick={() => setDateMode("allTime")} className={pillClasses(dateMode === "allTime")}>
+                            All time
+                          </button>
+                          <button type="button" onClick={() => setDateMode("specific")} className={pillClasses(dateMode === "specific")}>
+                            One month
+                          </button>
+                          <button type="button" onClick={() => setDateMode("custom")} className={pillClasses(dateMode === "custom")}>
+                            Custom range
+                          </button>
+                        </div>
+
+                        {dateMode === "specific" && (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="month"
+                              value={specificMonth}
+                              onChange={(e) => setSpecificMonth(e.target.value)}
+                              className={selectClasses}
+                            />
+                            {formatMonthValue(specificMonth) && (
+                              <span className="text-xs text-zinc-500">{formatMonthValue(specificMonth)}</span>
                             )}
-                          {f.name === "Merchant" &&
-                            merchants.map((m) => (
-                              <span
-                                key={m}
-                                className="rounded-full border border-black/[.1] px-2 py-0.5 text-[11px] text-zinc-500 dark:border-white/[.15] dark:text-zinc-400"
-                              >
-                                {m}
-                              </span>
-                            ))}
-                        </div>
-                      )}
-
-                      {filterKey === "category" && openColumnFilter === "category" && (
-                        <div className="flex flex-col gap-1 py-1 pl-5">
-                          <SearchableSelect
-                            value=""
-                            onChange={(v) => setMerchantCategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
-                            options={categories
-                              .filter((c) => !merchantCategories.includes(c))
-                              .map((c) => ({ value: c, label: formatCategoryLabel(c) }))}
-                            placeholder="Add category…"
-                          />
-                          {merchantCategories.length > 0 && (
-                            <div className="flex flex-wrap gap-1">
-                              {merchantCategories.map((c) => (
-                                <button
-                                  key={c}
-                                  type="button"
-                                  onClick={() => {
-                                    setMerchantCategories((prev) => prev.filter((x) => x !== c));
-                                    // Drop any subcategory that only belonged
-                                    // to the category just removed — leaving
-                                    // it selected would silently keep
-                                    // filtering by something no longer
-                                    // reachable from the UI.
-                                    const stillValid = new Set(
-                                      categoryOptions
-                                        .filter((opt) => opt.category !== c && merchantCategories.includes(opt.category))
-                                        .map((opt) => opt.subcategory),
-                                    );
-                                    setMerchantSubcategories((prev) => prev.filter((s) => stillValid.has(s)));
-                                  }}
-                                  className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                                >
-                                  {formatCategoryLabel(c)} ✕
-                                </button>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Only appears once at least one category is
-                              selected — lets a widget narrow further, e.g.
-                              "Dining" -> just "Coffee shops", instead of the
-                              whole category. */}
-                          {subcategoriesForSelectedCategories.length > 0 && (
-                            <div className="flex flex-col gap-1 pt-1 pl-3">
-                              <span className="text-[11px] text-zinc-500">Subcategories (narrows further)</span>
-                              <SearchableSelect
-                                value=""
-                                onChange={(v) => setMerchantSubcategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
-                                options={subcategoriesForSelectedCategories
-                                  .filter((s) => !merchantSubcategories.includes(s))
-                                  .map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
-                                placeholder="Add subcategory…"
+                          </div>
+                        )}
+                        {dateMode === "custom" && (
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-2">
+                              <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
+                              <span className="text-xs text-zinc-500">to</span>
+                              <input
+                                type="date"
+                                value={customEnd}
+                                onChange={(e) => setCustomEnd(e.target.value)}
+                                disabled={openEnded}
+                                className={selectClasses + (openEnded ? " opacity-40" : "")}
                               />
-                              {merchantSubcategories.length > 0 && (
-                                <div className="flex flex-wrap gap-1">
-                                  {merchantSubcategories.map((s) => (
-                                    <button
-                                      key={s}
-                                      type="button"
-                                      onClick={() => setMerchantSubcategories((prev) => prev.filter((x) => x !== s))}
-                                      className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                                    >
-                                      {formatCategoryLabel(s)} ✕
-                                    </button>
-                                  ))}
-                                </div>
-                              )}
                             </div>
-                          )}
-                        </div>
-                      )}
+                            <label className="flex items-center gap-2">
+                              <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
+                              <span className="text-sm">No end date — always include the latest data</span>
+                            </label>
+                          </div>
+                        )}
 
-                      {filterKey === "merchant" && openColumnFilter === "merchant" && (
-                        <div className="flex flex-col gap-1 py-1 pl-5">
-                          <SearchableSelect
-                            value=""
-                            onChange={(v) => setMerchants((prev) => (prev.includes(v) ? prev : [...prev, v]))}
-                            options={merchantOptions.filter((m) => !merchants.includes(m)).map((m) => ({ value: m, label: m }))}
-                            placeholder="Add merchant…"
+                        {availableRange?.earliest && availableRange?.latest && (
+                          <p className="text-[11px] text-zinc-500">
+                            Data available: {formatDate(availableRange.earliest)} – {formatDate(availableRange.latest)}
+                            {accountIds.length > 0 ? " for the selected accounts" : ""}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {isOpen && filterKey === "amount" && (
+                      <div className="flex items-center gap-2 py-1 pl-5">
+                        <input
+                          type="number"
+                          value={amountMin}
+                          onChange={(e) => setAmountMin(e.target.value)}
+                          placeholder="Min $"
+                          className={selectClasses + " w-24"}
+                        />
+                        <span className="text-xs text-zinc-500">to</span>
+                        <input
+                          type="number"
+                          value={amountMax}
+                          onChange={(e) => setAmountMax(e.target.value)}
+                          placeholder="Max $"
+                          className={selectClasses + " w-24"}
+                        />
+                      </div>
+                    )}
+
+                    {isOpen && filterKey === "category" && (
+                      <div className="flex flex-col gap-1 py-1 pl-5">
+                        <SearchableSelect
+                          value=""
+                          onChange={(v) => setMerchantCategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
+                          options={categories
+                            .filter((c) => !merchantCategories.includes(c))
+                            .map((c) => ({ value: c, label: formatCategoryLabel(c) }))}
+                          placeholder="Add category…"
+                        />
+                        {merchantCategories.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {merchantCategories.map((c) => (
+                              <button
+                                key={c}
+                                type="button"
+                                onClick={() => setMerchantCategories((prev) => prev.filter((x) => x !== c))}
+                                className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                              >
+                                {formatCategoryLabel(c)} ✕
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {isOpen && filterKey === "subcategory" && (
+                      <div className="flex flex-col gap-1 py-1 pl-5">
+                        <SearchableSelect
+                          value=""
+                          onChange={(v) => setMerchantSubcategories((prev) => (prev.includes(v) ? prev : [...prev, v]))}
+                          options={allSubcategories
+                            .filter((s) => !merchantSubcategories.includes(s))
+                            .map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
+                          placeholder="Add subcategory…"
+                        />
+                        {merchantSubcategories.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {merchantSubcategories.map((s) => (
+                              <button
+                                key={s}
+                                type="button"
+                                onClick={() => setMerchantSubcategories((prev) => prev.filter((x) => x !== s))}
+                                className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                              >
+                                {formatCategoryLabel(s)} ✕
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {isOpen && filterKey === "merchant" && (
+                      <div className="flex flex-col gap-1 py-1 pl-5">
+                        <SearchableSelect
+                          value=""
+                          onChange={(v) => setMerchants((prev) => (prev.includes(v) ? prev : [...prev, v]))}
+                          options={merchantOptions.filter((m) => !merchants.includes(m)).map((m) => ({ value: m, label: m }))}
+                          placeholder="Add merchant…"
+                        />
+                        {merchants.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {merchants.map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => setMerchants((prev) => prev.filter((x) => x !== m))}
+                                className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                              >
+                                {m} ✕
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {isOpen && filterKey === "account" && (
+                      <div className="flex flex-col gap-1 py-1 pl-5">
+                        <label className="flex items-center gap-2 text-sm">
+                          <input
+                            type="checkbox"
+                            checked={allAccountsChecked || accountIds.length === 0}
+                            onChange={() => setAccountIds([])}
                           />
-                          {merchants.length > 0 && (
-                            <div className="flex flex-wrap gap-1">
-                              {merchants.map((m) => (
-                                <button
-                                  key={m}
-                                  type="button"
-                                  onClick={() => setMerchants((prev) => prev.filter((x) => x !== m))}
-                                  className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                                >
-                                  {m} ✕
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+                          All connected accounts
+                        </label>
+                        {accounts.map((a) => (
+                          <label key={a.id} className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={accountIds.includes(a.id)}
+                              onChange={(e) =>
+                                setAccountIds((prev) => (e.target.checked ? [...prev, a.id] : prev.filter((id) => id !== a.id)))
+                              }
+                            />
+                            {a.name}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -1007,117 +1136,6 @@ export function WidgetEditorPanel({
                   </div>
                 )}
 
-                <div className="flex flex-col gap-2">
-                  <span className={labelClasses}>Quick-range buttons on the tile (optional)</span>
-                  <p className="text-[11px] text-zinc-500">
-                    Shown on the live dashboard so a viewer can flip the range without opening the editor —
-                    independent of the date range set above.
-                  </p>
-
-                  {dateButtons.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {dateButtons.map((b, i) => (
-                        <span
-                          key={dateButtonKey(b)}
-                          className="flex items-center gap-1 rounded-full border border-black/[.12] px-2 py-1 text-xs dark:border-white/[.15]"
-                          title={b.kind === "custom" ? `${b.start} – ${b.end}` : undefined}
-                        >
-                          {dateButtonLabel(b)}
-                          <button
-                            type="button"
-                            onClick={() => moveDateButton(i, -1)}
-                            disabled={i === 0}
-                            className="text-zinc-400 hover:text-zinc-800 disabled:opacity-30 dark:hover:text-zinc-200"
-                            aria-label="Move earlier"
-                          >
-                            ↑
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => moveDateButton(i, 1)}
-                            disabled={i === dateButtons.length - 1}
-                            className="text-zinc-400 hover:text-zinc-800 disabled:opacity-30 dark:hover:text-zinc-200"
-                            aria-label="Move later"
-                          >
-                            ↓
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => removeDateButton(i)}
-                            className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
-                            aria-label="Remove"
-                          >
-                            ✕
-                          </button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {dateButtons.length < 12 && (
-                    <>
-                      <div className="flex flex-wrap gap-1.5">
-                        {DATE_BUTTON_PRESETS.filter(
-                          (p) => !dateButtons.some((b) => b.kind === "preset" && b.preset === p),
-                        ).map((p) => (
-                          <button
-                            key={p}
-                            type="button"
-                            onClick={() => setDateButtons((prev) => [...prev, { kind: "preset", preset: p as DateButtonPreset }])}
-                            className={pillClasses(false)}
-                          >
-                            + {dateButtonLabel({ kind: "preset", preset: p as DateButtonPreset })}
-                          </button>
-                        ))}
-                      </div>
-
-                      {addingCustomButton ? (
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <input
-                            type="text"
-                            value={customButtonLabel}
-                            onChange={(e) => setCustomButtonLabel(e.target.value)}
-                            placeholder="Label (e.g. July)"
-                            maxLength={20}
-                            className={selectClasses + " w-28"}
-                          />
-                          <input
-                            type="date"
-                            value={customButtonStart}
-                            onChange={(e) => setCustomButtonStart(e.target.value)}
-                            className={selectClasses}
-                          />
-                          <span className="text-xs text-zinc-500">to</span>
-                          <input
-                            type="date"
-                            value={customButtonEnd}
-                            onChange={(e) => setCustomButtonEnd(e.target.value)}
-                            className={selectClasses}
-                          />
-                          <button
-                            type="button"
-                            onClick={addCustomDateButton}
-                            disabled={!customButtonLabel.trim() || !customButtonStart || !customButtonEnd}
-                            className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
-                          >
-                            Add
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setAddingCustomButton(false)}
-                            className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      ) : (
-                        <button type="button" onClick={() => setAddingCustomButton(true)} className={pillClasses(false)}>
-                          + Custom range…
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
               </>
             )}
 
@@ -1129,86 +1147,6 @@ export function WidgetEditorPanel({
 
                 {!isText && (
                   <>
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-[11px] text-zinc-500">Date range</span>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {([1, 3, 6, 12] as const).map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => {
-                              setDateMode("relative");
-                              setRelativeMonths(m);
-                            }}
-                            className={pillClasses(dateMode === "relative" && relativeMonths === m)}
-                          >
-                            {m}mo
-                          </button>
-                        ))}
-                        <button type="button" onClick={() => setDateMode("allTime")} className={pillClasses(dateMode === "allTime")}>
-                          All time
-                        </button>
-                        <button type="button" onClick={() => setDateMode("specific")} className={pillClasses(dateMode === "specific")}>
-                          One month
-                        </button>
-                        <button type="button" onClick={() => setDateMode("custom")} className={pillClasses(dateMode === "custom")}>
-                          Custom range
-                        </button>
-                      </div>
-
-                      {dateMode === "specific" && (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="month"
-                            value={specificMonth}
-                            onChange={(e) => setSpecificMonth(e.target.value)}
-                            className={selectClasses}
-                          />
-                          {formatMonthValue(specificMonth) && (
-                            <span className="text-xs text-zinc-500">{formatMonthValue(specificMonth)}</span>
-                          )}
-                        </div>
-                      )}
-                      {dateMode === "custom" && (
-                        <div className="flex flex-col gap-1.5">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {RELATIVE_DATE_SHORTCUTS.map((s) => (
-                              <button
-                                key={s.label}
-                                type="button"
-                                onClick={() => setCustomStart(relativeDateString(s.daysAgo))}
-                                className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                              >
-                                {s.label}
-                              </button>
-                            ))}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
-                            <span className="text-xs text-zinc-500">to</span>
-                            <input
-                              type="date"
-                              value={customEnd}
-                              onChange={(e) => setCustomEnd(e.target.value)}
-                              disabled={openEnded}
-                              className={selectClasses + (openEnded ? " opacity-40" : "")}
-                            />
-                          </div>
-                          <label className="flex items-center gap-2">
-                            <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
-                            <span className="text-sm">No end date — always include the latest data</span>
-                          </label>
-                        </div>
-                      )}
-
-                      {availableRange?.earliest && availableRange?.latest && (
-                        <p className="text-[11px] text-zinc-500">
-                          Data available: {formatDate(availableRange.earliest)} – {formatDate(availableRange.latest)}
-                          {accountIds.length > 0 ? " for the selected accounts" : ""}
-                        </p>
-                      )}
-                    </div>
-
                     {showTransactionCategoryFilter && (
                       <label className="flex flex-col gap-1">
                         <span className="text-[11px] text-zinc-500">Transaction type</span>
@@ -1280,6 +1218,120 @@ export function WidgetEditorPanel({
             widget={{ id: "__preview__", type, title: title.trim() || null, x: 0, y: 0, w: 0, h: 0, result: draftResult, config }}
           />
         </div>
+
+        {typeChosen && !isText && (
+          <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+            <span className={labelClasses}>Quick-range buttons on the tile (optional)</span>
+            <p className="text-[11px] text-zinc-500">
+              Shown on the live dashboard so a viewer can flip the range without opening the editor —
+              independent of the date range set on the left. Add as many as you want.
+            </p>
+
+            {dateButtons.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {dateButtons.map((b, i) => (
+                  <span
+                    key={dateButtonKey(b)}
+                    className="flex items-center gap-1 rounded-full border border-black/[.12] px-2 py-1 text-xs dark:border-white/[.15]"
+                    title={b.kind === "custom" ? `${b.start} – ${b.end}` : undefined}
+                  >
+                    {dateButtonLabel(b)}
+                    <button
+                      type="button"
+                      onClick={() => moveDateButton(i, -1)}
+                      disabled={i === 0}
+                      className="text-zinc-400 hover:text-zinc-800 disabled:opacity-30 dark:hover:text-zinc-200"
+                      aria-label="Move earlier"
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveDateButton(i, 1)}
+                      disabled={i === dateButtons.length - 1}
+                      className="text-zinc-400 hover:text-zinc-800 disabled:opacity-30 dark:hover:text-zinc-200"
+                      aria-label="Move later"
+                    >
+                      ↓
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => removeDateButton(i)}
+                      className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
+                      aria-label="Remove"
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {dateButtons.length < 12 && (
+              <>
+                <div className="flex flex-wrap gap-1.5">
+                  {DATE_BUTTON_PRESETS.filter(
+                    (p) => !dateButtons.some((b) => b.kind === "preset" && b.preset === p),
+                  ).map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setDateButtons((prev) => [...prev, { kind: "preset", preset: p as DateButtonPreset }])}
+                      className={pillClasses(false)}
+                    >
+                      + {dateButtonLabel({ kind: "preset", preset: p as DateButtonPreset })}
+                    </button>
+                  ))}
+                </div>
+
+                {addingCustomButton ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={customButtonLabel}
+                      onChange={(e) => setCustomButtonLabel(e.target.value)}
+                      placeholder="Label (e.g. July)"
+                      maxLength={20}
+                      className={selectClasses + " w-28"}
+                    />
+                    <input
+                      type="date"
+                      value={customButtonStart}
+                      onChange={(e) => setCustomButtonStart(e.target.value)}
+                      className={selectClasses}
+                    />
+                    <span className="text-xs text-zinc-500">to</span>
+                    <input
+                      type="date"
+                      value={customButtonEnd}
+                      onChange={(e) => setCustomButtonEnd(e.target.value)}
+                      className={selectClasses}
+                    />
+                    <button
+                      type="button"
+                      onClick={addCustomDateButton}
+                      disabled={!customButtonLabel.trim() || !customButtonStart || !customButtonEnd}
+                      className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAddingCustomButton(false)}
+                      className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button type="button" onClick={() => setAddingCustomButton(true)} className={pillClasses(false)}>
+                    + Custom range…
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         {typeChosen && showColor && (
           <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">

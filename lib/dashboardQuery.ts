@@ -197,6 +197,26 @@ function filterByMerchant(rows: DecryptedRow[], merchants: string[] | undefined)
 }
 
 /**
+ * Amount isn't a plain DB column either (encrypted at rest), so — same as
+ * merchant — this filters in application code, after decryption, on
+ * whatever the row actually contributes to the chosen metric (absolute
+ * value, since the sign is about direction/category, not magnitude — "at
+ * least $50" shouldn't need the user to think about which way the number's
+ * signed).
+ */
+function filterByAmount(rows: DecryptedRow[], metric: Metric, amountMin?: number, amountMax?: number): DecryptedRow[] {
+  if (amountMin === undefined && amountMax === undefined) return rows;
+  return rows.filter((r) => {
+    const contribution = metricContribution(r, metric);
+    if (contribution === null) return false;
+    const magnitude = Math.abs(contribution);
+    if (amountMin !== undefined && magnitude < amountMin) return false;
+    if (amountMax !== undefined && magnitude > amountMax) return false;
+    return true;
+  });
+}
+
+/**
  * Turns one widget's data-binding config into chart-ready data. Composes
  * lib/finance.ts's existing date/label helpers rather than duplicating
  * them — every lib/finance.ts aggregation function is fixed-purpose
@@ -217,7 +237,12 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   // only way to filter or group by one, so either need turns it on.
   const merchantFilter = config.filters?.merchants;
   const needsDescription = config.groupBy === "merchant" || Boolean(merchantFilter?.length);
-  const rows = filterByMerchant(await fetchRows(where, needsDescription), merchantFilter);
+  const rows = filterByAmount(
+    filterByMerchant(await fetchRows(where, needsDescription), merchantFilter),
+    config.metric,
+    config.filters?.amountMin,
+    config.filters?.amountMax,
+  );
 
   // Scatter is the one chart type that plots raw transactions instead of an
   // aggregated bucket per groupBy — one point per row, not one point per
@@ -337,7 +362,12 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     const prevEnd = start;
     const prevStart = new Date(new Date(start).getTime() - spanMs).toISOString().slice(0, 10);
     const prevWhere = buildWhere(config, prevStart, prevEnd);
-    const prevRows = filterByMerchant(await fetchRows(prevWhere, needsDescription), merchantFilter);
+    const prevRows = filterByAmount(
+      filterByMerchant(await fetchRows(prevWhere, needsDescription), merchantFilter),
+      config.metric,
+      config.filters?.amountMin,
+      config.filters?.amountMax,
+    );
     let previousValue = 0;
     for (const r of prevRows) {
       const c = metricContribution(r, config.metric);
