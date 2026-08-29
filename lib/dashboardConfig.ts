@@ -18,6 +18,11 @@ const dateRangeSchema = z.union([
   z.object({ mode: z.literal("ytd") }),
   z.object({ mode: z.literal("specific"), month: z.string().regex(/^\d{4}-\d{2}$/) }),
   z.object({ mode: z.literal("allTime") }),
+  // The N most recently *completed* calendar months, excluding whatever
+  // month is currently in progress — see lib/finance.ts's
+  // DateRangeSelection for why this is a distinct mode from "relative"
+  // (which is a rolling N-months-back-by-day window instead).
+  z.object({ mode: z.literal("monthsWindow"), months: z.number().int().min(1).max(24) }),
   z.object({
     mode: z.literal("custom"),
     start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -105,6 +110,16 @@ export type WidgetType = (typeof WIDGET_TYPES)[number];
 
 export const METRICS = ["spendingTotal", "incomeTotal", "net", "transactionCount"] as const;
 export type Metric = (typeof METRICS)[number];
+
+// Short form for an auto-generated widget title (Widget.tsx) — the
+// editor's own METRIC_OPTIONS carries the fuller "Net (income − spending)"
+// wording, too long to sit next to a date range in a compact tile title.
+export const METRIC_LABELS: Record<Metric, string> = {
+  spendingTotal: "Spending",
+  incomeTotal: "Income",
+  net: "Net",
+  transactionCount: "Transactions",
+};
 
 export const GROUP_BYS = ["day", "month", "merchantCategory", "merchantSubcategory", "account", "merchant"] as const;
 export type GroupBy = (typeof GROUP_BYS)[number];

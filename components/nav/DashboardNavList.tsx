@@ -1,9 +1,6 @@
-import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
-
-const NAV_LINK_CLASSES =
-  "rounded-md px-2 py-1.5 text-sm font-medium text-zinc-600 transition-colors hover:bg-black/[.03] hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[.05] dark:hover:text-zinc-50 creamsicle:text-orange-800 creamsicle:hover:bg-orange-100 creamsicle:hover:text-orange-950";
+import { DashboardNavLink } from "./DashboardNavLink";
 
 /**
  * The sidebar's own list of dashboards — "Finances" (the hand-built
@@ -28,13 +25,11 @@ export async function DashboardNavList() {
 
   return (
     <>
-      <Link href="/finance" className={NAV_LINK_CLASSES}>
-        Finances
-      </Link>
+      <DashboardNavLink href="/finance">Finances</DashboardNavLink>
       {dashboards.map((d) => (
-        <Link key={d.id} href={`/dashboards/${d.id}`} className={NAV_LINK_CLASSES}>
+        <DashboardNavLink key={d.id} href={`/dashboards/${d.id}`}>
           {d.name}
-        </Link>
+        </DashboardNavLink>
       ))}
     </>
   );

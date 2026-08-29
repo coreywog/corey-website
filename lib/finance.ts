@@ -127,6 +127,14 @@ export type DateRangeSelection =
   | { mode: "ytd" }
   | { mode: "specific"; month: string } // "YYYY-MM"
   | { mode: "allTime" }
+  // The N most recently *completed* calendar months — not a rolling
+  // N-months-back-by-day window like "relative" above (which anchors on
+  // today's day-of-month and keeps sliding through the current month).
+  // months: 1 is "last month" on its own: e.g. resolved on any day in
+  // August, this is exactly July 1–31, and rolls over to August 1–31 the
+  // moment September starts — never today's in-progress month. See
+  // describeDateRangeSelection for the matching auto-title text.
+  | { mode: "monthsWindow"; months: number }
   // Both "YYYY-MM-DD", start inclusive, end exclusive. `end` omitted means
   // open-ended — always through "now", the same as allTime/relative — so a
   // widget can be pinned to "everything from March 15 onward" and keep
@@ -159,7 +167,55 @@ export function resolveDateRange(selection: DateRangeSelection): { start: string
   if (selection.mode === "ytd") {
     return { start: `${new Date().getUTCFullYear()}-01-01`, end };
   }
+  if (selection.mode === "monthsWindow") {
+    const now = new Date();
+    // 1st of the month `months` back from the *current* month — e.g.
+    // months: 1 resolved in August gives July 1, and the current month
+    // (August) is deliberately excluded entirely: `end` below is the 1st of
+    // *this* month, not "now", so a still-in-progress month never shows up
+    // as a partial bar/point in what's meant to be N *completed* months.
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - selection.months, 1));
+    const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    return { start: start.toISOString().slice(0, 10), end: monthEnd.toISOString().slice(0, 10) };
+  }
   return { start: monthsAgo(selection.months).toISOString().slice(0, 10), end };
+}
+
+/** Human-readable description of a DateRangeSelection, for an auto-generated
+ * widget title when the user hasn't typed one — e.g. "July" for a one-month
+ * monthsWindow, or "May – August" for a four-month one. Recomputed from
+ * `new Date()` on every call rather than stored, so a widget whose title
+ * was left blank keeps reading correctly as months roll over — the whole
+ * point of monthsWindow/lastMonth over a frozen "specific" month. */
+export function describeDateRangeSelection(selection: DateRangeSelection): string {
+  switch (selection.mode) {
+    case "allTime":
+      return "All time";
+    case "ytd":
+      return "Year to date";
+    case "specific":
+      return formatMonthLabel(selection.month);
+    case "custom":
+      return selection.end ? `${selection.start} – ${selection.end}` : `Since ${selection.start}`;
+    case "relativeDays":
+      if (selection.days === 0) return "Today";
+      if (selection.days === 1) return "Yesterday";
+      return `Last ${selection.days} days`;
+    case "relative":
+      return `Last ${selection.months} month${selection.months === 1 ? "" : "s"}`;
+    case "monthsWindow": {
+      const now = new Date();
+      if (selection.months <= 1) {
+        const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+        return formatMonthLabel(`${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, "0")}`);
+      }
+      const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - selection.months, 1));
+      const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+      const firstLabel = first.toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+      const lastLabel = formatMonthLabel(`${last.getUTCFullYear()}-${String(last.getUTCMonth() + 1).padStart(2, "0")}`);
+      return `${firstLabel} – ${lastLabel}`;
+    }
+  }
 }
 
 /** "2026-03" -> "March 2026" */

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatCategoryLabel } from "@/lib/finance";
+import { formatCategoryLabel, describeDateRangeSelection } from "@/lib/finance";
 import { SearchableSelect } from "@/components/finance/SearchableSelect";
 import { colorForKey } from "@/components/finance/categoryColors";
 import {
@@ -149,7 +149,7 @@ function FilterChip({ label }: { label: string }) {
   );
 }
 
-type DateRangeMode = "relative" | "relativeDays" | "ytd" | "specific" | "allTime" | "custom";
+type DateRangeMode = "relative" | "relativeDays" | "monthsWindow" | "ytd" | "specific" | "allTime" | "custom";
 
 const selectClasses =
   "rounded-md border border-black/[.1] bg-white px-2 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500";
@@ -522,9 +522,30 @@ export function WidgetEditorPanel({
   const [relativeDaysAgo, setRelativeDaysAgo] = useState<number>(
     chartConfig?.dateRange.mode === "relativeDays" ? chartConfig.dateRange.days : 1,
   );
+  const [monthsWindowCount, setMonthsWindowCount] = useState<number>(
+    chartConfig?.dateRange.mode === "monthsWindow" ? chartConfig.dateRange.months : 1,
+  );
+  const [customMonthsDraft, setCustomMonthsDraft] = useState("");
+  // Same explicit-flag reasoning as customDaysActive below — "Last month" and
+  // "Past N months…" are both monthsWindow, distinguished only by months
+  // actually being 1, which breaks the moment the custom draft also happens
+  // to be 1.
+  const [customMonthsActive, setCustomMonthsActive] = useState(
+    () => chartConfig?.dateRange.mode === "monthsWindow" && chartConfig.dateRange.months !== 1,
+  );
   // Only shown once "Custom" is picked within the Fluid group — a free
   // number input for any N-days-back that isn't one of the preset pills.
   const [customDaysAgoDraft, setCustomDaysAgoDraft] = useState("");
+  // Explicit flag for "Custom…" being the active pill, rather than
+  // inferring it from relativeDaysAgo not matching any preset — that
+  // inference broke the moment relativeDaysAgo happened to already equal a
+  // preset (e.g. still 30 from a prior selection): clicking Custom looked
+  // like it did nothing, since the "30 days ago" pill kept showing active
+  // and the input never appeared.
+  const [customDaysActive, setCustomDaysActive] = useState(() => {
+    const dr = chartConfig?.dateRange;
+    return dr?.mode === "relativeDays" && !RELATIVE_DAY_OPTIONS.some((d) => d.days === dr.days);
+  });
   const [specificMonth, setSpecificMonth] = useState(
     chartConfig?.dateRange.mode === "specific" ? chartConfig.dateRange.month : "",
   );
@@ -653,13 +674,15 @@ export function WidgetEditorPanel({
         ? "Year to date"
         : dateMode === "relativeDays"
           ? (RELATIVE_DAY_OPTIONS.find((d) => d.days === relativeDaysAgo)?.label ?? `${relativeDaysAgo} days ago`)
-          : dateMode === "specific"
-            ? formatMonthValue(specificMonth) || "Pick a month"
-            : dateMode === "custom"
-              ? customStart
-                ? `${formatDate(customStart)} – ${openEnded ? "latest" : customEnd ? formatDate(customEnd) : "?"}`
-                : "Pick a range"
-              : `Last ${relativeMonths} month${relativeMonths === 1 ? "" : "s"}`;
+          : dateMode === "monthsWindow"
+            ? describeDateRangeSelection({ mode: "monthsWindow", months: monthsWindowCount })
+            : dateMode === "specific"
+              ? formatMonthValue(specificMonth) || "Pick a month"
+              : dateMode === "custom"
+                ? customStart
+                  ? `${formatDate(customStart)} – ${openEnded ? "latest" : customEnd ? formatDate(customEnd) : "?"}`
+                  : "Pick a range"
+                : `Last ${relativeMonths} month${relativeMonths === 1 ? "" : "s"}`;
 
   // How many days this widget's own configured Date filter actually spans
   // — used below to decide which Date focus buttons make sense to offer on
@@ -674,6 +697,8 @@ export function WidgetEditorPanel({
         return relativeDaysAgo;
       case "relative":
         return relativeMonths * 31;
+      case "monthsWindow":
+        return monthsWindowCount * 31;
       case "ytd": {
         const now = new Date();
         return Math.floor((now.getTime() - Date.UTC(now.getUTCFullYear(), 0, 1)) / 86400000);
@@ -690,7 +715,7 @@ export function WidgetEditorPanel({
       default:
         return Infinity;
     }
-  }, [dateMode, relativeMonths, relativeDaysAgo, customStart, customEnd, openEnded]);
+  }, [dateMode, relativeMonths, relativeDaysAgo, monthsWindowCount, customStart, customEnd, openEnded]);
 
   // Memoized, not recomputed-and-thrown-away every render: this is used as
   // a useEffect dependency below (both the preview fetch and the
@@ -714,11 +739,13 @@ export function WidgetEditorPanel({
           ? { mode: "ytd" }
           : dateMode === "relativeDays"
             ? { mode: "relativeDays", days: relativeDaysAgo }
-            : dateMode === "specific"
-              ? { mode: "specific", month: specificMonth }
-              : dateMode === "custom"
-                ? { mode: "custom", start: customStart, ...(openEnded ? {} : { end: customEnd }) }
-                : { mode: "relative", months: relativeMonths };
+            : dateMode === "monthsWindow"
+              ? { mode: "monthsWindow", months: monthsWindowCount }
+              : dateMode === "specific"
+                ? { mode: "specific", month: specificMonth }
+                : dateMode === "custom"
+                  ? { mode: "custom", start: customStart, ...(openEnded ? {} : { end: customEnd }) }
+                  : { mode: "relative", months: relativeMonths };
 
     const parsedAmountMin = amountMin.trim() ? Number(amountMin) : undefined;
     const parsedAmountMax = amountMax.trim() ? Number(amountMax) : undefined;
@@ -792,6 +819,7 @@ export function WidgetEditorPanel({
     dateMode,
     relativeMonths,
     relativeDaysAgo,
+    monthsWindowCount,
     specificMonth,
     customStart,
     customEnd,
@@ -860,7 +888,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, fillPatternOverrides, dateButtons, multiSeries, seriesList]);
+  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, monthsWindowCount, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, fillPatternOverrides, dateButtons, multiSeries, seriesList]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -1121,6 +1149,7 @@ export function WidgetEditorPanel({
                                   onClick={() => {
                                     setDateMode("relative");
                                     setRelativeMonths(m);
+                                    setCustomDaysActive(false);
                                   }}
                                   className={pillClasses(dateMode === "relative" && relativeMonths === m)}
                                 >
@@ -1134,38 +1163,77 @@ export function WidgetEditorPanel({
                                   onClick={() => {
                                     setDateMode("relativeDays");
                                     setRelativeDaysAgo(d.days);
+                                    setCustomDaysActive(false);
                                   }}
-                                  className={pillClasses(dateMode === "relativeDays" && relativeDaysAgo === d.days)}
+                                  className={pillClasses(dateMode === "relativeDays" && !customDaysActive && relativeDaysAgo === d.days)}
                                 >
                                   {d.label}
                                 </button>
                               ))}
-                              <button type="button" onClick={() => setDateMode("ytd")} className={pillClasses(dateMode === "ytd")}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDateMode("ytd");
+                                  setCustomDaysActive(false);
+                                }}
+                                className={pillClasses(dateMode === "ytd")}
+                              >
                                 Year to date
                               </button>
-                              <button type="button" onClick={() => setDateMode("allTime")} className={pillClasses(dateMode === "allTime")}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDateMode("allTime");
+                                  setCustomDaysActive(false);
+                                }}
+                                className={pillClasses(dateMode === "allTime")}
+                              >
                                 All time
                               </button>
                               <button
                                 type="button"
                                 onClick={() => {
                                   setDateMode("relativeDays");
+                                  setCustomDaysActive(true);
                                   setCustomDaysAgoDraft(String(relativeDaysAgo));
                                 }}
-                                className={pillClasses(
-                                  dateMode === "relativeDays" && !RELATIVE_DAY_OPTIONS.some((d) => d.days === relativeDaysAgo),
-                                )}
+                                className={pillClasses(dateMode === "relativeDays" && customDaysActive)}
                               >
                                 Custom…
                               </button>
+                              <span aria-hidden className="h-5 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15]" />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDateMode("monthsWindow");
+                                  setMonthsWindowCount(1);
+                                  setCustomMonthsActive(false);
+                                }}
+                                className={pillClasses(dateMode === "monthsWindow" && !customMonthsActive)}
+                                title="The full previous calendar month — e.g. all of July if it's currently August"
+                              >
+                                Last month
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDateMode("monthsWindow");
+                                  setCustomMonthsActive(true);
+                                  setCustomMonthsDraft(String(monthsWindowCount));
+                                }}
+                                className={pillClasses(dateMode === "monthsWindow" && customMonthsActive)}
+                              >
+                                Past N months…
+                              </button>
                             </div>
-                            {dateMode === "relativeDays" && !RELATIVE_DAY_OPTIONS.some((d) => d.days === relativeDaysAgo) && (
+                            {dateMode === "relativeDays" && customDaysActive && (
                               <div className="flex flex-wrap items-center gap-2">
                                 <input
                                   type="number"
                                   min={0}
                                   max={3650}
                                   value={customDaysAgoDraft}
+                                  autoFocus
                                   onChange={(e) => {
                                     const v = e.target.value;
                                     setCustomDaysAgoDraft(v);
@@ -1176,6 +1244,26 @@ export function WidgetEditorPanel({
                                   className={selectClasses + " w-20"}
                                 />
                                 <span className="text-xs text-zinc-500">days ago, through today</span>
+                              </div>
+                            )}
+                            {dateMode === "monthsWindow" && customMonthsActive && (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={24}
+                                  value={customMonthsDraft}
+                                  autoFocus
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setCustomMonthsDraft(v);
+                                    const n = Number(v);
+                                    if (v.trim() && Number.isInteger(n) && n >= 1 && n <= 24) setMonthsWindowCount(n);
+                                  }}
+                                  placeholder="4"
+                                  className={selectClasses + " w-20"}
+                                />
+                                <span className="text-xs text-zinc-500">most recently completed months</span>
                               </div>
                             )}
                           </div>

@@ -23,6 +23,8 @@ import {
 } from "recharts";
 import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
 import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern, ValueFormat } from "@/lib/dashboardConfig";
+import { METRIC_LABELS } from "@/lib/dashboardConfig";
+import { describeDateRangeSelection } from "@/lib/finance";
 import type { BarShapeProps, PieSectorShapeProps, PieLabelRenderProps } from "recharts";
 
 export type WidgetWithData = {
@@ -955,8 +957,15 @@ export function Widget({
   // config.axisLabels.xOffset/yOffset state.
   onAxisLabelOffsetChange?: (axis: "x" | "y", offset: { dx: number; dy: number }) => void;
 }) {
-  const title = widget.title ?? "Widget";
   const chartConfig = widget.config?.dataSource === "transactions" ? widget.config : undefined;
+  // Recomputed on every render (never stored) so a blank-titled widget using
+  // a fluid date range — "Last month", a monthsWindow, YTD — keeps reading
+  // correctly as time passes: "Spending — July" becomes "Spending — August"
+  // on its own once August ends, with nothing to manually retype.
+  const autoTitle = chartConfig
+    ? `${chartConfig.series?.length ? "Multiple series" : chartConfig.customMetricId ? "Custom metric" : METRIC_LABELS[chartConfig.metric]} — ${describeDateRangeSelection(chartConfig.dateRange)}`
+    : null;
+  const title = widget.title ?? autoTitle ?? "Widget";
   const dateButtons = chartConfig?.dateButtons ?? [];
 
   const [activeButton, setActiveButton] = useState<DateButtonConfig | null>(null);
