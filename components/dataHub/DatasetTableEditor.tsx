@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { DatasetColumn, ColumnKind } from "@/lib/datasetCsv";
 import type { DatasetComputedColumn } from "@/lib/datasetFormula";
+import { ScrollableTable } from "@/components/ui/ScrollableTable";
 
 const COLUMN_KINDS: { value: ColumnKind; label: string }[] = [
   { value: "text", label: "Text" },
@@ -110,7 +111,8 @@ export function DatasetTableEditor({
           Showing the first {shown.toLocaleString()} of {totalCount.toLocaleString()} rows.
         </p>
       )}
-      <div className="overflow-x-auto rounded-lg border border-black/[.08] dark:border-white/[.1] creamsicle:border-orange-200">
+      <div className="overflow-hidden rounded-lg border border-black/[.08] dark:border-white/[.1] creamsicle:border-orange-200">
+        <ScrollableTable>
         <table className="w-full whitespace-nowrap text-sm">
           <thead>
             <tr className="border-b border-black/[.08] dark:border-white/[.1] creamsicle:border-orange-200">
@@ -177,6 +179,7 @@ export function DatasetTableEditor({
             ))}
           </tbody>
         </table>
+        </ScrollableTable>
       </div>
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}

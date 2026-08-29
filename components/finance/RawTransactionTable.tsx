@@ -1,4 +1,5 @@
 import { formatCategoryLabel } from "@/lib/finance";
+import { ScrollableTable } from "@/components/ui/ScrollableTable";
 import type { ReviewTxn } from "./TransactionReviewCard";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -27,32 +28,34 @@ export function RawTransactionTable({ transactions }: { transactions: ReviewTxn[
       <summary className="cursor-pointer text-sm font-medium text-zinc-700 dark:text-zinc-300 creamsicle:text-orange-900">
         Raw data preview — {transactions.length} most recent transactions
       </summary>
-      <div className="overflow-x-auto rounded-lg border border-black/[.08] dark:border-white/[.1] creamsicle:border-orange-200">
-        <table className="w-full whitespace-nowrap text-sm">
-          <thead>
-            <tr className="border-b border-black/[.08] dark:border-white/[.1] creamsicle:border-orange-200">
-              {["Date", "Account", "Description", "Category", "Subcategory", "Amount"].map((h) => (
-                <th key={h} className="px-3 py-2 text-left text-xs font-medium text-zinc-500">
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.map((t) => (
-              <tr key={t.id} className="border-b border-black/[.05] last:border-0 dark:border-white/[.06] creamsicle:border-orange-100">
-                <td className="px-3 py-1.5">{formatDate(t.date)}</td>
-                <td className="px-3 py-1.5">{t.account}</td>
-                <td className="max-w-xs truncate px-3 py-1.5" title={t.description}>
-                  {t.description}
-                </td>
-                <td className="px-3 py-1.5">{t.merchantCategory ? formatCategoryLabel(t.merchantCategory) : ""}</td>
-                <td className="px-3 py-1.5">{t.merchantSubcategory ? formatCategoryLabel(t.merchantSubcategory) : ""}</td>
-                <td className="px-3 py-1.5 text-right tabular-nums">{currencyFormatter.format(t.amount)}</td>
+      <div className="overflow-hidden rounded-lg border border-black/[.08] dark:border-white/[.1] creamsicle:border-orange-200">
+        <ScrollableTable>
+          <table className="w-full whitespace-nowrap text-sm">
+            <thead>
+              <tr className="border-b border-black/[.08] dark:border-white/[.1] creamsicle:border-orange-200">
+                {["Date", "Account", "Description", "Category", "Subcategory", "Amount"].map((h) => (
+                  <th key={h} className="px-3 py-2 text-left text-xs font-medium text-zinc-500">
+                    {h}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {transactions.map((t) => (
+                <tr key={t.id} className="border-b border-black/[.05] last:border-0 dark:border-white/[.06] creamsicle:border-orange-100">
+                  <td className="px-3 py-1.5">{formatDate(t.date)}</td>
+                  <td className="px-3 py-1.5">{t.account}</td>
+                  <td className="max-w-xs truncate px-3 py-1.5" title={t.description}>
+                    {t.description}
+                  </td>
+                  <td className="px-3 py-1.5">{t.merchantCategory ? formatCategoryLabel(t.merchantCategory) : ""}</td>
+                  <td className="px-3 py-1.5">{t.merchantSubcategory ? formatCategoryLabel(t.merchantSubcategory) : ""}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{currencyFormatter.format(t.amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ScrollableTable>
       </div>
     </details>
   );

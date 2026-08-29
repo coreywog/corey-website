@@ -73,12 +73,24 @@ export function UploadDatasetForm() {
       <input
         type="file"
         accept=".csv,text/csv"
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+        onChange={(e) => {
+          const picked = e.target.files?.[0] ?? null;
+          setFile(picked);
+          // The Upload button stays disabled with no visible reason until a
+          // name is typed — picking a file with no name entered yet looked
+          // exactly like "I clicked Upload and nothing happened." Filling
+          // it in from the filename (still editable) means the common case
+          // — just pick a file and go — actually works.
+          if (picked && !name.trim()) {
+            setName(picked.name.replace(/\.csv$/i, ""));
+          }
+        }}
         className="text-xs text-zinc-500 file:mr-2 file:rounded-md file:border-0 file:bg-black/[.06] file:px-2 file:py-1 file:text-xs dark:file:bg-white/[.1]"
       />
       <button
         type="submit"
         disabled={uploading || !file || !name.trim()}
+        title={!file ? "Pick a CSV file first" : !name.trim() ? "Give it a name first" : undefined}
         className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
       >
         {uploading ? "Uploading…" : "Upload"}
@@ -94,6 +106,9 @@ export function UploadDatasetForm() {
         Cancel
       </button>
       <span className="w-full text-[11px] text-zinc-500">CSV only, 5MB max.</span>
+      {!uploading && file && !name.trim() && (
+        <p className="w-full text-[11px] text-amber-600 dark:text-amber-400">Give it a name to enable Upload.</p>
+      )}
       {error && <p className="w-full text-sm text-red-600 dark:text-red-400">{error}</p>}
     </form>
   );
