@@ -2037,20 +2037,22 @@ export function WidgetEditorPanel({
               <span className="text-[11px] text-zinc-500">
                 Axis titles (optional) — drag one directly in the preview above to reposition it
               </span>
-              <input
-                type="text"
-                value={xAxisLabel}
-                onChange={(e) => setXAxisLabel(e.target.value)}
-                placeholder="X axis title"
-                className={selectClasses}
-              />
-              <input
-                type="text"
-                value={yAxisLabel}
-                onChange={(e) => setYAxisLabel(e.target.value)}
-                placeholder="Y axis title"
-                className={selectClasses}
-              />
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  value={xAxisLabel}
+                  onChange={(e) => setXAxisLabel(e.target.value)}
+                  placeholder="X axis title"
+                  className={selectClasses + " flex-1"}
+                />
+                <input
+                  type="text"
+                  value={yAxisLabel}
+                  onChange={(e) => setYAxisLabel(e.target.value)}
+                  placeholder="Y axis title"
+                  className={selectClasses + " flex-1"}
+                />
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-3">
@@ -2096,19 +2098,18 @@ export function WidgetEditorPanel({
                   <span className="text-[11px] text-zinc-500">px</span>
                 </div>
               </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">Font</span>
+                <select value={fontFamily} onChange={(e) => setFontFamily(e.target.value as FontFamily)} className={selectClasses}>
+                  {FONT_FAMILIES.map((f) => (
+                    <option key={f} value={f}>
+                      {FONT_FAMILY_LABELS[f]}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
             <p className="text-[11px] text-zinc-500">Shrink X/Y if bar/category names are squishing together.</p>
-
-            <label className="flex flex-col gap-1">
-              <span className="text-[11px] text-zinc-500">Font</span>
-              <select value={fontFamily} onChange={(e) => setFontFamily(e.target.value as FontFamily)} className={selectClasses}>
-                {FONT_FAMILIES.map((f) => (
-                  <option key={f} value={f}>
-                    {FONT_FAMILY_LABELS[f]}
-                  </option>
-                ))}
-              </select>
-            </label>
           </div>
           )}
           </div>
