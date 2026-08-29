@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { decryptAmount, decryptText } from "@/lib/crypto";
 import { resolveDateRange, formatMonthLabel, formatCategoryLabel, normalizeMerchantName } from "@/lib/finance";
 import { colorForCategory, colorForKey } from "@/components/finance/categoryColors";
-import type { WidgetConfig, ChartWidgetConfig, WidgetType, GroupBy, Metric } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, WidgetType, GroupBy, Metric, SeriesEntryConfig } from "@/lib/dashboardConfig";
 
 export type AggregatedPoint = { key: string; label: string; value: number; color: string };
 // One raw transaction, not a bucket — scatter is the one chart type that
@@ -22,6 +22,13 @@ export type WidgetResult =
   | { kind: "stat"; value: number; previousValue?: number }
   | { kind: "scatter"; points: ScatterPoint[] }
   | { kind: "stacked"; points: StackedPoint[]; series: StackedSeries[] }
+  // Manually-configured multiple series (config.series — the editor's Line
+  // 1/Line 2 rows), as opposed to "stacked" above which is always an
+  // automatic top-N-categories split. Same wide-row shape either way —
+  // reusing StackedPoint/StackedSeries rather than a fourth near-identical
+  // type — but kept as its own result kind since the two are triggered by,
+  // and rendered from, entirely different config.
+  | { kind: "multiSeries"; points: StackedPoint[]; series: StackedSeries[] }
   | { kind: "text"; text: string };
 
 type DecryptedRow = {
@@ -269,6 +276,118 @@ function filterByAmount(
 }
 
 /**
+ * A widget's manually-configured series (config.series — the editor's Line
+ * 1/Line 2 rows) — each one is otherwise a full independent query sharing
+ * only date range/accounts/groupBy with the widget as a whole, so this runs
+ * `fetchRows` once per series rather than trying to fold N different
+ * metric/category combinations into a single SQL query. Bounded (max 6
+ * series, enforced by the schema) so this stays a small fixed multiplier on
+ * query count, not an N+1 over user data.
+ *
+ * histogram is handled differently from the rest: instead of bucketing by
+ * groupBy (day/month/category/...), every series' values get binned by
+ * magnitude into the *same* bin edges (derived from the combined min/max
+ * across all series), so the bars are actually comparable bin-for-bin.
+ */
+async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntryConfig[], isHistogram: boolean): Promise<WidgetResult> {
+  const { start, end } = resolveDateRange(config.dateRange);
+  const merchantFilter = config.filters?.merchants;
+  const needsDescription = config.groupBy === "merchant" || Boolean(merchantFilter?.length);
+
+  const resolved = await Promise.all(
+    series.map(async (entry) => {
+      const customMetric: CustomMetric | null = entry.customMetricId
+        ? await prisma.calculatedMetric
+            .findUnique({ where: { id: entry.customMetricId } })
+            .then((m) => (m ? { aggregation: m.aggregation as Aggregation, transactionCategory: m.transactionCategory } : null))
+        : null;
+      const seriesConfig: ChartWidgetConfig = {
+        ...config,
+        metric: entry.metric,
+        customMetricId: entry.customMetricId,
+        filters: {
+          ...config.filters,
+          ...(entry.merchantCategories?.length ? { merchantCategories: entry.merchantCategories } : {}),
+        },
+      };
+      const where = buildWhere(seriesConfig, start, end);
+      const rows = filterByAmount(
+        filterByMerchant(await fetchRows(where, needsDescription), merchantFilter),
+        entry.metric,
+        config.filters?.amountMin,
+        config.filters?.amountMax,
+        customMetric,
+      );
+      return { entry, rows, customMetric };
+    }),
+  );
+
+  const seriesInfo: StackedSeries[] = resolved.map(({ entry }, i) => ({
+    key: entry.id,
+    label: entry.label?.trim() || `Line ${i + 1}`,
+    color: entry.color ?? colorForKey(entry.id),
+  }));
+
+  if (isHistogram) {
+    const valuesBySeries = resolved.map(({ rows, entry, customMetric }) => {
+      const values: number[] = [];
+      for (const r of rows) {
+        const c = customMetric ? customMetricRowValue(r, customMetric) : metricContribution(r, entry.metric);
+        if (c !== null) values.push(Math.abs(c));
+      }
+      return values;
+    });
+    const combined = valuesBySeries.flat();
+    if (combined.length === 0) return { kind: "multiSeries", points: [], series: [] };
+    const min = Math.min(...combined);
+    const max = Math.max(...combined);
+    const BIN_COUNT = 12;
+    const binSize = (max - min) / BIN_COUNT || 1;
+    const money = (n: number) => `$${Math.round(n).toLocaleString()}`;
+    const points: StackedPoint[] = Array.from({ length: BIN_COUNT }, (_, i) => {
+      const lo = min + i * binSize;
+      const hi = lo + binSize;
+      return { x: String(i), label: `${money(lo)}–${money(hi)}` };
+    });
+    resolved.forEach(({ entry }, i) => {
+      for (const v of valuesBySeries[i]) {
+        const idx = Math.min(BIN_COUNT - 1, Math.max(0, Math.floor((v - min) / binSize)));
+        points[idx][entry.id] = ((points[idx][entry.id] as number) ?? 0) + 1;
+      }
+    });
+    // Bins a series never touched stay unset rather than 0 — recharts
+    // treats a missing dataKey as no bar there, which is the right visual
+    // (no zero-height placeholder for every series in every bin).
+    return { kind: "multiSeries", points, series: seriesInfo };
+  }
+
+  if (!config.groupBy) return { kind: "multiSeries", points: [], series: seriesInfo };
+  const groupBy = config.groupBy;
+  const cellsByX = new Map<string, Map<string, number>>();
+  const xLabels = new Map<string, string>();
+  for (const { entry, rows, customMetric } of resolved) {
+    for (const r of rows) {
+      const contribution = customMetric ? customMetricRowValue(r, customMetric) : metricContribution(r, entry.metric);
+      if (contribution === null) continue;
+      const { key: xKey, label: xLabel } = keyAndLabelFor(r, groupBy);
+      xLabels.set(xKey, xLabel);
+      if (!cellsByX.has(xKey)) cellsByX.set(xKey, new Map());
+      const cell = cellsByX.get(xKey)!;
+      cell.set(entry.id, (cell.get(entry.id) ?? 0) + contribution);
+    }
+  }
+  const isTimeSeries = groupBy === "day" || groupBy === "month";
+  const xKeys = [...cellsByX.keys()].sort((a, b) => (isTimeSeries ? a.localeCompare(b) : 0));
+  const points: StackedPoint[] = xKeys.map((xKey) => {
+    const cell = cellsByX.get(xKey)!;
+    const point: StackedPoint = { x: xLabels.get(xKey) ?? xKey, label: xLabels.get(xKey) ?? xKey };
+    for (const [seriesId, value] of cell.entries()) point[seriesId] = round2(value);
+    return point;
+  });
+  return { kind: "multiSeries", points, series: seriesInfo };
+}
+
+/**
  * Turns one widget's data-binding config into chart-ready data. Composes
  * lib/finance.ts's existing date/label helpers rather than duplicating
  * them — every lib/finance.ts aggregation function is fixed-purpose
@@ -280,6 +399,15 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   // A text tile has no data behind it at all — nothing to query.
   if (config.dataSource === "text") {
     return { kind: "text", text: config.text };
+  }
+
+  // Multiple independently-configured series (the editor's Line 1/Line 2
+  // rows) take over entirely for the chart types that can actually plot
+  // more than one line/bar/histogram at once — checked before every branch
+  // below, since none of the single-metric logic applies once this is set.
+  const MULTI_SERIES_TYPES: WidgetType[] = ["line", "area", "bar", "stackedBar", "histogram"];
+  if (config.series && config.series.length >= 2 && MULTI_SERIES_TYPES.includes(type)) {
+    return computeMultiSeries(config, config.series, type === "histogram");
   }
 
   const { start, end } = resolveDateRange(config.dateRange);

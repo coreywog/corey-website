@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatCategoryLabel } from "@/lib/finance";
 import { SearchableSelect } from "@/components/finance/SearchableSelect";
+import { colorForKey } from "@/components/finance/categoryColors";
 import {
   GraphIcon,
   TextIcon,
@@ -38,18 +39,8 @@ import type {
   DateButtonPreset,
   LineStyle,
   FillPattern,
-  ValueFormat,
 } from "@/lib/dashboardConfig";
-import {
-  WIDGET_COLORS,
-  AXIS_X_POSITIONS,
-  AXIS_Y_POSITIONS,
-  DATE_BUTTON_PRESETS,
-  GRADIENT_PRESETS,
-  LINE_STYLES,
-  FILL_PATTERNS,
-  VALUE_FORMATS,
-} from "@/lib/dashboardConfig";
+import { WIDGET_COLORS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS, LINE_STYLES, FILL_PATTERNS } from "@/lib/dashboardConfig";
 
 type CategoryOption = { category: string; subcategory: string };
 type Account = { id: string; name: string };
@@ -117,6 +108,26 @@ const TRANSACTION_FIELDS: { name: string; kind: "D" | "T" | "#" }[] = [
   { name: "Category", kind: "T" },
   { name: "Subcategory", kind: "T" },
 ];
+
+// The editor's draft form of one config.series entry (see
+// lib/dashboardConfig.ts's SeriesEntryConfig) — same fields, but
+// merchantCategories always a plain array (never undefined) so the UI
+// doesn't need an extra null-check on every keystroke.
+type SeriesDraft = {
+  id: string;
+  label: string;
+  metric: Metric;
+  customMetricId?: string;
+  merchantCategories: string[];
+  color?: string;
+};
+
+function makeDefaultSeries(): SeriesDraft[] {
+  return [
+    { id: `series-${Date.now()}-1`, label: "", metric: "spendingTotal", merchantCategories: [] },
+    { id: `series-${Date.now()}-2`, label: "", metric: "incomeTotal", merchantCategories: [] },
+  ];
+}
 
 type ColumnFilterKey = "date" | "amount" | "merchant" | "category" | "subcategory";
 // Every field is filterable now, independent of whatever it's also used
@@ -323,6 +334,10 @@ export function WidgetEditorPanel({
   const [fillPatternOverrides, setFillPatternOverrides] = useState<Record<string, FillPattern>>(
     chartConfig?.fillPatternOverrides ?? {},
   );
+  // Pie-only: where each slice's number is drawn. Empty string = no labels
+  // at all (the pre-existing default, unchanged unless you turn this on).
+  const [pieLabelShow, setPieLabelShow] = useState<"value" | "percent" | "">(chartConfig?.pieLabels?.show ?? "");
+  const [pieLabelPosition, setPieLabelPosition] = useState<"inside" | "outside">(chartConfig?.pieLabels?.position ?? "outside");
 
   function togglePointSelected(key: string) {
     setSelectedPointKeys((prev) => {
@@ -416,6 +431,44 @@ export function WidgetEditorPanel({
   }
   const [metric, setMetric] = useState<Metric>(chartConfig?.metric ?? "spendingTotal");
   const [customMetricId, setCustomMetricId] = useState<string | undefined>(chartConfig?.customMetricId);
+
+  // Multiple independent lines/bars on one chart (line/area/bar/stackedBar/
+  // histogram only — see showMultiSeries below), each with its own metric +
+  // category. Collapsed to just a label/name until clicked, so 4+ series
+  // doesn't turn into a wall of fields. Starts at 2 (the minimum — see
+  // removeSeriesLine) whenever there isn't already a saved series list to
+  // restore.
+  const [multiSeries, setMultiSeries] = useState(Boolean(chartConfig?.series?.length));
+  const [seriesList, setSeriesList] = useState<SeriesDraft[]>(() =>
+    chartConfig?.series?.length
+      ? chartConfig.series.map((s) => ({
+          id: s.id,
+          label: s.label ?? "",
+          metric: s.metric,
+          customMetricId: s.customMetricId,
+          merchantCategories: s.merchantCategories ?? [],
+          color: s.color,
+        }))
+      : makeDefaultSeries(),
+  );
+  const [expandedSeriesId, setExpandedSeriesId] = useState<string | null>(null);
+
+  function addSeriesLine() {
+    setSeriesList((prev) =>
+      prev.length >= 6 ? prev : [...prev, { id: `series-${Date.now()}`, label: "", metric: "spendingTotal", merchantCategories: [] }],
+    );
+  }
+
+  function removeSeriesLine(id: string) {
+    // Always at least 2 while multi-series is on — dropping below that
+    // isn't "multiple series" anymore, so there's no in-between state to
+    // represent; toggle the checkbox off instead.
+    setSeriesList((prev) => (prev.length <= 2 ? prev : prev.filter((s) => s.id !== id)));
+  }
+
+  function updateSeriesLine(id: string, patch: Partial<SeriesDraft>) {
+    setSeriesList((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  }
   // Local copy, not just the prop directly — saving a new one appends here
   // immediately so it's selectable right away, without waiting on a
   // router.refresh() to re-fetch the server-side list.
@@ -510,12 +563,11 @@ export function WidgetEditorPanel({
   const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
   const [xAxisLabel, setXAxisLabel] = useState(chartConfig?.axisLabels?.x ?? "");
   const [yAxisLabel, setYAxisLabel] = useState(chartConfig?.axisLabels?.y ?? "");
-  const [xAxisPosition, setXAxisPosition] = useState<(typeof AXIS_X_POSITIONS)[number]>(
-    chartConfig?.axisLabels?.xPosition ?? "insideBottom",
-  );
-  const [yAxisPosition, setYAxisPosition] = useState<(typeof AXIS_Y_POSITIONS)[number]>(
-    chartConfig?.axisLabels?.yPosition ?? "insideLeft",
-  );
+  // Pixel nudge from the default position (below the X axis, left of the Y
+  // axis) — set by dragging the title directly in the live preview (see
+  // Widget's onAxisLabelOffsetChange), not a dropdown of fixed positions.
+  const [xAxisOffset, setXAxisOffset] = useState(chartConfig?.axisLabels?.xOffset);
+  const [yAxisOffset, setYAxisOffset] = useState(chartConfig?.axisLabels?.yOffset);
   const [axisFontSize, setAxisFontSize] = useState(chartConfig?.axisLabels?.fontSize ?? 11);
   // The tick labels themselves (bar names, day labels, dollar values) —
   // independent of the axis title's font size above. This is the actual
@@ -523,7 +575,11 @@ export function WidgetEditorPanel({
   // narrow: shrinking just the ticks buys back the room they need.
   const [xTickFontSize, setXTickFontSize] = useState(chartConfig?.axisLabels?.xTickFontSize ?? 11);
   const [yTickFontSize, setYTickFontSize] = useState(chartConfig?.axisLabels?.yTickFontSize ?? 12);
-  const [valueFormat, setValueFormat] = useState<ValueFormat>(chartConfig?.axisLabels?.valueFormat ?? "currency");
+
+  function handleAxisLabelOffsetChange(axis: "x" | "y", offset: { dx: number; dy: number }) {
+    if (axis === "x") setXAxisOffset(offset);
+    else setYAxisOffset(offset);
+  }
   const [dateButtons, setDateButtons] = useState<DateButtonConfig[]>(chartConfig?.dateButtons ?? []);
   const [addingCustomButton, setAddingCustomButton] = useState(false);
   const [customButtonLabel, setCustomButtonLabel] = useState("");
@@ -575,6 +631,10 @@ export function WidgetEditorPanel({
   // just one full-width column when only one does.
   const hasColorSection = showColor || showMultiColor;
   const hasStyleSection = showLineStyle || showFillPattern;
+  // Multiple independently-configured lines/bars in place of the single
+  // Metric picker — only for the chart types that can actually plot more
+  // than one series at once (see computeMultiSeries in lib/dashboardQuery.ts).
+  const showMultiSeries = type === "line" || type === "area" || type === "bar" || isStackedBar || isHistogram;
   // Every account explicitly checked, individually, one at a time — not the
   // same as an empty selection (which means "no filter, use the same
   // cash-flow-account default every other page uses"). Selecting every
@@ -675,19 +735,18 @@ export function WidgetEditorPanel({
       ...(parsedAmountMax !== undefined && !Number.isNaN(parsedAmountMax) ? { amountMax: parsedAmountMax } : {}),
     };
 
-    // Unlike the axis-title fields below, tick size/value format are worth
-    // keeping even with no title text set at all — shrinking bar-name text
-    // to stop it squishing together is a common case with no title
-    // involved, so the guard here can't be "only if a title was typed."
+    // Unlike the title text itself, tick size is worth keeping even with no
+    // title set at all — shrinking bar-name text to stop it squishing
+    // together is a common case with no title involved, so the guard here
+    // can't be "only if a title was typed."
     const axisLabels: ChartWidgetConfig["axisLabels"] =
-      showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim() || xTickFontSize !== 11 || yTickFontSize !== 12 || valueFormat !== "currency")
+      showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim() || xTickFontSize !== 11 || yTickFontSize !== 12)
         ? {
-            ...(xAxisLabel.trim() ? { x: xAxisLabel.trim(), xPosition: xAxisPosition } : {}),
-            ...(yAxisLabel.trim() ? { y: yAxisLabel.trim(), yPosition: yAxisPosition } : {}),
+            ...(xAxisLabel.trim() ? { x: xAxisLabel.trim(), xOffset: xAxisOffset } : {}),
+            ...(yAxisLabel.trim() ? { y: yAxisLabel.trim(), yOffset: yAxisOffset } : {}),
             fontSize: axisFontSize,
             xTickFontSize,
             yTickFontSize,
-            ...(valueFormat !== "currency" ? { valueFormat } : {}),
           }
         : undefined;
 
@@ -708,6 +767,19 @@ export function WidgetEditorPanel({
       ...(showFillPattern && fillPattern !== "solid" ? { fillPattern } : {}),
       ...(showFillPattern && Object.keys(fillPatternOverrides).length ? { fillPatternOverrides } : {}),
       ...(dateButtons.length ? { dateButtons } : {}),
+      ...(multiSeries && showMultiSeries && seriesList.length >= 2
+        ? {
+            series: seriesList.map((s) => ({
+              id: s.id,
+              ...(s.label.trim() ? { label: s.label.trim() } : {}),
+              metric: s.metric,
+              ...(s.customMetricId ? { customMetricId: s.customMetricId } : {}),
+              ...(s.merchantCategories.length ? { merchantCategories: s.merchantCategories } : {}),
+              ...(s.color ? { color: s.color } : {}),
+            })),
+          }
+        : {}),
+      ...(type === "pie" && pieLabelShow ? { pieLabels: { show: pieLabelShow, position: pieLabelPosition } } : {}),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
   }, [
@@ -734,12 +806,11 @@ export function WidgetEditorPanel({
     compareToPrevious,
     xAxisLabel,
     yAxisLabel,
-    xAxisPosition,
-    yAxisPosition,
+    xAxisOffset,
+    yAxisOffset,
     axisFontSize,
     xTickFontSize,
     yTickFontSize,
-    valueFormat,
     color,
     colorMode,
     pointColors,
@@ -749,6 +820,10 @@ export function WidgetEditorPanel({
     fillPattern,
     fillPatternOverrides,
     dateButtons,
+    multiSeries,
+    seriesList,
+    pieLabelShow,
+    pieLabelPosition,
   ]);
 
   // Live preview — debounced, cancels a stale in-flight request rather than
@@ -785,7 +860,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, fillPatternOverrides, dateButtons]);
+  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, fillPatternOverrides, dateButtons, multiSeries, seriesList]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -1320,56 +1395,178 @@ export function WidgetEditorPanel({
                   ))}
                 </div>
 
-                <label className="flex flex-col gap-1">
-                  <span className={labelClasses}>Metric</span>
-                  <select
-                    value={customMetricId ? `custom:${customMetricId}` : metric}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      if (v === "__new__") {
-                        setCreatingMetric(true);
-                        return;
-                      }
-                      if (v.startsWith("custom:")) {
-                        setCustomMetricId(v.slice("custom:".length));
-                        return;
-                      }
-                      setCustomMetricId(undefined);
-                      setMetric(v as Metric);
-                    }}
-                    className={selectClasses}
-                  >
-                    {/* "Transaction count" is meaningless per-transaction —
-                        every scatter point or histogram sample is exactly
-                        one, so it'd produce a flat line of dots or a single
-                        useless bin. Hidden rather than allowed through. */}
-                    {METRIC_OPTIONS.filter((o) => !(isScatter || isHistogram) || o.value !== "transactionCount").map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                    {/* Saved metrics apply to bucketed/stat results only —
-                        scatter plots raw transactions and histogram bins by
-                        magnitude, neither of which has a "sum vs. average"
-                        distinction to offer. */}
-                    {!isScatter && !isHistogram && !isStackedBar && (
-                      <>
-                        {calculatedMetrics.length > 0 && (
-                          <optgroup label="Your metrics">
-                            {calculatedMetrics.map((m) => (
-                              <option key={m.id} value={`custom:${m.id}`}>
-                                {m.name}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                        <option value="__new__">+ New calculated metric…</option>
-                      </>
-                    )}
-                  </select>
-                </label>
+                {showMultiSeries && (
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={multiSeries} onChange={(e) => setMultiSeries(e.target.checked)} />
+                    <span className="text-sm">Multiple series (e.g. two lines on one chart)</span>
+                  </label>
+                )}
 
-                {creatingMetric && (
+                {multiSeries && showMultiSeries ? (
+                  <div className="flex flex-col gap-2">
+                    <span className={labelClasses}>Series</span>
+                    {seriesList.map((s, i) => {
+                      const isExpanded = expandedSeriesId === s.id;
+                      const displayName = s.label.trim() || `Line ${i + 1}`;
+                      return (
+                        <div key={s.id} className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-2 dark:border-white/[.1]">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedSeriesId(isExpanded ? null : s.id)}
+                              className="flex flex-1 items-center gap-1.5 text-left text-sm font-medium"
+                            >
+                              <span className={"inline-block transition-transform " + (isExpanded ? "rotate-90" : "")}>›</span>
+                              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: s.color ?? colorForKey(s.id) }} />
+                              {displayName}
+                            </button>
+                            {seriesList.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => removeSeriesLine(s.id)}
+                                className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
+                                aria-label={`Remove ${displayName}`}
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+
+                          {isExpanded && (
+                            <div className="flex flex-col gap-2 pl-4">
+                              <input
+                                type="text"
+                                value={s.label}
+                                onChange={(e) => updateSeriesLine(s.id, { label: e.target.value })}
+                                placeholder={`Line ${i + 1} (optional name)`}
+                                className={selectClasses}
+                              />
+                              <select
+                                value={s.customMetricId ? `custom:${s.customMetricId}` : s.metric}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  if (v.startsWith("custom:")) updateSeriesLine(s.id, { customMetricId: v.slice("custom:".length) });
+                                  else updateSeriesLine(s.id, { metric: v as Metric, customMetricId: undefined });
+                                }}
+                                className={selectClasses}
+                              >
+                                {METRIC_OPTIONS.filter((o) => !isHistogram || o.value !== "transactionCount").map((o) => (
+                                  <option key={o.value} value={o.value}>
+                                    {o.label}
+                                  </option>
+                                ))}
+                                {!isHistogram && calculatedMetrics.length > 0 && (
+                                  <optgroup label="Your metrics">
+                                    {calculatedMetrics.map((m) => (
+                                      <option key={m.id} value={`custom:${m.id}`}>
+                                        {m.name}
+                                      </option>
+                                    ))}
+                                  </optgroup>
+                                )}
+                              </select>
+                              <SearchableSelect
+                                value=""
+                                onChange={(v) =>
+                                  updateSeriesLine(s.id, {
+                                    merchantCategories: s.merchantCategories.includes(v) ? s.merchantCategories : [...s.merchantCategories, v],
+                                  })
+                                }
+                                options={categories
+                                  .filter((c) => !s.merchantCategories.includes(c))
+                                  .map((c) => ({ value: c, label: formatCategoryLabel(c) }))}
+                                placeholder="Add category (optional)…"
+                              />
+                              {s.merchantCategories.length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {s.merchantCategories.map((c) => (
+                                    <button
+                                      key={c}
+                                      type="button"
+                                      onClick={() =>
+                                        updateSeriesLine(s.id, { merchantCategories: s.merchantCategories.filter((x) => x !== c) })
+                                      }
+                                      className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                                    >
+                                      {formatCategoryLabel(c)} ✕
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                              <label className="flex items-center gap-2">
+                                <span className="text-[11px] text-zinc-500">Color</span>
+                                <input
+                                  type="color"
+                                  value={s.color ?? colorForKey(s.id)}
+                                  onChange={(e) => updateSeriesLine(s.id, { color: e.target.value })}
+                                  className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                                />
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {seriesList.length < 6 && (
+                      <button type="button" onClick={addSeriesLine} className={pillClasses(false) + " self-start"}>
+                        + Add line
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <label className="flex flex-col gap-1">
+                      <span className={labelClasses}>Metric</span>
+                      <select
+                        value={customMetricId ? `custom:${customMetricId}` : metric}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === "__new__") {
+                            setCreatingMetric(true);
+                            return;
+                          }
+                          if (v.startsWith("custom:")) {
+                            setCustomMetricId(v.slice("custom:".length));
+                            return;
+                          }
+                          setCustomMetricId(undefined);
+                          setMetric(v as Metric);
+                        }}
+                        className={selectClasses}
+                      >
+                        {/* "Transaction count" is meaningless per-transaction —
+                            every scatter point or histogram sample is exactly
+                            one, so it'd produce a flat line of dots or a single
+                            useless bin. Hidden rather than allowed through. */}
+                        {METRIC_OPTIONS.filter((o) => !(isScatter || isHistogram) || o.value !== "transactionCount").map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                        {/* Saved metrics apply to bucketed/stat results only —
+                            scatter plots raw transactions and histogram bins by
+                            magnitude, neither of which has a "sum vs. average"
+                            distinction to offer. */}
+                        {!isScatter && !isHistogram && !isStackedBar && (
+                          <>
+                            {calculatedMetrics.length > 0 && (
+                              <optgroup label="Your metrics">
+                                {calculatedMetrics.map((m) => (
+                                  <option key={m.id} value={`custom:${m.id}`}>
+                                    {m.name}
+                                  </option>
+                                ))}
+                              </optgroup>
+                            )}
+                            <option value="__new__">+ New calculated metric…</option>
+                          </>
+                        )}
+                      </select>
+                    </label>
+                  </>
+                )}
+
+                {!multiSeries && creatingMetric && (
                   <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
                     <span className={labelClasses}>New calculated metric</span>
                     <p className="text-[11px] text-zinc-500">
@@ -1479,42 +1676,24 @@ export function WidgetEditorPanel({
                 {showAxisLabels && (
                   <div className="flex flex-col gap-2">
                     <span className={labelClasses}>Axis titles (optional)</span>
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        value={xAxisLabel}
-                        onChange={(e) => setXAxisLabel(e.target.value)}
-                        placeholder="X axis title"
-                        className={selectClasses + " flex-1"}
-                      />
-                      <select
-                        value={xAxisPosition}
-                        onChange={(e) => setXAxisPosition(e.target.value as (typeof AXIS_X_POSITIONS)[number])}
-                        className={selectClasses}
-                        title="Where the X axis title sits"
-                      >
-                        <option value="insideBottom">Inside</option>
-                        <option value="bottom">Below chart</option>
-                      </select>
-                    </div>
-                    <div className="flex gap-1.5">
-                      <input
-                        type="text"
-                        value={yAxisLabel}
-                        onChange={(e) => setYAxisLabel(e.target.value)}
-                        placeholder="Y axis title"
-                        className={selectClasses + " flex-1"}
-                      />
-                      <select
-                        value={yAxisPosition}
-                        onChange={(e) => setYAxisPosition(e.target.value as (typeof AXIS_Y_POSITIONS)[number])}
-                        className={selectClasses}
-                        title="Where the Y axis title sits"
-                      >
-                        <option value="insideLeft">Inside</option>
-                        <option value="left">Left of chart</option>
-                      </select>
-                    </div>
+                    <p className="text-[11px] text-zinc-500">
+                      Drag a title directly in the preview to reposition it — starts below the chart (X) / left of
+                      the chart (Y).
+                    </p>
+                    <input
+                      type="text"
+                      value={xAxisLabel}
+                      onChange={(e) => setXAxisLabel(e.target.value)}
+                      placeholder="X axis title"
+                      className={selectClasses}
+                    />
+                    <input
+                      type="text"
+                      value={yAxisLabel}
+                      onChange={(e) => setYAxisLabel(e.target.value)}
+                      placeholder="Y axis title"
+                      className={selectClasses}
+                    />
                     <label className="flex items-center gap-2">
                       <span className="text-[11px] text-zinc-500">Text size</span>
                       <input
@@ -1528,47 +1707,37 @@ export function WidgetEditorPanel({
                       <span className="text-[11px] text-zinc-500">px</span>
                     </label>
 
-                    <div className="mt-1 flex flex-col gap-1.5 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
-                      <span className="text-[11px] text-zinc-500">
-                        Labels &amp; values — shrink these if bar/category names are squishing together
-                      </span>
-                      <label className="flex items-center gap-2">
-                        <span className="text-[11px] text-zinc-500">Bar/category names</span>
-                        <input
-                          type="number"
-                          min={6}
-                          max={20}
-                          value={xTickFontSize}
-                          onChange={(e) => setXTickFontSize(Number(e.target.value) || 11)}
-                          className={selectClasses + " w-16"}
-                        />
-                        <span className="text-[11px] text-zinc-500">px</span>
+                    <div className="mt-1 flex gap-3 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-zinc-500">X axis</span>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={6}
+                            max={20}
+                            value={xTickFontSize}
+                            onChange={(e) => setXTickFontSize(Number(e.target.value) || 11)}
+                            className={selectClasses + " w-16"}
+                          />
+                          <span className="text-[11px] text-zinc-500">px</span>
+                        </div>
                       </label>
-                      <label className="flex items-center gap-2">
-                        <span className="text-[11px] text-zinc-500">Values</span>
-                        <input
-                          type="number"
-                          min={6}
-                          max={20}
-                          value={yTickFontSize}
-                          onChange={(e) => setYTickFontSize(Number(e.target.value) || 12)}
-                          className={selectClasses + " w-16"}
-                        />
-                        <span className="text-[11px] text-zinc-500">px</span>
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-zinc-500">Y axis</span>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            min={6}
+                            max={20}
+                            value={yTickFontSize}
+                            onChange={(e) => setYTickFontSize(Number(e.target.value) || 12)}
+                            className={selectClasses + " w-16"}
+                          />
+                          <span className="text-[11px] text-zinc-500">px</span>
+                        </div>
                       </label>
-                      <div className="flex items-center gap-1.5">
-                        {VALUE_FORMATS.map((f) => (
-                          <button
-                            key={f}
-                            type="button"
-                            onClick={() => setValueFormat(f)}
-                            className={pillClasses(valueFormat === f)}
-                          >
-                            {f === "currency" ? "$1,234" : "1,234"}
-                          </button>
-                        ))}
-                      </div>
                     </div>
+                    <p className="text-[11px] text-zinc-500">Shrink these if bar/category names are squishing together.</p>
                   </div>
                 )}
 
@@ -1632,6 +1801,7 @@ export function WidgetEditorPanel({
             widget={{ id: "__preview__", type, title: title.trim() || null, x: 0, y: 0, w: 0, h: 0, result: draftResult, config }}
             onPointClick={showMultiColor ? togglePointSelected : undefined}
             selectedKeys={showMultiColor ? selectedPointKeys : undefined}
+            onAxisLabelOffsetChange={showAxisLabels ? handleAxisLabelOffsetChange : undefined}
           />
         </div>
 
@@ -2058,6 +2228,44 @@ export function WidgetEditorPanel({
                       >
                         Reset all to default pattern
                       </button>
+                    )}
+                  </div>
+                )}
+
+                {type === "pie" && (
+                  <div className="flex flex-col gap-1.5 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
+                    <span className="text-[11px] text-zinc-500">Slice labels</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(
+                        [
+                          ["", "None"],
+                          ["value", "$1,234"],
+                          ["percent", "42%"],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value || "none"}
+                          type="button"
+                          onClick={() => setPieLabelShow(value)}
+                          className={pillClasses(pieLabelShow === value)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {pieLabelShow && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {(["outside", "inside"] as const).map((pos) => (
+                          <button
+                            key={pos}
+                            type="button"
+                            onClick={() => setPieLabelPosition(pos)}
+                            className={pillClasses(pieLabelPosition === pos)}
+                          >
+                            {pos === "outside" ? "Outside the chart" : "Inside the chart"}
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </div>
                 )}

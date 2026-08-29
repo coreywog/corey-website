@@ -57,19 +57,26 @@ const filtersSchema = z
   })
   .optional();
 
-// Matches recharts' own CartesianLabelPosition values — not every value it
-// supports, just the ones that make sense for "move the axis title".
-export const AXIS_X_POSITIONS = ["insideBottom", "bottom"] as const;
-export const AXIS_Y_POSITIONS = ["insideLeft", "left"] as const;
+// Not currently offered in the editor's UI (removed — "we don't need the
+// option right now"), but left in the schema so an already-saved config
+// that set one keeps rendering the same way, and so reviving the toggle
+// later doesn't need a migration. formatValue() in Widget.tsx treats a
+// missing value the same as "currency".
 export const VALUE_FORMATS = ["currency", "number"] as const;
 export type ValueFormat = (typeof VALUE_FORMATS)[number];
+
+// A pixel nudge from the default position (below the X axis, left of the Y
+// axis) — the editor lets you drag the title directly in the live preview
+// rather than picking from a fixed list of positions, so this needs to be
+// continuous, not another enum.
+const axisLabelOffsetSchema = z.object({ dx: z.number().min(-300).max(300), dy: z.number().min(-150).max(150) }).optional();
 
 const axisLabelsSchema = z
   .object({
     x: z.string().max(60).optional(),
     y: z.string().max(60).optional(),
-    xPosition: z.enum(AXIS_X_POSITIONS).optional(),
-    yPosition: z.enum(AXIS_Y_POSITIONS).optional(),
+    xOffset: axisLabelOffsetSchema,
+    yOffset: axisLabelOffsetSchema,
     fontSize: z.number().int().min(8).max(24).optional(), // the axis *title* text, not the tick labels
     // Tick label text — separately adjustable from the title above, since
     // this is the actual fix for bar/category names overlapping each other
@@ -77,9 +84,6 @@ const axisLabelsSchema = z
     // title) buys back the room they need.
     xTickFontSize: z.number().int().min(6).max(20).optional(),
     yTickFontSize: z.number().int().min(6).max(20).optional(),
-    // Whether Y-axis ticks/tooltips read as "$1,234" or plain "1,234" — not
-    // every measure on this dashboard is a dollar amount (e.g. transaction
-    // count), so this shouldn't be permanently currency-only.
     valueFormat: z.enum(VALUE_FORMATS).optional(),
   })
   .optional();
@@ -166,6 +170,24 @@ export type LineStyle = (typeof LINE_STYLES)[number];
 export const FILL_PATTERNS = ["solid", "dots", "diagonalLinesRight", "diagonalLinesLeft", "crossHatch", "horizontalLines", "verticalLines"] as const;
 export type FillPattern = (typeof FILL_PATTERNS)[number];
 
+// One independently-configured line/bar/histogram within a multi-series
+// widget — the editor's collapsible "Line 1"/"Line 2" rows. Deliberately
+// narrow: just metric + category, sharing everything else (date range,
+// accounts, groupBy) with the widget as a whole — see lib/dashboardQuery.ts's
+// computeMultiSeries. `id` is a stable key independent of array order/label,
+// used both as the React list key and the recharts dataKey for this series'
+// column, so renaming a line or reordering the list can't silently merge two
+// series' data together.
+const seriesEntrySchema = z.object({
+  id: z.string().min(1),
+  label: z.string().max(40).optional(), // shown in the legend; auto "Line N" if omitted
+  metric: z.enum(METRICS),
+  customMetricId: z.string().optional(),
+  merchantCategories: z.array(z.string().min(1)).optional(),
+  color: z.string().regex(HEX).optional(),
+});
+export type SeriesEntryConfig = z.infer<typeof seriesEntrySchema>;
+
 const chartConfigSchema = z.object({
   dataSource: z.literal("transactions"), // only value today — explicit for future data sources
   metric: z.enum(METRICS),
@@ -210,6 +232,20 @@ const chartConfigSchema = z.object({
   // the editor uses; never touches the saved config). Order in the array
   // is display order. See Widget.tsx.
   dateButtons: z.array(dateButtonSchema).max(12).optional(),
+  // Multiple independently-configured lines/bars on one chart — line/area/
+  // bar/stackedBar/histogram only (see showMultiSeries in the editor).
+  // When set (2+ entries), this takes over rendering entirely; the
+  // top-level metric/customMetricId above stay populated regardless, as
+  // the fallback if series is ever cleared back to a single measure.
+  series: z.array(seriesEntrySchema).min(2).max(6).optional(),
+  // Pie-only: where each slice's number is drawn. Independent of color/
+  // style above.
+  pieLabels: z
+    .object({
+      show: z.enum(["value", "percent"]).optional(), // omitted = no labels at all
+      position: z.enum(["inside", "outside"]).optional(),
+    })
+    .optional(),
 });
 
 // A free-text tile — no data behind it at all, just whatever the user

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -23,7 +23,7 @@ import {
 } from "recharts";
 import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
 import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern, ValueFormat } from "@/lib/dashboardConfig";
-import type { BarShapeProps, PieSectorShapeProps } from "recharts";
+import type { BarShapeProps, PieSectorShapeProps, PieLabelRenderProps } from "recharts";
 
 export type WidgetWithData = {
   id: string;
@@ -65,20 +65,40 @@ function EmptyState() {
 }
 
 type AxisLabels = NonNullable<ChartWidgetConfig["axisLabels"]>;
+// Passed down to every chart type that renders an axis title, so it can
+// wire onMouseDown on that title (see axisLabelProp) back up to Widget's
+// own drag tracking. Undefined everywhere except the editor's live
+// preview — see Widget's onAxisLabelOffsetChange prop.
+type AxisDragHandler = (axis: "x" | "y", e: React.MouseEvent<SVGTextElement>) => void;
 
 // recharts' axis `label` prop: undefined renders no title at all, so this
-// only builds one when the user actually set one. Position and font size
-// are both user-adjustable (see the editor's Axis titles section) — insideBottom/
-// insideLeft and 11px are just the defaults when they haven't touched them.
-function axisLabelProp(axisLabels: AxisLabels | undefined, axis: "x" | "y") {
+// only builds one when the user actually set one. Always positioned below
+// the X axis / left of the Y axis — there's no inside/outside choice
+// anymore, since xOffset/yOffset (dragged directly in the editor's live
+// preview — see onDragStart/Widget's startAxisDrag) covers fine
+// positioning instead. `dx`/`dy` are plain SVG text attributes recharts'
+// Label passes straight through, so the offset just nudges from that
+// default position.
+function axisLabelProp(
+  axisLabels: AxisLabels | undefined,
+  axis: "x" | "y",
+  onDragStart?: (axis: "x" | "y", e: React.MouseEvent<SVGTextElement>) => void,
+) {
   const text = axis === "x" ? axisLabels?.x : axisLabels?.y;
   if (!text) return undefined;
-  const position = axis === "x" ? (axisLabels?.xPosition ?? "insideBottom") : (axisLabels?.yPosition ?? "insideLeft");
+  const offset = axis === "x" ? axisLabels?.xOffset : axisLabels?.yOffset;
   return {
     value: text,
-    position,
+    position: axis === "x" ? ("bottom" as const) : ("left" as const),
     angle: axis === "y" ? -90 : undefined,
-    style: { fontSize: axisLabels?.fontSize ?? 11, textAnchor: "middle" as const },
+    dx: offset?.dx ?? 0,
+    dy: offset?.dy ?? 0,
+    style: {
+      fontSize: axisLabels?.fontSize ?? 11,
+      textAnchor: "middle" as const,
+      cursor: onDragStart ? "grab" : undefined,
+    },
+    onMouseDown: onDragStart ? (e: React.MouseEvent<SVGTextElement>) => onDragStart(axis, e) : undefined,
   };
 }
 
@@ -188,11 +208,13 @@ function LineWidget({
   axisLabels,
   color,
   lineStyle,
+  onAxisDragStart,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
   color?: string;
   lineStyle?: LineStyle;
+  onAxisDragStart?: AxisDragHandler;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
@@ -205,7 +227,7 @@ function LineWidget({
           tickLine={false}
           axisLine={false}
           minTickGap={32}
-          label={axisLabelProp(axisLabels, "x")}
+          label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
           tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
@@ -213,7 +235,7 @@ function LineWidget({
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
-          label={axisLabelProp(axisLabels, "y")}
+          label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
         <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
         <Line
@@ -236,12 +258,14 @@ function AreaWidget({
   color,
   lineStyle,
   fillPattern,
+  onAxisDragStart,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
   color?: string;
   lineStyle?: LineStyle;
   fillPattern?: FillPattern;
+  onAxisDragStart?: AxisDragHandler;
 }) {
   if (points.length === 0) return <EmptyState />;
   const fill = color ?? "#6366f1";
@@ -256,7 +280,7 @@ function AreaWidget({
           tickLine={false}
           axisLine={false}
           minTickGap={32}
-          label={axisLabelProp(axisLabels, "x")}
+          label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
           tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
@@ -264,7 +288,7 @@ function AreaWidget({
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
-          label={axisLabelProp(axisLabels, "y")}
+          label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
         <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
         <Area
@@ -289,6 +313,7 @@ function BarWidget({
   fillPatternOverrides,
   onPointClick,
   selectedKeys,
+  onAxisDragStart,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
@@ -296,6 +321,7 @@ function BarWidget({
   fillPatternOverrides?: Record<string, FillPattern>;
   onPointClick?: (key: string) => void;
   selectedKeys?: Set<string>;
+  onAxisDragStart?: AxisDragHandler;
 }) {
   if (points.length === 0) return <EmptyState />;
   const patternFor = (key: string) => fillPatternOverrides?.[key] ?? fillPattern;
@@ -338,7 +364,7 @@ function BarWidget({
           angle={-20}
           textAnchor="end"
           height={40}
-          label={axisLabelProp(axisLabels, "x")}
+          label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
           tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
@@ -346,7 +372,7 @@ function BarWidget({
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
-          label={axisLabelProp(axisLabels, "y")}
+          label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
         <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
         <Bar dataKey="value" isAnimationActive={false} shape={renderBar} />
@@ -360,16 +386,24 @@ function StackedBarWidget({
   series,
   fillPattern,
   axisLabels,
+  stacked = true,
+  onAxisDragStart,
 }: {
   points: StackedPoint[];
   series: StackedSeries[];
   fillPattern?: FillPattern;
   axisLabels?: AxisLabels;
+  // false renders the same per-series bars grouped side by side instead of
+  // stacked — used for a multi-series bar/histogram widget (config.series),
+  // as opposed to the "stackedBar" widget type's own auto-category split,
+  // which is always stacked.
+  stacked?: boolean;
+  onAxisDragStart?: AxisDragHandler;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: 28 }}>
+      <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 28 : 16 }}>
         <FillPatternDefs items={series.map((s) => ({ pattern: fillPattern ?? "solid", color: s.color }))} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
@@ -381,6 +415,7 @@ function StackedBarWidget({
           angle={-20}
           textAnchor="end"
           height={40}
+          label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
           tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
@@ -388,15 +423,143 @@ function StackedBarWidget({
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
+          label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
         <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
         <Legend wrapperStyle={{ fontSize: 11 }} />
         {series.map((s) => (
-          <Bar key={s.key} dataKey={s.key} name={s.label} stackId="stack" fill={resolveFill(fillPattern, s.color)} isAnimationActive={false} />
+          <Bar
+            key={s.key}
+            dataKey={s.key}
+            name={s.label}
+            stackId={stacked ? "stack" : undefined}
+            fill={resolveFill(fillPattern, s.color)}
+            isAnimationActive={false}
+          />
         ))}
       </BarChart>
     </ResponsiveContainer>
   );
+}
+
+function MultiLineWidget({
+  points,
+  series,
+  axisLabels,
+  onAxisDragStart,
+}: {
+  points: StackedPoint[];
+  series: StackedSeries[];
+  axisLabels?: AxisLabels;
+  onAxisDragStart?: AxisDragHandler;
+}) {
+  if (points.length === 0) return <EmptyState />;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <LineChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        <XAxis
+          dataKey="label"
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tickLine={false}
+          axisLine={false}
+          minTickGap={32}
+          label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
+        />
+        <YAxis
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
+          tickLine={false}
+          axisLine={false}
+          width={56}
+          tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
+          label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
+        />
+        <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        {series.map((s) => (
+          <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2} dot={false} isAnimationActive={false} />
+        ))}
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function MultiAreaWidget({
+  points,
+  series,
+  axisLabels,
+  onAxisDragStart,
+}: {
+  points: StackedPoint[];
+  series: StackedSeries[];
+  axisLabels?: AxisLabels;
+  onAxisDragStart?: AxisDragHandler;
+}) {
+  if (points.length === 0) return <EmptyState />;
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        <XAxis
+          dataKey="label"
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tickLine={false}
+          axisLine={false}
+          minTickGap={32}
+          label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
+        />
+        <YAxis
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
+          tickLine={false}
+          axisLine={false}
+          width={56}
+          tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
+          label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
+        />
+        <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        {series.map((s) => (
+          <Area
+            key={s.key}
+            type="monotone"
+            dataKey={s.key}
+            name={s.label}
+            stroke={s.color}
+            strokeWidth={2}
+            fill={s.color}
+            fillOpacity={0.18}
+            isAnimationActive={false}
+          />
+        ))}
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** Where a pie slice's own number is drawn — inside the slice (white text,
+ * centered partway out from the donut hole) or outside it (theme-colored
+ * text at recharts' own default outside anchor, with a connecting line). */
+function renderPieLabel(mode: "value" | "percent", position: "inside" | "outside") {
+  return function PieSliceLabel(props: PieLabelRenderProps) {
+    const { cx, cy, midAngle = 0, innerRadius, outerRadius, percent = 0, value, x, y } = props;
+    const text = mode === "percent" ? `${Math.round(percent * 100)}%` : currencyFormatter.format(Number(value));
+    if (position === "outside") {
+      return (
+        <text x={x} y={y} textAnchor={x > cx ? "start" : "end"} dominantBaseline="central" fontSize={11} fill="currentColor">
+          {text}
+        </text>
+      );
+    }
+    const RADIAN = Math.PI / 180;
+    const radius = innerRadius + (outerRadius - innerRadius) * 0.6;
+    const ix = cx + radius * Math.cos(-midAngle * RADIAN);
+    const iy = cy + radius * Math.sin(-midAngle * RADIAN);
+    return (
+      <text x={ix} y={iy} textAnchor="middle" dominantBaseline="central" fontSize={11} fill="#fff">
+        {text}
+      </text>
+    );
+  };
 }
 
 function PieWidget({
@@ -405,12 +568,14 @@ function PieWidget({
   fillPatternOverrides,
   onPointClick,
   selectedKeys,
+  pieLabels,
 }: {
   points: AggregatedPoint[];
   fillPattern?: FillPattern;
   fillPatternOverrides?: Record<string, FillPattern>;
   onPointClick?: (key: string) => void;
   selectedKeys?: Set<string>;
+  pieLabels?: ChartWidgetConfig["pieLabels"];
 }) {
   if (points.length === 0) return <EmptyState />;
   const patternFor = (key: string) => fillPatternOverrides?.[key] ?? fillPattern;
@@ -454,7 +619,17 @@ function PieWidget({
       <PieChart>
         <FillPatternDefs items={points.map((p) => ({ pattern: patternFor(p.key) ?? "solid", color: p.color }))} />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
-        <Pie data={points} dataKey="value" nameKey="label" innerRadius="45%" outerRadius="80%" isAnimationActive={false} shape={renderSlice} />
+        <Pie
+          data={points}
+          dataKey="value"
+          nameKey="label"
+          innerRadius="45%"
+          outerRadius="80%"
+          isAnimationActive={false}
+          shape={renderSlice}
+          label={pieLabels?.show ? renderPieLabel(pieLabels.show, pieLabels.position ?? "outside") : undefined}
+          labelLine={Boolean(pieLabels?.show) && (pieLabels?.position ?? "outside") === "outside"}
+        />
       </PieChart>
     </ResponsiveContainer>
   );
@@ -464,7 +639,15 @@ function shortDate(ms: number): string {
   return new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLabels?: AxisLabels }) {
+function ScatterWidget({
+  points,
+  axisLabels,
+  onAxisDragStart,
+}: {
+  points: ScatterPoint[];
+  axisLabels?: AxisLabels;
+  onAxisDragStart?: AxisDragHandler;
+}) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -478,7 +661,7 @@ function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLab
           tickLine={false}
           axisLine={false}
           tickFormatter={shortDate}
-          label={axisLabelProp(axisLabels, "x")}
+          label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
           dataKey="y"
@@ -487,7 +670,7 @@ function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLab
           axisLine={false}
           width={56}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
-          label={axisLabelProp(axisLabels, "y")}
+          label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
         <Tooltip
           formatter={(v, name) => (name === "y" ? formatValue(Number(v), axisLabels?.valueFormat) : shortDate(Number(v)))}
@@ -755,6 +938,7 @@ export function Widget({
   widget,
   onPointClick,
   selectedKeys,
+  onAxisLabelOffsetChange,
 }: {
   widget: WidgetWithData;
   // Editor-only: lets a viewer click a bar/slice/row directly in the chart
@@ -764,6 +948,12 @@ export function Widget({
   // handler attached.
   onPointClick?: (key: string) => void;
   selectedKeys?: Set<string>;
+  // Editor-only, same reasoning as onPointClick: lets the axis title be
+  // dragged directly in the live preview (see axisLabelProp's onMouseDown)
+  // instead of picking from a fixed list of positions. Called once, on
+  // mouseup, with the final offset — WidgetEditorPanel owns the actual
+  // config.axisLabels.xOffset/yOffset state.
+  onAxisLabelOffsetChange?: (axis: "x" | "y", offset: { dx: number; dy: number }) => void;
 }) {
   const title = widget.title ?? "Widget";
   const chartConfig = widget.config?.dataSource === "transactions" ? widget.config : undefined;
@@ -771,6 +961,66 @@ export function Widget({
 
   const [activeButton, setActiveButton] = useState<DateButtonConfig | null>(null);
   const [overrideResult, setOverrideResult] = useState<WidgetResult | { error: string } | null>(null);
+
+  // Axis-title drag tracking. dragRef (not state) holds the in-progress
+  // drag itself since mousemove fires far more often than React should
+  // re-render for; liveAxisOffset is the part that actually needs to be
+  // state, so the title visually follows the cursor while dragging.
+  const dragRef = useRef<{ axis: "x" | "y"; startX: number; startY: number; baseDx: number; baseDy: number } | null>(null);
+  const [liveAxisOffset, setLiveAxisOffset] = useState<Partial<Record<"x" | "y", { dx: number; dy: number }>>>({});
+
+  useEffect(() => {
+    // Captured into a local const so the nested onUp closure below keeps
+    // TS's non-undefined narrowing from the guard on the next line — a
+    // closure over the prop itself doesn't retain that narrowing.
+    const commitOffset = onAxisLabelOffsetChange;
+    if (!commitOffset) return;
+    function onMove(e: MouseEvent) {
+      const d = dragRef.current;
+      if (!d) return;
+      const next = { dx: d.baseDx + (e.clientX - d.startX), dy: d.baseDy + (e.clientY - d.startY) };
+      setLiveAxisOffset((prev) => ({ ...prev, [d.axis]: next }));
+    }
+    function onUp() {
+      const d = dragRef.current;
+      if (!d) return;
+      dragRef.current = null;
+      setLiveAxisOffset((prev) => {
+        const off = prev[d.axis];
+        // commitOffset's non-undefined check above (`if (!commitOffset)
+        // return;`) doesn't carry through this closure per TS's rules for
+        // captured consts across nested function boundaries — safe to
+        // assert, since commitOffset is never reassigned after that guard.
+        if (off) commitOffset!(d.axis, off);
+        return prev;
+      });
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [onAxisLabelOffsetChange]);
+
+  function startAxisDrag(axis: "x" | "y", e: React.MouseEvent<SVGTextElement>) {
+    e.preventDefault();
+    const base = axis === "x" ? chartConfig?.axisLabels?.xOffset : chartConfig?.axisLabels?.yOffset;
+    dragRef.current = { axis, startX: e.clientX, startY: e.clientY, baseDx: base?.dx ?? 0, baseDy: base?.dy ?? 0 };
+  }
+
+  // The live drag position layered on top of the saved config — so the
+  // title actually moves during a drag, not just after it commits on
+  // mouseup. Identical to chartConfig.axisLabels everywhere else (both
+  // fields fall back to their saved value when nothing's being dragged).
+  const effectiveAxisLabels: AxisLabels | undefined = chartConfig?.axisLabels
+    ? {
+        ...chartConfig.axisLabels,
+        xOffset: liveAxisOffset.x ?? chartConfig.axisLabels.xOffset,
+        yOffset: liveAxisOffset.y ?? chartConfig.axisLabels.yOffset,
+      }
+    : undefined;
+  const axisDragHandler = onAxisLabelOffsetChange ? startAxisDrag : undefined;
 
   useEffect(() => {
     if (!activeButton || !chartConfig) return;
@@ -828,24 +1078,44 @@ export function Widget({
         ) : result.kind === "text" ? (
           <TextWidget text={result.text} />
         ) : result.kind === "scatter" ? (
-          <ScatterWidget points={result.points} axisLabels={chartConfig?.axisLabels} />
+          <ScatterWidget points={result.points} axisLabels={effectiveAxisLabels} onAxisDragStart={axisDragHandler} />
         ) : result.kind === "stacked" ? (
           <StackedBarWidget
             points={result.points}
             series={result.series}
             fillPattern={chartConfig?.fillPattern}
-            axisLabels={chartConfig?.axisLabels}
+            axisLabels={effectiveAxisLabels}
+            onAxisDragStart={axisDragHandler}
           />
+        ) : result.kind === "multiSeries" ? (
+          widget.type === "line" ? (
+            <MultiLineWidget points={result.points} series={result.series} axisLabels={effectiveAxisLabels} onAxisDragStart={axisDragHandler} />
+          ) : widget.type === "area" ? (
+            <MultiAreaWidget points={result.points} series={result.series} axisLabels={effectiveAxisLabels} onAxisDragStart={axisDragHandler} />
+          ) : (
+            // bar, histogram, and stackedBar all share the same wide-row
+            // shape — grouped (side-by-side) unless the widget type is
+            // specifically "stackedBar", which stacks them instead.
+            <StackedBarWidget
+              points={result.points}
+              series={result.series}
+              fillPattern={chartConfig?.fillPattern}
+              axisLabels={effectiveAxisLabels}
+              onAxisDragStart={axisDragHandler}
+              stacked={widget.type === "stackedBar"}
+            />
+          )
         ) : result.kind === "stat" ? (
           <StatWidget result={result} color={chartConfig?.color} />
         ) : widget.type === "bar" || widget.type === "histogram" ? (
           <BarWidget
             points={result.points}
-            axisLabels={chartConfig?.axisLabels}
+            axisLabels={effectiveAxisLabels}
             fillPattern={chartConfig?.fillPattern}
             fillPatternOverrides={chartConfig?.fillPatternOverrides}
             onPointClick={onPointClick}
             selectedKeys={selectedKeys}
+            onAxisDragStart={axisDragHandler}
           />
         ) : widget.type === "pie" ? (
           <PieWidget
@@ -854,6 +1124,7 @@ export function Widget({
             fillPatternOverrides={chartConfig?.fillPatternOverrides}
             onPointClick={onPointClick}
             selectedKeys={selectedKeys}
+            pieLabels={chartConfig?.pieLabels}
           />
         ) : widget.type === "table" ? (
           <TableWidget points={result.points} onPointClick={onPointClick} selectedKeys={selectedKeys} />
@@ -862,13 +1133,20 @@ export function Widget({
         ) : widget.type === "area" ? (
           <AreaWidget
             points={result.points}
-            axisLabels={chartConfig?.axisLabels}
+            axisLabels={effectiveAxisLabels}
             color={chartConfig?.color}
             lineStyle={chartConfig?.lineStyle}
             fillPattern={chartConfig?.fillPattern}
+            onAxisDragStart={axisDragHandler}
           />
         ) : (
-          <LineWidget points={result.points} axisLabels={chartConfig?.axisLabels} color={chartConfig?.color} lineStyle={chartConfig?.lineStyle} />
+          <LineWidget
+            points={result.points}
+            axisLabels={effectiveAxisLabels}
+            color={chartConfig?.color}
+            lineStyle={chartConfig?.lineStyle}
+            onAxisDragStart={axisDragHandler}
+          />
         )}
       </div>
     </div>
