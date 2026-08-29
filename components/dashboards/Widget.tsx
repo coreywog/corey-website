@@ -21,7 +21,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
-import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset } from "@/lib/dashboardConfig";
 
 export type WidgetWithData = {
   id: string;
@@ -373,6 +373,11 @@ function CalendarWidget({ points, color }: { points: AggregatedPoint[]; color?: 
  * render the same chips while editing the list. */
 export function dateButtonLabel(btn: DateButtonConfig): string {
   if (btn.kind === "custom") return btn.label;
+  if (btn.kind === "relativeDays") {
+    if (btn.days === 0) return "Today";
+    if (btn.days === 1) return "Yesterday";
+    return `${btn.days}d ago`;
+  }
   switch (btn.preset) {
     case "1m":
       return "1M";
@@ -394,7 +399,9 @@ export function dateButtonLabel(btn: DateButtonConfig): string {
  * has to compare by value, not `===`. Also used by WidgetEditorPanel as a
  * React list key and to prevent adding the same preset twice. */
 export function dateButtonKey(btn: DateButtonConfig): string {
-  return btn.kind === "custom" ? `custom:${btn.label}:${btn.start}:${btn.end}` : `preset:${btn.preset}`;
+  if (btn.kind === "custom") return `custom:${btn.label}:${btn.start}:${btn.end}`;
+  if (btn.kind === "relativeDays") return `relativeDays:${btn.days}`;
+  return `preset:${btn.preset}`;
 }
 
 /** Resolves a button to the concrete dateRange it should apply — computed
@@ -402,6 +409,7 @@ export function dateButtonKey(btn: DateButtonConfig): string {
  * right now" rather than whenever the button was configured. */
 function dateButtonRange(btn: DateButtonConfig): ChartWidgetConfig["dateRange"] {
   if (btn.kind === "custom") return { mode: "custom", start: btn.start, end: btn.end };
+  if (btn.kind === "relativeDays") return { mode: "relativeDays", days: btn.days };
   switch (btn.preset) {
     case "1m":
       return { mode: "relative", months: 1 };
@@ -413,10 +421,33 @@ function dateButtonRange(btn: DateButtonConfig): ChartWidgetConfig["dateRange"] 
       return { mode: "relative", months: 12 };
     case "all":
       return { mode: "allTime" };
+    case "ytd":
+      return { mode: "ytd" };
+  }
+}
+
+/** Approximate day-span a preset implies — e.g. "6M" ≈ 186 days, "All" =
+ * unbounded. Used only by WidgetEditorPanel, to decide which quick-range
+ * buttons are worth offering for a widget's own configured date scope: a
+ * widget already narrowed to "2 days ago" has no sensible "6 months"
+ * button to add, since there's nothing wider to view within it. */
+export function dateButtonPresetDays(preset: DateButtonPreset): number {
+  switch (preset) {
+    case "1m":
+      return 31;
+    case "3m":
+      return 93;
+    case "6m":
+      return 186;
+    case "1y":
+      return 366;
     case "ytd": {
       const now = new Date();
-      return { mode: "custom", start: `${now.getUTCFullYear()}-01-01`, end: now.toISOString().slice(0, 10) };
+      const jan1 = Date.UTC(now.getUTCFullYear(), 0, 1);
+      return Math.floor((now.getTime() - jan1) / 86400000);
     }
+    case "all":
+      return Infinity;
   }
 }
 
@@ -447,7 +478,7 @@ function DateRangeButtons({
   return (
     // Same pill-group-next-to-heading treatment as the original Finance
     // tab's RangeSelector (components/finance/RangeSelector.tsx).
-    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1 rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
+    <div className="flex min-w-0 shrink flex-wrap items-center gap-1 overflow-hidden rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
       {buttons.map((b) => {
         const key = dateButtonKey(b);
         return (
@@ -500,21 +531,26 @@ export function Widget({ widget }: { widget: WidgetWithData }) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-black/[.08] bg-[var(--background)] dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
-      <div className="flex items-center justify-between gap-2 border-b border-black/[.08] px-3 py-2 dark:border-white/[.1] creamsicle:border-orange-200">
+      <div className="flex min-w-0 items-center gap-2 border-b border-black/[.08] px-3 py-2 dark:border-white/[.1] creamsicle:border-orange-200">
         {/* Only the title itself is the drag handle, not the whole header
             row — so clicking a date button never risks starting a drag
             (see DashboardGrid's dragConfig, which matches this exact
-            class). Same header-row placement as the original Finance tab's
-            RangeSelector-next-to-heading pattern (DailyCashFlowChart). */}
-        <span className="widget-drag-handle min-w-0 flex-1 cursor-move truncate text-sm font-medium text-zinc-500 select-none dark:text-zinc-500 creamsicle:text-orange-700">
+            class). Buttons sit immediately right of the title, divided by
+            a rule, both hugging the left edge — same as the original
+            Finance tab's RangeSelector-next-to-heading pattern
+            (DailyCashFlowChart), not spread to the tile's far corners. */}
+        <span className="widget-drag-handle shrink truncate cursor-move text-sm font-medium text-zinc-500 select-none dark:text-zinc-500 creamsicle:text-orange-700">
           {title}
         </span>
         {dateButtons.length > 0 && (
-          <DateRangeButtons
-            buttons={dateButtons}
-            activeKey={activeButton ? dateButtonKey(activeButton) : null}
-            onChange={setActiveButton}
-          />
+          <>
+            <span aria-hidden className="h-4 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15] creamsicle:bg-orange-300" />
+            <DateRangeButtons
+              buttons={dateButtons}
+              activeKey={activeButton ? dateButtonKey(activeButton) : null}
+              onChange={setActiveButton}
+            />
+          </>
         )}
       </div>
       <div className="min-h-0 flex-1 p-3">

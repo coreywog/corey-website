@@ -17,7 +17,7 @@ import {
   HistogramIcon,
   CalendarIcon,
 } from "./icons";
-import { Widget, dateButtonLabel, dateButtonKey, type WidgetWithData } from "./Widget";
+import { Widget, dateButtonLabel, dateButtonKey, dateButtonPresetDays, type WidgetWithData } from "./Widget";
 import type { CalculatedMetricOption } from "./DashboardTabs";
 import type { WidgetConfig, ChartWidgetConfig, WidgetType, Metric, GroupBy, DateButtonConfig, DateButtonPreset } from "@/lib/dashboardConfig";
 import { WIDGET_COLORS, AXIS_X_POSITIONS, AXIS_Y_POSITIONS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS } from "@/lib/dashboardConfig";
@@ -307,6 +307,14 @@ export function WidgetEditorPanel({
     setCustomButtonEnd("");
     setAddingCustomButton(false);
   }
+
+  function addCustomDaysButton() {
+    const n = Number(customButtonDays);
+    if (!customButtonDays.trim() || !Number.isInteger(n) || n < 0 || n > 3650) return;
+    if (dateButtons.some((b) => b.kind === "relativeDays" && b.days === n)) return;
+    setDateButtons((prev) => [...prev, { kind: "relativeDays", days: n }]);
+    setCustomButtonDays("");
+  }
   const [metric, setMetric] = useState<Metric>(chartConfig?.metric ?? "spendingTotal");
   const [customMetricId, setCustomMetricId] = useState<string | undefined>(chartConfig?.customMetricId);
   // Local copy, not just the prop directly — saving a new one appends here
@@ -399,7 +407,6 @@ export function WidgetEditorPanel({
   // Account gets its own dropdown, pinned above the rest — closed by
   // default, same reasoning as openColumnFilter above.
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
-  const [transactionCategory, setTransactionCategory] = useState<string>(chartConfig?.filters?.transactionCategory ?? "");
   const [limit, setLimit] = useState(chartConfig?.limit ? String(chartConfig.limit) : "");
   const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
   const [xAxisLabel, setXAxisLabel] = useState(chartConfig?.axisLabels?.x ?? "");
@@ -416,6 +423,7 @@ export function WidgetEditorPanel({
   const [customButtonLabel, setCustomButtonLabel] = useState("");
   const [customButtonStart, setCustomButtonStart] = useState("");
   const [customButtonEnd, setCustomButtonEnd] = useState("");
+  const [customButtonDays, setCustomButtonDays] = useState("");
 
   const [preview, setPreview] = useState<WidgetWithData["result"] | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -443,7 +451,6 @@ export function WidgetEditorPanel({
   const needsGroupBy = !isText && !isScatter && !isHistogram && !isCalendar && type !== "stat";
   const isTimeSeries = groupBy === "day" || groupBy === "month";
   const showLimit = (needsGroupBy && groupBy !== "" && !isTimeSeries && (type === "bar" || type === "pie")) || isStackedBar;
-  const showTransactionCategoryFilter = metric === "net" || metric === "transactionCount";
   const showAxisLabels = type === "line" || type === "area" || type === "bar" || isScatter || isHistogram;
   const showColor = type === "line" || type === "area" || type === "stat" || isCalendar;
   // The other coloring mode — per-point, for chart types with more than one
@@ -475,6 +482,37 @@ export function WidgetEditorPanel({
                 ? `${formatDate(customStart)} – ${openEnded ? "latest" : customEnd ? formatDate(customEnd) : "?"}`
                 : "Pick a range"
               : `Last ${relativeMonths} month${relativeMonths === 1 ? "" : "s"}`;
+
+  // How many days this widget's own configured Date filter actually spans
+  // — used below to decide which quick-range buttons make sense to offer
+  // on the tile. A widget already narrowed to "2 days ago" has nothing
+  // wider to view within it, so a "6 months" button would just be a dead
+  // end (see the Quick-range buttons section). allTime/an open-ended
+  // custom range are unbounded; "specific" (legacy one-month widgets) is
+  // treated as ~1 month.
+  const widgetScopeDays = useMemo(() => {
+    switch (dateMode) {
+      case "relativeDays":
+        return relativeDaysAgo;
+      case "relative":
+        return relativeMonths * 31;
+      case "ytd": {
+        const now = new Date();
+        return Math.floor((now.getTime() - Date.UTC(now.getUTCFullYear(), 0, 1)) / 86400000);
+      }
+      case "specific":
+        return 31;
+      case "custom": {
+        if (!customStart) return Infinity;
+        const end = openEnded || !customEnd ? new Date() : new Date(`${customEnd}T00:00:00Z`);
+        const start = new Date(`${customStart}T00:00:00Z`);
+        return Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
+      }
+      case "allTime":
+      default:
+        return Infinity;
+    }
+  }, [dateMode, relativeMonths, relativeDaysAgo, customStart, customEnd, openEnded]);
 
   // Memoized, not recomputed-and-thrown-away every render: this is used as
   // a useEffect dependency below (both the preview fetch and the
@@ -515,9 +553,6 @@ export function WidgetEditorPanel({
       ...(merchantCategories.length ? { merchantCategories } : {}),
       ...(merchantSubcategories.length ? { merchantSubcategories } : {}),
       ...(merchants.length ? { merchants } : {}),
-      ...(showTransactionCategoryFilter && transactionCategory
-        ? { transactionCategory: transactionCategory as "income" | "spending" | "transfer" | "other" }
-        : {}),
       ...(parsedAmountMin !== undefined && !Number.isNaN(parsedAmountMin) ? { amountMin: parsedAmountMin } : {}),
       ...(parsedAmountMax !== undefined && !Number.isNaN(parsedAmountMax) ? { amountMax: parsedAmountMax } : {}),
     };
@@ -546,7 +581,7 @@ export function WidgetEditorPanel({
       ...(showMultiColor && colorMode === "specific" && Object.keys(pointColors).length ? { colorOverrides: pointColors } : {}),
       ...(dateButtons.length ? { dateButtons } : {}),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/showTransactionCategoryFilter/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
   }, [
     isText,
     text,
@@ -567,7 +602,6 @@ export function WidgetEditorPanel({
     merchants,
     amountMin,
     amountMax,
-    transactionCategory,
     limit,
     compareToPrevious,
     xAxisLabel,
@@ -617,7 +651,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, transactionCategory, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo]);
+  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, dateButtons]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -1360,31 +1394,6 @@ export function WidgetEditorPanel({
               </>
             )}
 
-            {/* Nothing in here applies to a text tile (no color, no data
-                filters) — showing an empty box would just look broken. */}
-            {typeChosen && !isText && (
-              <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
-                <span className={labelClasses}>Filters and style</span>
-
-                {!isText && (
-                  <>
-                    {showTransactionCategoryFilter && (
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[11px] text-zinc-500">Transaction type</span>
-                        <select value={transactionCategory} onChange={(e) => setTransactionCategory(e.target.value)} className={selectClasses}>
-                          <option value="">Any</option>
-                          {TRANSACTION_CATEGORY_OPTIONS.map((c) => (
-                            <option key={c} value={c}>
-                              {c}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
           </div>
         </div>
 
@@ -1444,8 +1453,10 @@ export function WidgetEditorPanel({
           <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
             <span className={labelClasses}>Quick-range buttons on the tile (optional)</span>
             <p className="text-[11px] text-zinc-500">
-              Shown on the live dashboard so a viewer can flip the range without opening the editor —
-              independent of the date range set on the left. Add as many as you want.
+              Shown next to the title on the live dashboard so a viewer can flip what the tile is
+              showing without opening the editor — this only changes the view, it doesn&apos;t touch the
+              Date filter set on the left. Works the same fixed/fluid way as that filter, just scoped
+              to what actually fits inside it.
             </p>
 
             {dateButtons.length > 0 && (
@@ -1490,65 +1501,100 @@ export function WidgetEditorPanel({
 
             {dateButtons.length < 12 && (
               <>
-                <div className="flex flex-wrap gap-1.5">
-                  {DATE_BUTTON_PRESETS.filter(
-                    (p) => !dateButtons.some((b) => b.kind === "preset" && b.preset === p),
-                  ).map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => setDateButtons((prev) => [...prev, { kind: "preset", preset: p as DateButtonPreset }])}
-                      className={pillClasses(false)}
-                    >
-                      + {dateButtonLabel({ kind: "preset", preset: p as DateButtonPreset })}
-                    </button>
-                  ))}
-                </div>
-
-                {addingCustomButton ? (
+                <div className="flex flex-col gap-1 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
+                  <span className="text-[11px] text-zinc-500">
+                    Fluid — only ranges that fit inside the Date filter above ({widgetScopeDays === Infinity ? "unbounded" : `≤${widgetScopeDays}d`}) are offered
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {DATE_BUTTON_PRESETS.filter(
+                      (p) =>
+                        !dateButtons.some((b) => b.kind === "preset" && b.preset === p) &&
+                        dateButtonPresetDays(p) <= widgetScopeDays,
+                    ).map((p) => (
+                      <button
+                        key={p}
+                        type="button"
+                        onClick={() => setDateButtons((prev) => [...prev, { kind: "preset", preset: p as DateButtonPreset }])}
+                        className={pillClasses(false)}
+                      >
+                        + {dateButtonLabel({ kind: "preset", preset: p as DateButtonPreset })}
+                      </button>
+                    ))}
+                  </div>
                   <div className="flex flex-wrap items-center gap-1.5">
                     <input
-                      type="text"
-                      value={customButtonLabel}
-                      onChange={(e) => setCustomButtonLabel(e.target.value)}
-                      placeholder="Label (e.g. July)"
-                      maxLength={20}
-                      className={selectClasses + " w-28"}
+                      type="number"
+                      min={0}
+                      max={widgetScopeDays === Infinity ? 3650 : widgetScopeDays}
+                      value={customButtonDays}
+                      onChange={(e) => setCustomButtonDays(e.target.value)}
+                      placeholder="e.g. 5"
+                      className={selectClasses + " w-20"}
                     />
-                    <input
-                      type="date"
-                      value={customButtonStart}
-                      onChange={(e) => setCustomButtonStart(e.target.value)}
-                      className={selectClasses}
-                    />
-                    <span className="text-xs text-zinc-500">to</span>
-                    <input
-                      type="date"
-                      value={customButtonEnd}
-                      onChange={(e) => setCustomButtonEnd(e.target.value)}
-                      className={selectClasses}
-                    />
+                    <span className="text-xs text-zinc-500">days ago</span>
                     <button
                       type="button"
-                      onClick={addCustomDateButton}
-                      disabled={!customButtonLabel.trim() || !customButtonStart || !customButtonEnd}
+                      onClick={addCustomDaysButton}
+                      disabled={
+                        !customButtonDays.trim() ||
+                        !Number.isInteger(Number(customButtonDays)) ||
+                        Number(customButtonDays) < 0 ||
+                        Number(customButtonDays) > widgetScopeDays
+                      }
                       className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
                     >
                       Add
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setAddingCustomButton(false)}
-                      className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
-                    >
-                      Cancel
-                    </button>
                   </div>
-                ) : (
-                  <button type="button" onClick={() => setAddingCustomButton(true)} className={pillClasses(false)}>
-                    + Custom range…
-                  </button>
-                )}
+                </div>
+
+                <div className="flex flex-col gap-1 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
+                  <span className="text-[11px] text-zinc-500">Fixed — an exact range, independent of the scope above</span>
+                  {addingCustomButton ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <input
+                        type="text"
+                        value={customButtonLabel}
+                        onChange={(e) => setCustomButtonLabel(e.target.value)}
+                        placeholder="Label (e.g. July)"
+                        maxLength={20}
+                        className={selectClasses + " w-28"}
+                      />
+                      <input
+                        type="date"
+                        value={customButtonStart}
+                        onChange={(e) => setCustomButtonStart(e.target.value)}
+                        className={selectClasses}
+                      />
+                      <span className="text-xs text-zinc-500">to</span>
+                      <input
+                        type="date"
+                        value={customButtonEnd}
+                        onChange={(e) => setCustomButtonEnd(e.target.value)}
+                        className={selectClasses}
+                      />
+                      <button
+                        type="button"
+                        onClick={addCustomDateButton}
+                        disabled={!customButtonLabel.trim() || !customButtonStart || !customButtonEnd}
+                        className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
+                      >
+                        Add
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAddingCustomButton(false)}
+                        className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => setAddingCustomButton(true)} className={pillClasses(false)}>
+                      + Custom range…
+                    </button>
+                  )}
+                </div>
               </>
             )}
           </div>

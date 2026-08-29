@@ -102,6 +102,11 @@ export const DATE_BUTTON_PRESETS = ["1m", "3m", "6m", "1y", "ytd", "all"] as con
 export type DateButtonPreset = (typeof DATE_BUTTON_PRESETS)[number];
 const dateButtonSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("preset"), preset: z.enum(DATE_BUTTON_PRESETS) }),
+  // A fluid "N days ago" button the user typed a custom N for — same idea
+  // as the main Date filter's relativeDays mode, just scoped to this one
+  // button rather than the whole widget. Recomputed from today at click
+  // time (see Widget.tsx's dateButtonRange), never a frozen date.
+  z.object({ kind: z.literal("relativeDays"), days: z.number().int().min(0).max(3650) }),
   z.object({
     kind: z.literal("custom"),
     label: z.string().trim().min(1).max(20),
