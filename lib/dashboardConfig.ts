@@ -138,6 +138,21 @@ export const GRADIENT_PRESETS = [
   { label: "Green scale", from: "#d1fae5", to: "#065f46" },
 ] as const;
 
+// Line/area stroke — a strokeDasharray preset, not a raw string, so a saved
+// config can't carry an arbitrary dasharray value (keeps the render surface
+// small and the editor's picker exhaustive). The actual dash values live
+// next to the rendering code (components/dashboards/Widget.tsx), not here —
+// this file only validates which named styles are allowed.
+export const LINE_STYLES = ["solid", "dashed", "dotted", "dashDot", "longDash"] as const;
+export type LineStyle = (typeof LINE_STYLES)[number];
+
+// Bar/pie/histogram/area-fill shape fill — solid color or a repeating SVG
+// pattern (rendered via <defs> in Widget.tsx, one pattern per distinct
+// point color so multi-category charts still read by color, not just
+// texture).
+export const FILL_PATTERNS = ["solid", "dots", "diagonalLinesRight", "diagonalLinesLeft", "crossHatch", "horizontalLines", "verticalLines"] as const;
+export type FillPattern = (typeof FILL_PATTERNS)[number];
+
 const chartConfigSchema = z.object({
   dataSource: z.literal("transactions"), // only value today — explicit for future data sources
   metric: z.enum(METRICS),
@@ -166,6 +181,11 @@ const chartConfigSchema = z.object({
   // without an entry keeps the default categorical palette.
   colorOverrides: z.record(z.string(), z.string().regex(HEX)).optional(),
   gradient: z.object({ from: z.string().regex(HEX), to: z.string().regex(HEX) }).optional(),
+  // Style, below Color in the editor — line/area stroke dash pattern, and
+  // bar/histogram/pie/area-fill texture. Independent of color: a config can
+  // set either, both, or neither.
+  lineStyle: z.enum(LINE_STYLES).optional(),
+  fillPattern: z.enum(FILL_PATTERNS).optional(),
   // Renders a small quick-range button row on the tile itself — on the
   // live dashboard, not just the editor — that overrides dateRange for
   // that viewer's session only (re-fetches via the same preview endpoint

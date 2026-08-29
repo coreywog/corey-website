@@ -17,10 +17,29 @@ import {
   HistogramIcon,
   CalendarIcon,
 } from "./icons";
-import { Widget, dateButtonLabel, dateButtonKey, dateButtonPresetDays, type WidgetWithData } from "./Widget";
+import {
+  Widget,
+  dateButtonLabel,
+  dateButtonKey,
+  dateButtonPresetDays,
+  LINE_STYLE_DASH,
+  FillPatternDefs,
+  resolveFill,
+  type WidgetWithData,
+} from "./Widget";
 import type { CalculatedMetricOption } from "./DashboardTabs";
-import type { WidgetConfig, ChartWidgetConfig, WidgetType, Metric, GroupBy, DateButtonConfig, DateButtonPreset } from "@/lib/dashboardConfig";
-import { WIDGET_COLORS, AXIS_X_POSITIONS, AXIS_Y_POSITIONS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS } from "@/lib/dashboardConfig";
+import type {
+  WidgetConfig,
+  ChartWidgetConfig,
+  WidgetType,
+  Metric,
+  GroupBy,
+  DateButtonConfig,
+  DateButtonPreset,
+  LineStyle,
+  FillPattern,
+} from "@/lib/dashboardConfig";
+import { WIDGET_COLORS, AXIS_X_POSITIONS, AXIS_Y_POSITIONS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS, LINE_STYLES, FILL_PATTERNS } from "@/lib/dashboardConfig";
 
 type CategoryOption = { category: string; subcategory: string };
 type Account = { id: string; name: string };
@@ -150,6 +169,24 @@ const RELATIVE_DAY_OPTIONS = [
   { label: "30 days ago", days: 30 },
 ] as const;
 
+const LINE_STYLE_LABELS: Record<LineStyle, string> = {
+  solid: "Solid",
+  dashed: "Dashed",
+  dotted: "Dotted",
+  dashDot: "Dash-dot",
+  longDash: "Long dash",
+};
+
+const FILL_PATTERN_LABELS: Record<FillPattern, string> = {
+  solid: "Solid",
+  dots: "Dots",
+  diagonalLinesRight: "Diagonal ↗",
+  diagonalLinesLeft: "Diagonal ↘",
+  crossHatch: "Cross-hatch",
+  horizontalLines: "Horizontal",
+  verticalLines: "Vertical",
+};
+
 /**
  * Add/edit panel for one widget — a left-side drawer, not a centered modal.
  * Laid out as two columns once a type is picked: data sources on the left,
@@ -241,6 +278,11 @@ export function WidgetEditorPanel({
   const [batchHexDraft, setBatchHexDraft] = useState("");
   const [gradientFrom, setGradientFrom] = useState(chartConfig?.gradient?.from ?? GRADIENT_PRESETS[0].from);
   const [gradientTo, setGradientTo] = useState(chartConfig?.gradient?.to ?? GRADIENT_PRESETS[0].to);
+  // Style — below Color: line/area stroke dash pattern, and bar/histogram/
+  // pie/stackedBar/area-fill texture. Independent of which color mode (or
+  // none) is active above.
+  const [lineStyle, setLineStyle] = useState<LineStyle>(chartConfig?.lineStyle ?? "solid");
+  const [fillPattern, setFillPattern] = useState<FillPattern>(chartConfig?.fillPattern ?? "solid");
 
   function togglePointSelected(key: string) {
     setSelectedPointKeys((prev) => {
@@ -457,6 +499,11 @@ export function WidgetEditorPanel({
   // visual element at once. Mutually exclusive with showColor by type (a
   // widget is never both).
   const showMultiColor = type === "bar" || isHistogram || type === "pie" || type === "table";
+  // Style section, below Color/Colors — line stroke dash pattern (line/area
+  // only) and shape fill texture (anything with a solid fill to texture;
+  // table/stat/calendar/scatter don't have one worth theming this way).
+  const showLineStyle = type === "line" || type === "area";
+  const showFillPattern = type === "bar" || isHistogram || type === "pie" || isStackedBar || type === "area";
   // Every account explicitly checked, individually, one at a time — not the
   // same as an empty selection (which means "no filter, use the same
   // cash-flow-account default every other page uses"). Selecting every
@@ -484,12 +531,12 @@ export function WidgetEditorPanel({
               : `Last ${relativeMonths} month${relativeMonths === 1 ? "" : "s"}`;
 
   // How many days this widget's own configured Date filter actually spans
-  // — used below to decide which quick-range buttons make sense to offer
-  // on the tile. A widget already narrowed to "2 days ago" has nothing
-  // wider to view within it, so a "6 months" button would just be a dead
-  // end (see the Quick-range buttons section). allTime/an open-ended
-  // custom range are unbounded; "specific" (legacy one-month widgets) is
-  // treated as ~1 month.
+  // — used below to decide which Date focus buttons make sense to offer on
+  // the tile. A widget already narrowed to "2 days ago" has nothing wider
+  // to view within it, so a "6 months" button would just be a dead end
+  // (see the Date focus buttons section). allTime/an open-ended custom
+  // range are unbounded; "specific" (legacy one-month widgets) is treated
+  // as ~1 month.
   const widgetScopeDays = useMemo(() => {
     switch (dateMode) {
       case "relativeDays":
@@ -579,6 +626,8 @@ export function WidgetEditorPanel({
       ...(showColor && color ? { color } : {}),
       ...(showMultiColor && colorMode === "gradient" ? { gradient: { from: gradientFrom, to: gradientTo } } : {}),
       ...(showMultiColor && colorMode === "specific" && Object.keys(pointColors).length ? { colorOverrides: pointColors } : {}),
+      ...(showLineStyle && lineStyle !== "solid" ? { lineStyle } : {}),
+      ...(showFillPattern && fillPattern !== "solid" ? { fillPattern } : {}),
       ...(dateButtons.length ? { dateButtons } : {}),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
@@ -614,6 +663,8 @@ export function WidgetEditorPanel({
     pointColors,
     gradientFrom,
     gradientTo,
+    lineStyle,
+    fillPattern,
     dateButtons,
   ]);
 
@@ -651,7 +702,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, dateButtons]);
+  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, dateButtons]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -1451,13 +1502,8 @@ export function WidgetEditorPanel({
 
         {typeChosen && !isText && (
           <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
-            <span className={labelClasses}>Quick-range buttons on the tile (optional)</span>
-            <p className="text-[11px] text-zinc-500">
-              Shown next to the title on the live dashboard so a viewer can flip what the tile is
-              showing without opening the editor — this only changes the view, it doesn&apos;t touch the
-              Date filter set on the left. Works the same fixed/fluid way as that filter, just scoped
-              to what actually fits inside it.
-            </p>
+            <span className={labelClasses}>Date focus buttons</span>
+            <p className="text-[11px] text-zinc-500">Date focus buttons.</p>
 
             {dateButtons.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
@@ -1809,6 +1855,65 @@ export function WidgetEditorPanel({
                     className="h-5 flex-1 rounded-md"
                     style={{ background: `linear-gradient(to right, ${gradientFrom}, ${gradientTo})` }}
                   />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {typeChosen && (showLineStyle || showFillPattern) && (
+          <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+            <span className={labelClasses}>Style</span>
+
+            {showLineStyle && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[11px] text-zinc-500">Line style</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {LINE_STYLES.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setLineStyle(s)}
+                      className={
+                        "flex items-center gap-2 rounded-lg border-2 px-2.5 py-1.5 text-xs font-medium transition-colors " +
+                        (lineStyle === s
+                          ? "border-zinc-900 bg-zinc-900/[.04] text-zinc-900 dark:border-zinc-50 dark:bg-zinc-50/[.08] dark:text-zinc-50 creamsicle:border-orange-600 creamsicle:bg-orange-50 creamsicle:text-orange-900"
+                          : "border-black/[.1] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]")
+                      }
+                    >
+                      <svg width="26" height="10" viewBox="0 0 26 10" aria-hidden className="shrink-0">
+                        <line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={LINE_STYLE_DASH[s]} />
+                      </svg>
+                      {LINE_STYLE_LABELS[s]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {showFillPattern && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-[11px] text-zinc-500">Fill pattern</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {FILL_PATTERNS.map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setFillPattern(p)}
+                      className={
+                        "flex items-center gap-2 rounded-lg border-2 px-2.5 py-1.5 text-xs font-medium transition-colors " +
+                        (fillPattern === p
+                          ? "border-zinc-900 bg-zinc-900/[.04] text-zinc-900 dark:border-zinc-50 dark:bg-zinc-50/[.08] dark:text-zinc-50 creamsicle:border-orange-600 creamsicle:bg-orange-50 creamsicle:text-orange-900"
+                          : "border-black/[.1] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]")
+                      }
+                    >
+                      <svg width="20" height="16" viewBox="0 0 20 16" aria-hidden className="shrink-0 rounded-sm">
+                        <FillPatternDefs pattern={p} colors={["#6366f1"]} />
+                        <rect width="20" height="16" rx="2" fill={resolveFill(p, "#6366f1")} />
+                      </svg>
+                      {FILL_PATTERN_LABELS[p]}
+                    </button>
+                  ))}
                 </div>
               </div>
             )}

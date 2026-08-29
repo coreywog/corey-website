@@ -21,7 +21,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
-import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern } from "@/lib/dashboardConfig";
 
 export type WidgetWithData = {
   id: string;
@@ -71,14 +71,106 @@ function axisLabelProp(axisLabels: AxisLabels | undefined, axis: "x" | "y") {
   };
 }
 
+/** strokeDasharray values behind each named line style — kept out of the
+ * zod schema (lib/dashboardConfig.ts only validates the name) so the saved
+ * config can't carry an arbitrary dasharray string. Exported so the editor's
+ * own line-style swatches render the exact same dash pattern as the chart
+ * will, rather than a second hand-tuned approximation. */
+export const LINE_STYLE_DASH: Record<LineStyle, string | undefined> = {
+  solid: undefined,
+  dashed: "8 5",
+  dotted: "2 4",
+  dashDot: "9 4 2 4",
+  longDash: "14 6",
+};
+
+/** Stable id for a (pattern, color) pair's <pattern> def — one per distinct
+ * color actually in use, so a multi-category chart still reads by color
+ * even once every bar shares the same texture. Exported so the editor's
+ * preview swatches (WidgetEditorPanel) reference the same defs. */
+export function fillPatternId(pattern: FillPattern, color: string): string {
+  return `fill-${pattern}-${color.replace("#", "")}`;
+}
+
+/** What to actually pass as a shape's `fill` — the raw color for "solid",
+ * or a reference into the <defs> block a FillPatternDefs renders alongside
+ * it for anything else. */
+export function resolveFill(pattern: FillPattern | undefined, color: string): string {
+  if (!pattern || pattern === "solid") return color;
+  return `url(#${fillPatternId(pattern, color)})`;
+}
+
+/** Renders one <pattern> per distinct color for the chosen texture — sits
+ * inside the chart's own <defs>, right next to the shapes that reference
+ * it via resolveFill/fillPatternId. No-op for "solid" (nothing to define).
+ * Exported so the editor's Style section can render true-to-life preview
+ * swatches off the exact same pattern defs, not a hand-drawn approximation. */
+export function FillPatternDefs({ pattern, colors }: { pattern: FillPattern | undefined; colors: string[] }) {
+  if (!pattern || pattern === "solid") return null;
+  const unique = [...new Set(colors)];
+  return (
+    <defs>
+      {unique.map((c) => {
+        const id = fillPatternId(pattern, c);
+        switch (pattern) {
+          case "dots":
+            return (
+              <pattern key={id} id={id} width={7} height={7} patternUnits="userSpaceOnUse">
+                <rect width={7} height={7} fill={c} fillOpacity={0.18} />
+                <circle cx={3.5} cy={3.5} r={1.4} fill={c} />
+              </pattern>
+            );
+          case "diagonalLinesRight":
+            return (
+              <pattern key={id} id={id} width={7} height={7} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                <rect width={7} height={7} fill={c} fillOpacity={0.18} />
+                <line x1={0} y1={0} x2={0} y2={7} stroke={c} strokeWidth={3} />
+              </pattern>
+            );
+          case "diagonalLinesLeft":
+            return (
+              <pattern key={id} id={id} width={7} height={7} patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
+                <rect width={7} height={7} fill={c} fillOpacity={0.18} />
+                <line x1={0} y1={0} x2={0} y2={7} stroke={c} strokeWidth={3} />
+              </pattern>
+            );
+          case "crossHatch":
+            return (
+              <pattern key={id} id={id} width={7} height={7} patternUnits="userSpaceOnUse">
+                <rect width={7} height={7} fill={c} fillOpacity={0.18} />
+                <path d="M0,0 L7,7 M7,0 L0,7" stroke={c} strokeWidth={1.4} />
+              </pattern>
+            );
+          case "horizontalLines":
+            return (
+              <pattern key={id} id={id} width={7} height={7} patternUnits="userSpaceOnUse">
+                <rect width={7} height={7} fill={c} fillOpacity={0.18} />
+                <line x1={0} y1={3.5} x2={7} y2={3.5} stroke={c} strokeWidth={2} />
+              </pattern>
+            );
+          case "verticalLines":
+            return (
+              <pattern key={id} id={id} width={7} height={7} patternUnits="userSpaceOnUse">
+                <rect width={7} height={7} fill={c} fillOpacity={0.18} />
+                <line x1={3.5} y1={0} x2={3.5} y2={7} stroke={c} strokeWidth={2} />
+              </pattern>
+            );
+        }
+      })}
+    </defs>
+  );
+}
+
 function LineWidget({
   points,
   axisLabels,
   color,
+  lineStyle,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
   color?: string;
+  lineStyle?: LineStyle;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
@@ -102,7 +194,15 @@ function LineWidget({
           label={axisLabelProp(axisLabels, "y")}
         />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
-        <Line type="monotone" dataKey="value" stroke={color ?? "#6366f1"} strokeWidth={2} dot={false} isAnimationActive={false} />
+        <Line
+          type="monotone"
+          dataKey="value"
+          stroke={color ?? "#6366f1"}
+          strokeWidth={2}
+          strokeDasharray={LINE_STYLE_DASH[lineStyle ?? "solid"]}
+          dot={false}
+          isAnimationActive={false}
+        />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -112,16 +212,21 @@ function AreaWidget({
   points,
   axisLabels,
   color,
+  lineStyle,
+  fillPattern,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
   color?: string;
+  lineStyle?: LineStyle;
+  fillPattern?: FillPattern;
 }) {
   if (points.length === 0) return <EmptyState />;
   const fill = color ?? "#6366f1";
   return (
     <ResponsiveContainer width="100%" height="100%">
       <AreaChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
+        <FillPatternDefs pattern={fillPattern} colors={[fill]} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
@@ -140,17 +245,35 @@ function AreaWidget({
           label={axisLabelProp(axisLabels, "y")}
         />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
-        <Area type="monotone" dataKey="value" stroke={fill} strokeWidth={2} fill={fill} fillOpacity={0.2} isAnimationActive={false} />
+        <Area
+          type="monotone"
+          dataKey="value"
+          stroke={fill}
+          strokeWidth={2}
+          strokeDasharray={LINE_STYLE_DASH[lineStyle ?? "solid"]}
+          fill={resolveFill(fillPattern, fill)}
+          fillOpacity={fillPattern && fillPattern !== "solid" ? 1 : 0.2}
+          isAnimationActive={false}
+        />
       </AreaChart>
     </ResponsiveContainer>
   );
 }
 
-function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabels?: AxisLabels }) {
+function BarWidget({
+  points,
+  axisLabels,
+  fillPattern,
+}: {
+  points: AggregatedPoint[];
+  axisLabels?: AxisLabels;
+  fillPattern?: FillPattern;
+}) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 28 : 16 }}>
+        <FillPatternDefs pattern={fillPattern} colors={points.map((p) => p.color)} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
@@ -174,7 +297,7 @@ function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabe
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Bar dataKey="value" isAnimationActive={false}>
           {points.map((p) => (
-            <Cell key={p.key} fill={p.color} />
+            <Cell key={p.key} fill={resolveFill(fillPattern, p.color)} />
           ))}
         </Bar>
       </BarChart>
@@ -182,11 +305,20 @@ function BarWidget({ points, axisLabels }: { points: AggregatedPoint[]; axisLabe
   );
 }
 
-function StackedBarWidget({ points, series }: { points: StackedPoint[]; series: StackedSeries[] }) {
+function StackedBarWidget({
+  points,
+  series,
+  fillPattern,
+}: {
+  points: StackedPoint[];
+  series: StackedSeries[];
+  fillPattern?: FillPattern;
+}) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: 28 }}>
+        <FillPatternDefs pattern={fillPattern} colors={series.map((s) => s.color)} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis dataKey="x" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} interval={0} angle={-20} textAnchor="end" height={40} />
         <YAxis
@@ -199,22 +331,23 @@ function StackedBarWidget({ points, series }: { points: StackedPoint[]; series: 
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Legend wrapperStyle={{ fontSize: 11 }} />
         {series.map((s) => (
-          <Bar key={s.key} dataKey={s.key} name={s.label} stackId="stack" fill={s.color} isAnimationActive={false} />
+          <Bar key={s.key} dataKey={s.key} name={s.label} stackId="stack" fill={resolveFill(fillPattern, s.color)} isAnimationActive={false} />
         ))}
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
-function PieWidget({ points }: { points: AggregatedPoint[] }) {
+function PieWidget({ points, fillPattern }: { points: AggregatedPoint[]; fillPattern?: FillPattern }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <PieChart>
+        <FillPatternDefs pattern={fillPattern} colors={points.map((p) => p.color)} />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Pie data={points} dataKey="value" nameKey="label" innerRadius="45%" outerRadius="80%" isAnimationActive={false}>
           {points.map((p) => (
-            <Cell key={p.key} fill={p.color} />
+            <Cell key={p.key} fill={resolveFill(fillPattern, p.color)} />
           ))}
         </Pie>
       </PieChart>
@@ -563,21 +696,27 @@ export function Widget({ widget }: { widget: WidgetWithData }) {
         ) : result.kind === "scatter" ? (
           <ScatterWidget points={result.points} axisLabels={chartConfig?.axisLabels} />
         ) : result.kind === "stacked" ? (
-          <StackedBarWidget points={result.points} series={result.series} />
+          <StackedBarWidget points={result.points} series={result.series} fillPattern={chartConfig?.fillPattern} />
         ) : result.kind === "stat" ? (
           <StatWidget result={result} color={chartConfig?.color} />
         ) : widget.type === "bar" || widget.type === "histogram" ? (
-          <BarWidget points={result.points} axisLabels={chartConfig?.axisLabels} />
+          <BarWidget points={result.points} axisLabels={chartConfig?.axisLabels} fillPattern={chartConfig?.fillPattern} />
         ) : widget.type === "pie" ? (
-          <PieWidget points={result.points} />
+          <PieWidget points={result.points} fillPattern={chartConfig?.fillPattern} />
         ) : widget.type === "table" ? (
           <TableWidget points={result.points} />
         ) : widget.type === "calendar" ? (
           <CalendarWidget points={result.points} color={chartConfig?.color} />
         ) : widget.type === "area" ? (
-          <AreaWidget points={result.points} axisLabels={chartConfig?.axisLabels} color={chartConfig?.color} />
+          <AreaWidget
+            points={result.points}
+            axisLabels={chartConfig?.axisLabels}
+            color={chartConfig?.color}
+            lineStyle={chartConfig?.lineStyle}
+            fillPattern={chartConfig?.fillPattern}
+          />
         ) : (
-          <LineWidget points={result.points} axisLabels={chartConfig?.axisLabels} color={chartConfig?.color} />
+          <LineWidget points={result.points} axisLabels={chartConfig?.axisLabels} color={chartConfig?.color} lineStyle={chartConfig?.lineStyle} />
         )}
       </div>
     </div>
