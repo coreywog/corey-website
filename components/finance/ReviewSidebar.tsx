@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { formatCategoryLabel } from "@/lib/finance";
 import type { ReviewCategoryNode } from "@/lib/finance";
+import { CategoryReassignPanel } from "./CategoryReassignPanel";
 
 function Badge({ count }: { count: number }) {
   if (count === 0) return null;
@@ -29,6 +30,15 @@ export function ReviewSidebar({
 
   const [expanded, setExpanded] = useState<Set<string>>(
     () => new Set(selectedCategory ? [selectedCategory] : []),
+  );
+  // Which node's "move/delete" panel is currently open — null means none.
+  // Keyed as "category" or "category::subcategory" rather than an object so
+  // a plain string equality check is enough.
+  const [managingKey, setManagingKey] = useState<string | null>(null);
+
+  const categoryOptions = useMemo(
+    () => tree.flatMap((node) => node.subcategories.map((s) => ({ category: node.category, subcategory: s.subcategory }))),
+    [tree],
   );
 
   function toggle(category: string) {
@@ -66,9 +76,11 @@ export function ReviewSidebar({
         {tree.map((node) => {
           const isExpanded = expanded.has(node.category) || selectedCategory === node.category;
           const isCategoryActive = selectedCategory === node.category && !selectedSubcategory;
+          const categoryKey = node.category;
+          const categoryTotal = node.needsReview + node.approved;
           return (
             <div key={node.category}>
-              <div className="flex items-center gap-0.5">
+              <div className="group flex items-center gap-0.5">
                 <button
                   type="button"
                   onClick={() => toggle(node.category)}
@@ -84,25 +96,68 @@ export function ReviewSidebar({
                   {formatCategoryLabel(node.category)}
                   <Badge count={node.needsReview} />
                 </Link>
+                <button
+                  type="button"
+                  onClick={() => setManagingKey((prev) => (prev === categoryKey ? null : categoryKey))}
+                  title="Move or delete this category"
+                  className="shrink-0 rounded px-1 text-xs text-zinc-400 opacity-0 hover:bg-black/[.06] hover:text-zinc-700 group-hover:opacity-100 dark:hover:bg-white/[.1] dark:hover:text-zinc-200"
+                >
+                  ⋯
+                </button>
               </div>
+              {managingKey === categoryKey && (
+                <CategoryReassignPanel
+                  source={{ category: node.category }}
+                  label={formatCategoryLabel(node.category)}
+                  count={categoryTotal}
+                  categoryOptions={categoryOptions.filter((c) => c.category !== node.category)}
+                  onDone={() => setManagingKey(null)}
+                  onCancel={() => setManagingKey(null)}
+                />
+              )}
               {isExpanded && (
                 <div className="ml-5 flex flex-col gap-0.5">
                   {node.subcategories.map((sub) => {
                     const isSubActive =
                       selectedCategory === node.category && selectedSubcategory === sub.subcategory;
+                    const subKey = `${node.category}::${sub.subcategory}`;
+                    const subTotal = sub.needsReview + sub.approved;
                     return (
-                      <Link
-                        key={sub.subcategory}
-                        href={
-                          isSubActive
-                            ? `${pathname}?category=${node.category}`
-                            : `${pathname}?category=${node.category}&subcategory=${sub.subcategory}`
-                        }
-                        className={linkClasses(isSubActive, true)}
-                      >
-                        {formatCategoryLabel(sub.subcategory)}
-                        <Badge count={sub.needsReview} />
-                      </Link>
+                      <div key={sub.subcategory}>
+                        <div className="group flex items-center gap-0.5">
+                          <Link
+                            href={
+                              isSubActive
+                                ? `${pathname}?category=${node.category}`
+                                : `${pathname}?category=${node.category}&subcategory=${sub.subcategory}`
+                            }
+                            className={linkClasses(isSubActive, true)}
+                          >
+                            {formatCategoryLabel(sub.subcategory)}
+                            <Badge count={sub.needsReview} />
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => setManagingKey((prev) => (prev === subKey ? null : subKey))}
+                            title="Move or delete this subcategory"
+                            className="shrink-0 rounded px-1 text-xs text-zinc-400 opacity-0 hover:bg-black/[.06] hover:text-zinc-700 group-hover:opacity-100 dark:hover:bg-white/[.1] dark:hover:text-zinc-200"
+                          >
+                            ⋯
+                          </button>
+                        </div>
+                        {managingKey === subKey && (
+                          <CategoryReassignPanel
+                            source={{ category: node.category, subcategory: sub.subcategory }}
+                            label={`${formatCategoryLabel(node.category)} / ${formatCategoryLabel(sub.subcategory)}`}
+                            count={subTotal}
+                            categoryOptions={categoryOptions.filter(
+                              (c) => !(c.category === node.category && c.subcategory === sub.subcategory),
+                            )}
+                            onDone={() => setManagingKey(null)}
+                            onCancel={() => setManagingKey(null)}
+                          />
+                        )}
+                      </div>
                     );
                   })}
                 </div>

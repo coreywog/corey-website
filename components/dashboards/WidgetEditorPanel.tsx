@@ -17,9 +17,9 @@ import {
   HistogramIcon,
   CalendarIcon,
 } from "./icons";
-import { Widget, type WidgetWithData } from "./Widget";
-import type { WidgetConfig, ChartWidgetConfig, WidgetType, Metric, GroupBy } from "@/lib/dashboardConfig";
-import { WIDGET_COLORS, AXIS_X_POSITIONS, AXIS_Y_POSITIONS } from "@/lib/dashboardConfig";
+import { Widget, dateButtonLabel, dateButtonKey, type WidgetWithData } from "./Widget";
+import type { WidgetConfig, ChartWidgetConfig, WidgetType, Metric, GroupBy, DateButtonConfig, DateButtonPreset } from "@/lib/dashboardConfig";
+import { WIDGET_COLORS, AXIS_X_POSITIONS, AXIS_Y_POSITIONS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS } from "@/lib/dashboardConfig";
 
 type CategoryOption = { category: string; subcategory: string };
 type Account = { id: string; name: string };
@@ -114,6 +114,21 @@ function formatMonthValue(value: string): string | null {
   return new Date(`${value}-01T00:00:00.000Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 }
 
+// Quick fills for the custom range's start date — computed fresh at click
+// time (not stored), so "Yesterday" always means yesterday relative to
+// whenever the widget is actually being edited.
+const RELATIVE_DATE_SHORTCUTS = [
+  { label: "Today", daysAgo: 0 },
+  { label: "Yesterday", daysAgo: 1 },
+  { label: "2 days ago", daysAgo: 2 },
+  { label: "7 days ago", daysAgo: 7 },
+  { label: "30 days ago", daysAgo: 30 },
+] as const;
+
+function relativeDateString(daysAgo: number): string {
+  return new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+}
+
 /**
  * Add/edit panel for one widget — a left-side drawer, not a centered modal.
  * Laid out as two columns once a type is picked: data sources on the left,
@@ -191,6 +206,42 @@ export function WidgetEditorPanel({
     }
   });
 
+  // Per-point coloring for bar/histogram/pie/table — the "Specific Colors"/
+  // "Gradients" cards below. Mutually exclusive: switching cards doesn't
+  // discard the other mode's data (so flipping back and forth doesn't lose
+  // work), only which one actually lands in the saved config.
+  const [colorMode, setColorMode] = useState<"none" | "specific" | "gradient">(
+    chartConfig?.gradient ? "gradient" : chartConfig?.colorOverrides && Object.keys(chartConfig.colorOverrides).length > 0 ? "specific" : "none",
+  );
+  const [pointColors, setPointColors] = useState<Record<string, string>>(chartConfig?.colorOverrides ?? {});
+  const [selectedPointKeys, setSelectedPointKeys] = useState<Set<string>>(new Set());
+  const [batchHexDraft, setBatchHexDraft] = useState("");
+  const [gradientFrom, setGradientFrom] = useState(chartConfig?.gradient?.from ?? GRADIENT_PRESETS[0].from);
+  const [gradientTo, setGradientTo] = useState(chartConfig?.gradient?.to ?? GRADIENT_PRESETS[0].to);
+
+  function togglePointSelected(key: string) {
+    setSelectedPointKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function applyColorToSelected(hex: string) {
+    if (selectedPointKeys.size === 0) return;
+    setPointColors((prev) => {
+      const next = { ...prev };
+      for (const key of selectedPointKeys) next[key] = hex;
+      return next;
+    });
+  }
+
+  function resetPointColors() {
+    setPointColors({});
+    setSelectedPointKeys(new Set());
+  }
+
   function pickColor(next: string) {
     setColor(next);
     setHexDraft(next);
@@ -209,6 +260,30 @@ export function WidgetEditorPanel({
     setColor(undefined);
     setHexDraft("");
   }
+
+  function moveDateButton(index: number, dir: -1 | 1) {
+    setDateButtons((prev) => {
+      const target = index + dir;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
+  function removeDateButton(index: number) {
+    setDateButtons((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function addCustomDateButton() {
+    const label = customButtonLabel.trim();
+    if (!label || !customButtonStart || !customButtonEnd) return;
+    setDateButtons((prev) => [...prev, { kind: "custom", label, start: customButtonStart, end: customButtonEnd }]);
+    setCustomButtonLabel("");
+    setCustomButtonStart("");
+    setCustomButtonEnd("");
+    setAddingCustomButton(false);
+  }
   const [metric, setMetric] = useState<Metric>(chartConfig?.metric ?? "spendingTotal");
   const [groupBy, setGroupBy] = useState<GroupBy | "">(chartConfig?.groupBy ?? "merchantCategory");
   const [dateMode, setDateMode] = useState<DateRangeMode>(chartConfig?.dateRange.mode ?? "relative");
@@ -221,7 +296,16 @@ export function WidgetEditorPanel({
   const [customStart, setCustomStart] = useState(
     chartConfig?.dateRange.mode === "custom" ? chartConfig.dateRange.start : "",
   );
-  const [customEnd, setCustomEnd] = useState(chartConfig?.dateRange.mode === "custom" ? chartConfig.dateRange.end : "");
+  const [customEnd, setCustomEnd] = useState(
+    chartConfig?.dateRange.mode === "custom" ? (chartConfig.dateRange.end ?? "") : "",
+  );
+  // No end date at all (rather than just an empty field) means open-ended —
+  // always through "now", so newly-synced transactions keep showing up
+  // without ever needing to bump a fixed end date. See lib/finance.ts's
+  // resolveDateRange.
+  const [openEnded, setOpenEnded] = useState(
+    chartConfig?.dateRange.mode === "custom" && !chartConfig.dateRange.end,
+  );
   const [accountIds, setAccountIds] = useState<string[]>(chartConfig?.filters?.accountIds ?? []);
   const [merchantCategories, setMerchantCategories] = useState<string[]>(chartConfig?.filters?.merchantCategories ?? []);
   const [merchantSubcategories, setMerchantSubcategories] = useState<string[]>(
@@ -244,7 +328,11 @@ export function WidgetEditorPanel({
     chartConfig?.axisLabels?.yPosition ?? "insideLeft",
   );
   const [axisFontSize, setAxisFontSize] = useState(chartConfig?.axisLabels?.fontSize ?? 11);
-  const [showDateButtons, setShowDateButtons] = useState(chartConfig?.showDateButtons ?? false);
+  const [dateButtons, setDateButtons] = useState<DateButtonConfig[]>(chartConfig?.dateButtons ?? []);
+  const [addingCustomButton, setAddingCustomButton] = useState(false);
+  const [customButtonLabel, setCustomButtonLabel] = useState("");
+  const [customButtonStart, setCustomButtonStart] = useState("");
+  const [customButtonEnd, setCustomButtonEnd] = useState("");
 
   const [preview, setPreview] = useState<WidgetWithData["result"] | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -280,6 +368,10 @@ export function WidgetEditorPanel({
   const showTransactionCategoryFilter = metric === "net" || metric === "transactionCount";
   const showAxisLabels = type === "line" || type === "area" || type === "bar" || isScatter || isHistogram;
   const showColor = type === "line" || type === "area" || type === "stat" || isCalendar;
+  // The other coloring mode — per-point, for chart types with more than one
+  // visual element at once. Mutually exclusive with showColor by type (a
+  // widget is never both).
+  const showMultiColor = type === "bar" || isHistogram || type === "pie" || type === "table";
   // Every account explicitly checked, individually, one at a time — not the
   // same as an empty selection (which means "no filter, use the same
   // cash-flow-account default every other page uses"). Selecting every
@@ -301,7 +393,7 @@ export function WidgetEditorPanel({
     }
     if (needsGroupBy && !groupBy) return null;
     if (dateMode === "specific" && !specificMonth) return null;
-    if (dateMode === "custom" && (!customStart || !customEnd)) return null;
+    if (dateMode === "custom" && (!customStart || (!openEnded && !customEnd))) return null;
 
     const dateRange: ChartWidgetConfig["dateRange"] =
       dateMode === "allTime"
@@ -309,7 +401,7 @@ export function WidgetEditorPanel({
         : dateMode === "specific"
           ? { mode: "specific", month: specificMonth }
           : dateMode === "custom"
-            ? { mode: "custom", start: customStart, end: customEnd }
+            ? { mode: "custom", start: customStart, ...(openEnded ? {} : { end: customEnd }) }
             : { mode: "relative", months: relativeMonths };
 
     const filters: NonNullable<ChartWidgetConfig["filters"]> = {
@@ -341,9 +433,11 @@ export function WidgetEditorPanel({
       ...(type === "stat" ? { compareToPrevious } : {}),
       ...(axisLabels ? { axisLabels } : {}),
       ...(showColor && color ? { color } : {}),
-      ...(showDateButtons ? { showDateButtons } : {}),
+      ...(showMultiColor && colorMode === "gradient" ? { gradient: { from: gradientFrom, to: gradientTo } } : {}),
+      ...(showMultiColor && colorMode === "specific" && Object.keys(pointColors).length ? { colorOverrides: pointColors } : {}),
+      ...(dateButtons.length ? { dateButtons } : {}),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- showCategoryFilter/showLimit/showTransactionCategoryFilter/needsGroupBy/isCalendar/showAxisLabels/showColor are all derived from type/metric/groupBy, already listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showCategoryFilter/showLimit/showTransactionCategoryFilter/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
   }, [
     isText,
     text,
@@ -355,6 +449,7 @@ export function WidgetEditorPanel({
     specificMonth,
     customStart,
     customEnd,
+    openEnded,
     accountIds,
     merchantCategories,
     merchantSubcategories,
@@ -368,7 +463,11 @@ export function WidgetEditorPanel({
     yAxisPosition,
     axisFontSize,
     color,
-    showDateButtons,
+    colorMode,
+    pointColors,
+    gradientFrom,
+    gradientTo,
+    dateButtons,
   ]);
 
   // Live preview — debounced, cancels a stale in-flight request rather than
@@ -405,7 +504,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, accountIds, merchantCategories, merchantSubcategories, merchants, transactionCategory, limit, compareToPrevious, color]);
+  }, [isText, text, type, metric, groupBy, dateMode, relativeMonths, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, transactionCategory, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -419,6 +518,11 @@ export function WidgetEditorPanel({
     if (config.dataSource === "text") return { kind: "text", text: config.text };
     return preview ?? { error: previewLoading ? "Loading…" : "Fill in the fields to see a preview." };
   }, [config, isText, preview, previewLoading]);
+
+  // The live preview's own points double as the "columns to color" list in
+  // the Specific Colors card below — always in sync with whatever the
+  // current groupBy/filters actually produce, no separate fetch needed.
+  const previewPoints = "kind" in draftResult && draftResult.kind === "series" ? draftResult.points : [];
 
   // Reports the current draft up to DashboardGrid, which renders it in the
   // actual grid slot too — sizing/dragging the ghost tile still works the
@@ -555,16 +659,42 @@ export function WidgetEditorPanel({
                 <span className="text-[11px] text-zinc-500">Columns available — click one to filter by it</span>
                 {TRANSACTION_FIELDS.map((f) => {
                   const filterKey = f.name === "Category" && showCategoryFilter ? "category" : f.name === "Merchant" ? "merchant" : null;
-                  const hasActiveFilter =
+                  // Highlights the column(s) actually powering this graph
+                  // right now — Amount via whichever metric is picked (every
+                  // metric operates on it), everything else via groupBy.
+                  // Replaces the old "is this filtered?" dot: at a glance,
+                  // this shows what's *driving* the chart, not just what's
+                  // narrowing it.
+                  const isUsedInGraph =
+                    f.name === "Amount"
+                      ? true
+                      : f.name === "Date"
+                        ? groupBy === "day" || groupBy === "month"
+                        : f.name === "Merchant"
+                          ? groupBy === "merchant"
+                          : f.name === "Category"
+                            ? groupBy === "merchantCategory"
+                            : f.name === "Subcategory"
+                              ? groupBy === "merchantSubcategory"
+                              : f.name === "Account"
+                                ? groupBy === "account"
+                                : false;
+                  const hasChips =
                     f.name === "Category"
                       ? merchantCategories.length > 0 || merchantSubcategories.length > 0
                       : f.name === "Merchant"
                         ? merchants.length > 0
-                        : f.name === "Account"
-                          ? accountIds.length > 0
-                          : false;
+                        : false;
                   return (
-                    <div key={f.name}>
+                    <div
+                      key={f.name}
+                      className={
+                        "rounded " +
+                        (isUsedInGraph
+                          ? "border-l-2 border-indigo-500 bg-indigo-500/[.06] creamsicle:border-orange-500 creamsicle:bg-orange-500/[.08]"
+                          : "border-l-2 border-transparent")
+                      }
+                    >
                       <button
                         type="button"
                         disabled={!filterKey}
@@ -578,14 +708,37 @@ export function WidgetEditorPanel({
                       >
                         <span className="w-3 font-mono font-medium text-zinc-400 dark:text-zinc-500">{f.kind}</span>
                         <span className="flex-1 text-left">{f.name}</span>
-                        {/* Little dot marking a column that's actively narrowing this widget's data — a quick "what's filtered?" glance without opening every picker. */}
-                        {hasActiveFilter && (
-                          <span
-                            className="h-1.5 w-1.5 shrink-0 rounded-full bg-indigo-500 creamsicle:bg-orange-500"
-                            title="Filtered"
-                          />
-                        )}
                       </button>
+
+                      {/* Persistent, collapsed summary of this column's active
+                          filter — visible whether or not the picker itself is
+                          open, so you can see what's filtered without
+                          re-opening every column. The picker to add more
+                          still only appears while open (below). */}
+                      {hasChips && openColumnFilter !== filterKey && (
+                        <div className="flex flex-wrap gap-1 py-1 pl-5">
+                          {f.name === "Category" &&
+                            [...merchantCategories.map((c) => formatCategoryLabel(c)), ...merchantSubcategories.map((s) => formatCategoryLabel(s))].map(
+                              (label) => (
+                                <span
+                                  key={label}
+                                  className="rounded-full border border-black/[.1] px-2 py-0.5 text-[11px] text-zinc-500 dark:border-white/[.15] dark:text-zinc-400"
+                                >
+                                  {label}
+                                </span>
+                              ),
+                            )}
+                          {f.name === "Merchant" &&
+                            merchants.map((m) => (
+                              <span
+                                key={m}
+                                className="rounded-full border border-black/[.1] px-2 py-0.5 text-[11px] text-zinc-500 dark:border-white/[.15] dark:text-zinc-400"
+                              >
+                                {m}
+                              </span>
+                            ))}
+                        </div>
+                      )}
 
                       {filterKey === "category" && openColumnFilter === "category" && (
                         <div className="flex flex-col gap-1 py-1 pl-5">
@@ -854,10 +1007,117 @@ export function WidgetEditorPanel({
                   </div>
                 )}
 
-                <label className="flex items-center gap-2">
-                  <input type="checkbox" checked={showDateButtons} onChange={(e) => setShowDateButtons(e.target.checked)} />
-                  <span className="text-sm">Show date-range buttons on the tile itself</span>
-                </label>
+                <div className="flex flex-col gap-2">
+                  <span className={labelClasses}>Quick-range buttons on the tile (optional)</span>
+                  <p className="text-[11px] text-zinc-500">
+                    Shown on the live dashboard so a viewer can flip the range without opening the editor —
+                    independent of the date range set above.
+                  </p>
+
+                  {dateButtons.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {dateButtons.map((b, i) => (
+                        <span
+                          key={dateButtonKey(b)}
+                          className="flex items-center gap-1 rounded-full border border-black/[.12] px-2 py-1 text-xs dark:border-white/[.15]"
+                          title={b.kind === "custom" ? `${b.start} – ${b.end}` : undefined}
+                        >
+                          {dateButtonLabel(b)}
+                          <button
+                            type="button"
+                            onClick={() => moveDateButton(i, -1)}
+                            disabled={i === 0}
+                            className="text-zinc-400 hover:text-zinc-800 disabled:opacity-30 dark:hover:text-zinc-200"
+                            aria-label="Move earlier"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveDateButton(i, 1)}
+                            disabled={i === dateButtons.length - 1}
+                            className="text-zinc-400 hover:text-zinc-800 disabled:opacity-30 dark:hover:text-zinc-200"
+                            aria-label="Move later"
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => removeDateButton(i)}
+                            className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
+                            aria-label="Remove"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {dateButtons.length < 12 && (
+                    <>
+                      <div className="flex flex-wrap gap-1.5">
+                        {DATE_BUTTON_PRESETS.filter(
+                          (p) => !dateButtons.some((b) => b.kind === "preset" && b.preset === p),
+                        ).map((p) => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setDateButtons((prev) => [...prev, { kind: "preset", preset: p as DateButtonPreset }])}
+                            className={pillClasses(false)}
+                          >
+                            + {dateButtonLabel({ kind: "preset", preset: p as DateButtonPreset })}
+                          </button>
+                        ))}
+                      </div>
+
+                      {addingCustomButton ? (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <input
+                            type="text"
+                            value={customButtonLabel}
+                            onChange={(e) => setCustomButtonLabel(e.target.value)}
+                            placeholder="Label (e.g. July)"
+                            maxLength={20}
+                            className={selectClasses + " w-28"}
+                          />
+                          <input
+                            type="date"
+                            value={customButtonStart}
+                            onChange={(e) => setCustomButtonStart(e.target.value)}
+                            className={selectClasses}
+                          />
+                          <span className="text-xs text-zinc-500">to</span>
+                          <input
+                            type="date"
+                            value={customButtonEnd}
+                            onChange={(e) => setCustomButtonEnd(e.target.value)}
+                            className={selectClasses}
+                          />
+                          <button
+                            type="button"
+                            onClick={addCustomDateButton}
+                            disabled={!customButtonLabel.trim() || !customButtonStart || !customButtonEnd}
+                            className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
+                          >
+                            Add
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setAddingCustomButton(false)}
+                            className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => setAddingCustomButton(true)} className={pillClasses(false)}>
+                          + Custom range…
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </>
             )}
 
@@ -910,10 +1170,34 @@ export function WidgetEditorPanel({
                         </div>
                       )}
                       {dateMode === "custom" && (
-                        <div className="flex items-center gap-2">
-                          <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
-                          <span className="text-xs text-zinc-500">to</span>
-                          <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} className={selectClasses} />
+                        <div className="flex flex-col gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {RELATIVE_DATE_SHORTCUTS.map((s) => (
+                              <button
+                                key={s.label}
+                                type="button"
+                                onClick={() => setCustomStart(relativeDateString(s.daysAgo))}
+                                className="rounded-full border border-black/[.12] px-2 py-0.5 text-[11px] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                              >
+                                {s.label}
+                              </button>
+                            ))}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
+                            <span className="text-xs text-zinc-500">to</span>
+                            <input
+                              type="date"
+                              value={customEnd}
+                              onChange={(e) => setCustomEnd(e.target.value)}
+                              disabled={openEnded}
+                              className={selectClasses + (openEnded ? " opacity-40" : "")}
+                            />
+                          </div>
+                          <label className="flex items-center gap-2">
+                            <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
+                            <span className="text-sm">No end date — always include the latest data</span>
+                          </label>
                         </div>
                       )}
 
@@ -1062,6 +1346,151 @@ export function WidgetEditorPanel({
                     style={{ backgroundColor: c }}
                   />
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {typeChosen && showMultiColor && (
+          <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+            <span className={labelClasses}>Colors</span>
+
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  ["specific", "Specific Colors"],
+                  ["gradient", "Gradients"],
+                ] as const
+              ).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setColorMode((prev) => (prev === mode ? "none" : mode))}
+                  className={
+                    "rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors " +
+                    (colorMode === mode
+                      ? "border-zinc-900 bg-zinc-900/[.04] text-zinc-900 dark:border-zinc-50 dark:bg-zinc-50/[.08] dark:text-zinc-50 creamsicle:border-orange-600 creamsicle:bg-orange-50 creamsicle:text-orange-900"
+                      : "border-black/[.1] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]")
+                  }
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {colorMode === "specific" && (
+              <div className="flex flex-col gap-2">
+                <p className="text-[11px] text-zinc-500">
+                  Click one or more below, then pick a color to apply to all of them at once.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {previewPoints.map((p) => (
+                    <button
+                      key={p.key}
+                      type="button"
+                      onClick={() => togglePointSelected(p.key)}
+                      className={
+                        "flex items-center gap-1.5 rounded-full border-2 px-2 py-1 text-xs transition-colors " +
+                        (selectedPointKeys.has(p.key)
+                          ? "border-zinc-900 dark:border-zinc-50 creamsicle:border-orange-600"
+                          : "border-transparent bg-black/[.04] hover:bg-black/[.07] dark:bg-white/[.06] dark:hover:bg-white/[.1]")
+                      }
+                    >
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: pointColors[p.key] ?? p.color }}
+                      />
+                      {p.label}
+                    </button>
+                  ))}
+                  {previewPoints.length === 0 && (
+                    <span className="text-xs text-zinc-500">Fill in the fields above to see columns to color.</span>
+                  )}
+                </div>
+
+                {selectedPointKeys.size > 0 && (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="color"
+                      value={/^#[0-9a-fA-F]{6}$/.test(batchHexDraft) ? batchHexDraft : "#6366f1"}
+                      onChange={(e) => {
+                        setBatchHexDraft(e.target.value);
+                        applyColorToSelected(e.target.value);
+                      }}
+                      title="Apply color to selected"
+                      className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                    />
+                    <input
+                      type="text"
+                      value={batchHexDraft}
+                      onChange={(e) => {
+                        setBatchHexDraft(e.target.value);
+                        if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) applyColorToSelected(e.target.value);
+                      }}
+                      placeholder="#RRGGBB"
+                      maxLength={7}
+                      className={selectClasses + " w-24 font-mono text-xs"}
+                    />
+                    <span className="text-[11px] text-zinc-500">
+                      {selectedPointKeys.size} selected
+                    </span>
+                  </div>
+                )}
+
+                {Object.keys(pointColors).length > 0 && (
+                  <button
+                    type="button"
+                    onClick={resetPointColors}
+                    className="self-start text-xs text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200"
+                  >
+                    Reset all to default colors
+                  </button>
+                )}
+              </div>
+            )}
+
+            {colorMode === "gradient" && (
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap gap-2">
+                  {GRADIENT_PRESETS.map((g) => (
+                    <button
+                      key={g.label}
+                      type="button"
+                      onClick={() => {
+                        setGradientFrom(g.from);
+                        setGradientTo(g.to);
+                      }}
+                      title={g.label}
+                      className={
+                        "h-7 w-16 rounded-md border-2 transition-transform " +
+                        (gradientFrom === g.from && gradientTo === g.to
+                          ? "scale-105 border-zinc-900 dark:border-zinc-50"
+                          : "border-transparent")
+                      }
+                      style={{ background: `linear-gradient(to right, ${g.from}, ${g.to})` }}
+                    />
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-zinc-500">Custom:</span>
+                  <input
+                    type="color"
+                    value={gradientFrom}
+                    onChange={(e) => setGradientFrom(e.target.value)}
+                    className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                  />
+                  <span className="text-zinc-500">to</span>
+                  <input
+                    type="color"
+                    value={gradientTo}
+                    onChange={(e) => setGradientTo(e.target.value)}
+                    className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                  />
+                  <span
+                    className="h-5 flex-1 rounded-md"
+                    style={{ background: `linear-gradient(to right, ${gradientFrom}, ${gradientTo})` }}
+                  />
+                </div>
               </div>
             )}
           </div>

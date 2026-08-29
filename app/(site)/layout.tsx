@@ -3,7 +3,7 @@ import Link from "next/link";
 import { DashboardNavList, DashboardNavListFallback } from "@/components/nav/DashboardNavList";
 
 const BOTTOM_LINKS = [
-  { href: "/finance/review", label: "Transaction Detail" },
+  { href: "/data-hub", label: "Data Management Hub" },
   { href: "/settings", label: "Settings" },
 ];
 

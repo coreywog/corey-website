@@ -94,6 +94,43 @@ function colorFor(key: string, groupBy: GroupBy): string {
   return groupBy === "merchantCategory" ? colorForCategory(key) : colorForKey(key);
 }
 
+function hexToRgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rgbToHex(rgb: [number, number, number]): string {
+  return "#" + rgb.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0")).join("");
+}
+
+function lerpColor(from: string, to: string, t: number): string {
+  const a = hexToRgb(from);
+  const b = hexToRgb(to);
+  return rgbToHex([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+}
+
+/**
+ * Applies the widget's own color choice on top of the default categorical
+ * palette, for the multi-element chart types (bar/histogram/pie/table) —
+ * the two modes the editor's "Specific Colors"/"Gradients" cards save as
+ * mutually exclusive, so gradient wins if somehow both are set. A gradient
+ * spans the points in whatever order they're already sorted in (largest to
+ * smallest, or chronological for a histogram's bins); overrides are looked
+ * up per-key so "Groceries" keeps its picked color regardless of sort
+ * order or which other categories are present.
+ */
+function applyPointColors(points: AggregatedPoint[], config: ChartWidgetConfig): AggregatedPoint[] {
+  if (config.gradient) {
+    const { from, to } = config.gradient;
+    const n = points.length;
+    return points.map((p, i) => ({ ...p, color: n <= 1 ? from : lerpColor(from, to, i / (n - 1)) }));
+  }
+  if (config.colorOverrides && Object.keys(config.colorOverrides).length > 0) {
+    return points.map((p) => (config.colorOverrides![p.key] ? { ...p, color: config.colorOverrides![p.key] } : p));
+  }
+  return points;
+}
+
 /** Builds the Prisma `where` shared by the main window and (for stat tiles) the comparison window. */
 function buildWhere(config: ChartWidgetConfig, start: string, end: string) {
   return {
@@ -228,7 +265,7 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
       const hi = lo + binSize;
       return { key: String(i), label: `${money(lo)}–${money(hi)}`, value: count, color: colorForKey(String(i)) };
     });
-    return { kind: "series", points };
+    return { kind: "series", points: applyPointColors(points, config) };
   }
 
   // One series per (top-N) merchant category, stacked per groupBy bucket —
@@ -350,6 +387,15 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     const restTotal = points.slice(config.limit).reduce((sum, p) => sum + p.value, 0);
     kept.push({ key: "other", label: "Other", value: round2(restTotal), color: colorForKey("Other") });
     points = kept;
+  }
+
+  // Per-point color choices only make sense for chart types that render
+  // each point as its own visual element (a bar, a slice, a table row) —
+  // line/area render one continuous stroke, which uses the separate
+  // `color` field instead (see Widget.tsx).
+  const MULTI_ELEMENT_TYPES: WidgetType[] = ["bar", "histogram", "pie", "table"];
+  if (MULTI_ELEMENT_TYPES.includes(type)) {
+    points = applyPointColors(points, config);
   }
 
   return { kind: "series", points };

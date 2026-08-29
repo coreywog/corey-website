@@ -21,7 +21,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
-import type { WidgetConfig, ChartWidgetConfig } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig } from "@/lib/dashboardConfig";
 
 export type WidgetWithData = {
   id: string;
@@ -369,27 +369,75 @@ function CalendarWidget({ points, color }: { points: AggregatedPoint[]; color?: 
   );
 }
 
-const DATE_PRESETS = [
-  { label: "1mo", months: 1 as const },
-  { label: "3mo", months: 3 as const },
-  { label: "6mo", months: 6 as const },
-  { label: "1yr", months: 12 as const },
-];
+/** A quick-range button's display text — also used by WidgetEditorPanel to
+ * render the same chips while editing the list. */
+export function dateButtonLabel(btn: DateButtonConfig): string {
+  if (btn.kind === "custom") return btn.label;
+  switch (btn.preset) {
+    case "1m":
+      return "1M";
+    case "3m":
+      return "3M";
+    case "6m":
+      return "6M";
+    case "1y":
+      return "1Y";
+    case "ytd":
+      return "YTD";
+    case "all":
+      return "All";
+  }
+}
+
+/** Stable identity for a button, independent of object reference — the
+ * config array is a fresh object every render, so "is this the active one"
+ * has to compare by value, not `===`. Also used by WidgetEditorPanel as a
+ * React list key and to prevent adding the same preset twice. */
+export function dateButtonKey(btn: DateButtonConfig): string {
+  return btn.kind === "custom" ? `custom:${btn.label}:${btn.start}:${btn.end}` : `preset:${btn.preset}`;
+}
+
+/** Resolves a button to the concrete dateRange it should apply — computed
+ * at click time (not stored), so "YTD"/relative presets always mean "as of
+ * right now" rather than whenever the button was configured. */
+function dateButtonRange(btn: DateButtonConfig): ChartWidgetConfig["dateRange"] {
+  if (btn.kind === "custom") return { mode: "custom", start: btn.start, end: btn.end };
+  switch (btn.preset) {
+    case "1m":
+      return { mode: "relative", months: 1 };
+    case "3m":
+      return { mode: "relative", months: 3 };
+    case "6m":
+      return { mode: "relative", months: 6 };
+    case "1y":
+      return { mode: "relative", months: 12 };
+    case "all":
+      return { mode: "allTime" };
+    case "ytd": {
+      const now = new Date();
+      return { mode: "custom", start: `${now.getUTCFullYear()}-01-01`, end: now.toISOString().slice(0, 10) };
+    }
+  }
+}
 
 /**
- * The small "1mo/3mo/6mo/1yr/All" row a widget can opt into (config.
- * showDateButtons — see lib/dashboardConfig.ts) so a viewer can change its
- * range without opening the editor. Re-fetches through the same preview
- * endpoint the editor's own live preview uses, entirely client-side —
- * never touches the saved config, so it's purely a per-viewer, per-session
- * override.
+ * The small quick-range row a widget can opt into (config.dateButtons —
+ * see lib/dashboardConfig.ts) so a viewer can change its range without
+ * opening the editor. Re-fetches through the same preview endpoint the
+ * editor's own live preview uses, entirely client-side — never touches the
+ * saved config, so it's purely a per-viewer, per-session override. Its own
+ * range is independent of the widget's saved dateRange — a widget filtered
+ * to 6 months of data can still offer a custom "July" button outside that
+ * window, since the override always re-queries from scratch.
  */
 function DateRangeButtons({
-  active,
+  buttons,
+  activeKey,
   onChange,
 }: {
-  active: "allTime" | 1 | 3 | 6 | 12 | null;
-  onChange: (next: "allTime" | 1 | 3 | 6 | 12) => void;
+  buttons: DateButtonConfig[];
+  activeKey: string | null;
+  onChange: (btn: DateButtonConfig) => void;
 }) {
   const btnClasses = (isActive: boolean) =>
     "rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors " +
@@ -397,15 +445,15 @@ function DateRangeButtons({
       ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900"
       : "text-zinc-500 hover:bg-black/[.06] dark:text-zinc-400 dark:hover:bg-white/[.1]");
   return (
-    <div className="flex shrink-0 items-center gap-1 px-3 pt-2">
-      {DATE_PRESETS.map((p) => (
-        <button key={p.months} type="button" onClick={() => onChange(p.months)} className={btnClasses(active === p.months)}>
-          {p.label}
-        </button>
-      ))}
-      <button type="button" onClick={() => onChange("allTime")} className={btnClasses(active === "allTime")}>
-        All
-      </button>
+    <div className="flex shrink-0 flex-wrap items-center gap-1 px-3 pt-2">
+      {buttons.map((b) => {
+        const key = dateButtonKey(b);
+        return (
+          <button key={key} type="button" onClick={() => onChange(b)} className={btnClasses(activeKey === key)} title={b.kind === "custom" ? `${b.start} – ${b.end}` : undefined}>
+            {dateButtonLabel(b)}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -419,16 +467,15 @@ function DateRangeButtons({
 export function Widget({ widget }: { widget: WidgetWithData }) {
   const title = widget.title ?? "Widget";
   const chartConfig = widget.config?.dataSource === "transactions" ? widget.config : undefined;
-  const showDateButtons = Boolean(chartConfig?.showDateButtons);
+  const dateButtons = chartConfig?.dateButtons ?? [];
 
-  const [rangeOverride, setRangeOverride] = useState<"allTime" | 1 | 3 | 6 | 12 | null>(null);
+  const [activeButton, setActiveButton] = useState<DateButtonConfig | null>(null);
   const [overrideResult, setOverrideResult] = useState<WidgetResult | { error: string } | null>(null);
 
   useEffect(() => {
-    if (rangeOverride === null || !chartConfig) return;
+    if (!activeButton || !chartConfig) return;
     let cancelled = false;
-    const dateRange: ChartWidgetConfig["dateRange"] =
-      rangeOverride === "allTime" ? { mode: "allTime" } : { mode: "relative", months: rangeOverride };
+    const dateRange = dateButtonRange(activeButton);
     fetch("/api/dashboards/widgets/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -444,18 +491,22 @@ export function Widget({ widget }: { widget: WidgetWithData }) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- chartConfig is a fresh object every render (derived from widget.config); only rangeOverride and the widget identity should re-trigger this.
-  }, [rangeOverride, widget.type, widget.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chartConfig is a fresh object every render (derived from widget.config); only activeButton and the widget identity should re-trigger this.
+  }, [activeButton, widget.type, widget.id]);
 
-  const result = rangeOverride !== null && overrideResult ? overrideResult : widget.result;
+  const result = activeButton !== null && overrideResult ? overrideResult : widget.result;
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-black/[.08] bg-[var(--background)] dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
       <div className="widget-drag-handle cursor-move select-none border-b border-black/[.08] px-3 py-2 text-sm font-medium text-zinc-500 dark:border-white/[.1] dark:text-zinc-500 creamsicle:border-orange-200 creamsicle:text-orange-700">
         {title}
       </div>
-      {showDateButtons && chartConfig && (
-        <DateRangeButtons active={rangeOverride} onChange={setRangeOverride} />
+      {dateButtons.length > 0 && (
+        <DateRangeButtons
+          buttons={dateButtons}
+          activeKey={activeButton ? dateButtonKey(activeButton) : null}
+          onChange={setActiveButton}
+        />
       )}
       <div className="min-h-0 flex-1 p-3">
         {"error" in result ? (

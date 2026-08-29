@@ -24,6 +24,15 @@ type CategoryOption = { category: string; subcategory: string };
 
 const NEW_VALUE = "__new__";
 
+function formatDate(iso: string): string {
+  return new Date(`${iso}T00:00:00.000Z`).toLocaleDateString("en-US", {
+    month: "numeric",
+    day: "numeric",
+    year: "2-digit",
+    timeZone: "UTC",
+  });
+}
+
 function formatAmount(amount: number) {
   const sign = amount < 0 ? "-" : "";
   return `${sign}$${Math.abs(amount).toFixed(2)}`;
@@ -185,7 +194,7 @@ export function TransactionReviewCard({
         className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left"
       >
         <div className="flex min-w-0 flex-1 items-baseline gap-3">
-          <span className="w-16 shrink-0 text-xs text-zinc-500">{txn.date.slice(5)}</span>
+          <span className="w-20 shrink-0 text-xs text-zinc-500">{formatDate(txn.date)}</span>
           <span className="min-w-0 flex-1 truncate text-sm font-medium">{txn.description}</span>
           <span className="hidden shrink-0 text-xs text-zinc-400 sm:inline">{txn.account}</span>
         </div>

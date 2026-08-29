@@ -56,7 +56,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
   );
 
   // Options for the widget editor's filter/category pickers — same source
-  // as the Review tab's category picker (app/(site)/finance/review).
+  // as the Review tab's category picker (Data Management Hub's Finance tab,
+  // app/(site)/data-hub/page.tsx).
   const [accounts, categorized, spendingDescriptions] = await Promise.all([
     prisma.financeAccount.findMany({ where: { archived: false }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.transaction.findMany({

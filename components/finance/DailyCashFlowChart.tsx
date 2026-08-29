@@ -78,11 +78,14 @@ export function DailyCashFlowChart({ data }: { data: DailyCashFlowPoint[] }) {
   // baseline) before the range selection windows it, so switching ranges
   // zooms the same continuous line rather than resetting the baseline.
   const withCumulative: Point[] = useMemo(() => {
-    let running = 0;
-    return data.map((d) => {
-      running += d.net;
-      return { ...d, cumulativeNet: Math.round(running * 100) / 100 };
-    });
+    // A running total via reduce's own accumulator, not a closure-captured
+    // `let` mutated across iterations — the latter trips the immutability
+    // lint rule (mutating a variable from an outer scope inside a callback).
+    return data.reduce<Point[]>((acc, d) => {
+      const previous = acc.length > 0 ? acc[acc.length - 1].cumulativeNet : 0;
+      acc.push({ ...d, cumulativeNet: Math.round((previous + d.net) * 100) / 100 });
+      return acc;
+    }, []);
   }, [data]);
 
   const availableMonths = useMemo(() => listAvailableMonthsFromStrings(data.map((d) => d.date)), [data]);

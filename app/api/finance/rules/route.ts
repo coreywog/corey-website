@@ -10,8 +10,9 @@ const bodySchema = z.object({
 });
 
 /**
- * Saves a merchant->category correction from the Review tab
- * (app/(site)/finance/review) and immediately applies it to every existing
+ * Saves a merchant->category correction from the Review tab (the Data
+ * Management Hub's Finance tab, app/(site)/data-hub/page.tsx) and
+ * immediately applies it to every existing
  * matching transaction — see lib/merchantRules.ts. Future Plaid syncs check
  * these rules ahead of the static classifier (lib/plaidSync.ts).
  */

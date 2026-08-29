@@ -117,7 +117,12 @@ export type DateRangeSelection =
   | { mode: "relative"; months: 1 | 3 | 6 | 12 }
   | { mode: "specific"; month: string } // "YYYY-MM"
   | { mode: "allTime" }
-  | { mode: "custom"; start: string; end: string }; // both "YYYY-MM-DD", start inclusive, end exclusive
+  // Both "YYYY-MM-DD", start inclusive, end exclusive. `end` omitted means
+  // open-ended — always through "now", the same as allTime/relative — so a
+  // widget can be pinned to "everything from March 15 onward" and keep
+  // picking up new transactions indefinitely, rather than freezing at
+  // whatever "today" happened to be when it was configured.
+  | { mode: "custom"; start: string; end?: string };
 
 // Before any real transaction could exist — "allTime"'s lower bound. A
 // sentinel date rather than an unbounded/null start keeps every caller's
@@ -136,7 +141,7 @@ export function resolveDateRange(selection: DateRangeSelection): { start: string
     return { start: start.toISOString().slice(0, 10), end: monthEnd.toISOString().slice(0, 10) };
   }
   if (selection.mode === "custom") {
-    return { start: selection.start, end: selection.end };
+    return { start: selection.start, end: selection.end ?? end };
   }
   return { start: monthsAgo(selection.months).toISOString().slice(0, 10), end };
 }

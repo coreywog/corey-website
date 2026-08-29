@@ -15,7 +15,9 @@ const dateRangeSchema = z.union([
   z.object({
     mode: z.literal("custom"),
     start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    // Omitted = open-ended, always through "now" — see lib/finance.ts's
+    // resolveDateRange.
+    end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   }),
 ]);
 
@@ -76,12 +78,46 @@ export type Metric = (typeof METRICS)[number];
 export const GROUP_BYS = ["day", "month", "merchantCategory", "merchantSubcategory", "account", "merchant"] as const;
 export type GroupBy = (typeof GROUP_BYS)[number];
 
+// The tile-level quick-range row (config.dateButtons below) — presets are
+// computed client-side (Widget.tsx) into a concrete dateRange at click
+// time, so no new dateRange mode is needed for "ytd" etc. A custom button
+// carries its own fixed start/end, entirely independent of the widget's
+// saved dateRange — e.g. a widget filtered to the last 6 months can still
+// offer a "July" shortcut button outside that window.
+export const DATE_BUTTON_PRESETS = ["1m", "3m", "6m", "1y", "ytd", "all"] as const;
+export type DateButtonPreset = (typeof DATE_BUTTON_PRESETS)[number];
+const dateButtonSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("preset"), preset: z.enum(DATE_BUTTON_PRESETS) }),
+  z.object({
+    kind: z.literal("custom"),
+    label: z.string().trim().min(1).max(20),
+    start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  }),
+]);
+export type DateButtonConfig = z.infer<typeof dateButtonSchema>;
+
 // Quick-pick swatches shown alongside the open color picker/hex input in
 // the editor — not the exhaustive set of allowed values (see `color` below,
-// any hex works). Applied to the line stroke / stat number only; bar/pie/
-// table keep their own per-category palette from lib/dashboardQuery.ts,
-// where a single override wouldn't make sense.
+// any hex works). Applied to the line stroke / stat number only — bar/pie/
+// histogram/table have their own per-point coloring instead, since one
+// color can't represent several bars/slices (see colorOverrides/gradient
+// below).
 export const WIDGET_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#ec4899"] as const;
+
+const HEX = /^#[0-9a-fA-F]{6}$/;
+
+// Starter gradients for the editor's "Gradients" card — the first is the
+// app's own accent-to-brand pairing, used as the auto-selected default when
+// switching into gradient mode; the rest are generic enough to suit any
+// theme. Any two colors work via the custom start/end picker too — this
+// list is just what's offered before you touch it.
+export const GRADIENT_PRESETS = [
+  { label: "Brand", from: "#6366f1", to: "#ec4899" },
+  { label: "Cool → warm", from: "#0ea5e9", to: "#f59e0b" },
+  { label: "Light → dark", from: "#e0e7ff", to: "#312e81" },
+  { label: "Green scale", from: "#d1fae5", to: "#065f46" },
+] as const;
 
 const chartConfigSchema = z.object({
   dataSource: z.literal("transactions"), // only value today — explicit for future data sources
@@ -96,12 +132,22 @@ const chartConfigSchema = z.object({
   sort: z.enum(["totalDesc", "totalAsc", "labelAsc"]).optional(), // ignored when groupBy is day/month — see lib/dashboardQuery.ts
   compareToPrevious: z.boolean().optional(), // stat tiles only
   axisLabels: axisLabelsSchema, // line/area/bar/scatter/histogram only — read directly off config by components/dashboards/Widget.tsx
-  color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(), // line/area/stat only, see above — any hex, not just the presets
-  // Renders a small "1mo/3mo/6mo/1yr/All" row on the tile itself — on the
+  color: z.string().regex(HEX).optional(), // line/area/stat only, see above — any hex, not just the presets
+  // Per-point color choices for bar/histogram/pie/table (see
+  // lib/dashboardQuery.ts's applyPointColors) — the editor's "Specific
+  // Colors" and "Gradients" cards, mutually exclusive in the UI (gradient
+  // wins if both are somehow set). colorOverrides is keyed by the point's
+  // own `key` (a category name, a merchant, a histogram bin index, ...),
+  // so a pick survives re-sorting or a changed Top-N limit; anything
+  // without an entry keeps the default categorical palette.
+  colorOverrides: z.record(z.string(), z.string().regex(HEX)).optional(),
+  gradient: z.object({ from: z.string().regex(HEX), to: z.string().regex(HEX) }).optional(),
+  // Renders a small quick-range button row on the tile itself — on the
   // live dashboard, not just the editor — that overrides dateRange for
   // that viewer's session only (re-fetches via the same preview endpoint
-  // the editor uses; never touches the saved config). See Widget.tsx.
-  showDateButtons: z.boolean().optional(),
+  // the editor uses; never touches the saved config). Order in the array
+  // is display order. See Widget.tsx.
+  dateButtons: z.array(dateButtonSchema).max(12).optional(),
 });
 
 // A free-text tile — no data behind it at all, just whatever the user

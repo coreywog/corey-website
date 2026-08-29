@@ -265,3 +265,36 @@ model BalanceEntry {
 
   @@unique([accountId, date])
 }
+
+// A user-uploaded dataset (CSV today; other sources later) — the Data
+// Management Hub's non-Finance tabs. `columns` is JSON rather than a
+// relational table since the shape is genuinely arbitrary per upload (a
+// fitness export and a budget spreadsheet share nothing), same reasoning
+// as DashboardWidget.config above.
+model Dataset {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  order     Int      @default(0)
+  columns   Json // [{ name: string, kind: "text" | "number" | "date" }]
+  createdAt DateTime @default(now())
+
+  rows DatasetRow[]
+}
+
+// One uploaded row. `data` is the whole row (every column's value, keyed by
+// column name) as a single AES-256-GCM ciphertext — one encrypt/decrypt
+// call per row rather than one per cell, since an upload can be wide
+// (dozens of columns) and this is on the hot path for viewing a dataset.
+// Uploaded data could be anything (health metrics, another export of
+// financial data, ...) so it's treated at least as carefully as the
+// Transaction data already in this schema.
+model DatasetRow {
+  id        String   @id @default(cuid())
+  datasetId String
+  data      String
+  createdAt DateTime @default(now())
+
+  dataset Dataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+
+  @@index([datasetId])
+}
