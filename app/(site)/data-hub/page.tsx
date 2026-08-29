@@ -8,6 +8,7 @@ import { ReviewSidebar } from "@/components/finance/ReviewSidebar";
 import { GlobalReviewList } from "@/components/finance/GlobalReviewList";
 import { CategoryReviewView } from "@/components/finance/CategoryReviewView";
 import { DatasetTableEditor } from "@/components/dataHub/DatasetTableEditor";
+import { RawTransactionTable } from "@/components/finance/RawTransactionTable";
 import { UploadDatasetForm } from "@/components/dataHub/UploadDatasetForm";
 import { DeleteDatasetButton } from "@/components/dataHub/DeleteDatasetButton";
 import type { ReviewTxn } from "@/components/finance/TransactionReviewCard";
@@ -28,6 +29,11 @@ function formatComputedValue(n: number | null): string {
 // cap. Real pagination is a fast-follow, not v1; this keeps the worst case
 // predictable in the meantime rather than unbounded.
 const DATASET_ROW_DISPLAY_CAP = 500;
+// The Finance tab's "just let me see the raw data" preview — deliberately
+// much smaller than a dataset's own cap above: this is a quick look at
+// shape, not a browsing tool (that's what the review workflow below it is
+// for).
+const RAW_TXN_PREVIEW_CAP = 30;
 
 type RawTxn = {
   id: string;
@@ -116,8 +122,8 @@ export default async function DataHubPage({
 
   if (activeTab === "finance") {
     // Same query shape as the old Transaction Detail page — parallelized,
-    // since these three don't depend on each other.
-    const [treeRows, globalNeedsReview, rawRows] = await Promise.all([
+    // since these don't depend on each other.
+    const [treeRows, globalNeedsReview, rawRows, rawPreviewRows] = await Promise.all([
       prisma.transaction.findMany({
         where: { category: "spending", merchantCategory: { not: null, notIn: ["other"] }, merchantSubcategory: { not: null } },
         select: { merchantCategory: true, merchantSubcategory: true, reviewed: true },
@@ -138,6 +144,15 @@ export default async function DataHubPage({
             include: TXN_INCLUDE,
             orderBy: { date: "desc" },
           }),
+      // "Just let me see the raw data" — every category, unfiltered by
+      // review status, most recent first. Independent of the review
+      // queue's own filters above, since this is a look at shape, not part
+      // of the review workflow.
+      prisma.transaction.findMany({
+        include: TXN_INCLUDE,
+        orderBy: { date: "desc" },
+        take: RAW_TXN_PREVIEW_CAP,
+      }),
     ]);
 
     const tree = buildReviewCategoryTree(
@@ -164,7 +179,10 @@ export default async function DataHubPage({
     tabContent = (
       <div className="flex gap-6">
         <ReviewSidebar tree={tree} globalNeedsReview={globalNeedsReview} />
-        <div className="flex min-w-0 flex-1 flex-col gap-8">{mainContent}</div>
+        <div className="flex min-w-0 flex-1 flex-col gap-8">
+          <RawTransactionTable transactions={rawPreviewRows.map(decryptTxn)} />
+          {mainContent}
+        </div>
       </div>
     );
   } else if (activeTab) {
