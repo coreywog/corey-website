@@ -7,11 +7,21 @@ import { buildReviewCategoryTree } from "@/lib/finance";
 import { ReviewSidebar } from "@/components/finance/ReviewSidebar";
 import { GlobalReviewList } from "@/components/finance/GlobalReviewList";
 import { CategoryReviewView } from "@/components/finance/CategoryReviewView";
-import { DatasetTable } from "@/components/dataHub/DatasetTable";
+import { DatasetTableEditor } from "@/components/dataHub/DatasetTableEditor";
 import { UploadDatasetForm } from "@/components/dataHub/UploadDatasetForm";
 import { DeleteDatasetButton } from "@/components/dataHub/DeleteDatasetButton";
 import type { ReviewTxn } from "@/components/finance/TransactionReviewCard";
 import { DatasetColumnsSchema } from "@/lib/datasetCsv";
+import { DatasetComputedColumnsSchema, compileFormula } from "@/lib/datasetFormula";
+
+/** A computed column's raw number, formatted for the table — plain integers
+ * stay bare, anything else rounds to 2 decimals so a division like
+ * [Total]/[Count] doesn't print a dozen floating-point digits. Blank
+ * (rather than "0" or an error) for a row the formula couldn't evaluate. */
+function formatComputedValue(n: number | null): string {
+  if (n === null) return "";
+  return Number.isInteger(n) ? String(n) : n.toFixed(2);
+}
 
 // Bounds how much a single tab has to decrypt+render — see
 // app/api/data-hub/datasets/route.ts's MAX_ROWS for the matching upload
@@ -87,7 +97,7 @@ export default async function DataHubPage({
     prisma.financeAccount.count({ where: { archived: false } }),
     prisma.dataset.findMany({
       orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-      select: { id: true, name: true, columns: true, _count: { select: { rows: true } } },
+      select: { id: true, name: true, columns: true, computedColumns: true, _count: { select: { rows: true } } },
     }),
   ]);
   const showFinanceTab = financeAccountCount > 0;
@@ -166,8 +176,30 @@ export default async function DataHubPage({
         take: DATASET_ROW_DISPLAY_CAP,
         select: { data: true },
       });
-      const rows = rawRows.map((r) => JSON.parse(decryptText(r.data)) as Record<string, string>);
+      const rawObjRows = rawRows.map((r) => JSON.parse(decryptText(r.data)) as Record<string, string>);
       const parsedColumns = DatasetColumnsSchema.safeParse(dataset.columns);
+      const parsedComputed = DatasetComputedColumnsSchema.safeParse(dataset.computedColumns);
+      const computedColumns = parsedComputed.success ? parsedComputed.data : [];
+      // Evaluated here (server-side), not in the client table component —
+      // a broken/unparseable formula is only possible if the DB value was
+      // hand-edited outside the PATCH route (which already validates every
+      // formula before saving), so this is defense-in-depth: skip a column
+      // that fails to compile rather than 500ing the whole page over it.
+      const compiled = computedColumns.flatMap((cc) => {
+        try {
+          return [{ name: cc.name, fn: compileFormula(cc.formula) }];
+        } catch {
+          return [];
+        }
+      });
+      const rows =
+        compiled.length > 0
+          ? rawObjRows.map((row) => {
+              const withComputed = { ...row };
+              for (const { name, fn } of compiled) withComputed[name] = formatComputedValue(fn(row));
+              return withComputed;
+            })
+          : rawObjRows;
       tabContent = (
         <div className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
@@ -175,8 +207,10 @@ export default async function DataHubPage({
             <DeleteDatasetButton datasetId={dataset.id} name={dataset.name} />
           </div>
           {parsedColumns.success ? (
-            <DatasetTable
+            <DatasetTableEditor
+              datasetId={dataset.id}
               columns={parsedColumns.data}
+              computedColumns={computedColumns}
               rows={rows}
               totalCount={dataset._count.rows}
               shown={rows.length}

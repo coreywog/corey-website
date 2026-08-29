@@ -276,6 +276,14 @@ model Dataset {
   name      String   @unique
   order     Int      @default(0)
   columns   Json // [{ name: string, kind: "text" | "number" | "date" }]
+  // User-defined columns computed from the raw ones at read time — never
+  // stored per-row (see DatasetRow.data below): a formula referencing other
+  // columns via [Column Name], validated and evaluated by
+  // lib/datasetFormula.ts. Recomputing on every read (rather than
+  // materializing into DatasetRow) means editing a formula never needs a
+  // re-encrypt-every-row migration, same "fluid, not frozen" reasoning as
+  // the dashboard's date-range modes.
+  computedColumns Json @default("[]") // [{ name: string, formula: string }]
   createdAt DateTime @default(now())
 
   rows DatasetRow[]
