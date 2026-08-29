@@ -22,7 +22,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
-import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern, ValueFormat } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern, ValueFormat, FontFamily } from "@/lib/dashboardConfig";
 import { METRIC_LABELS } from "@/lib/dashboardConfig";
 import { describeDateRangeSelection } from "@/lib/finance";
 import type { BarShapeProps, PieSectorShapeProps, PieLabelRenderProps } from "recharts";
@@ -56,6 +56,23 @@ const plainNumberFormatter = new Intl.NumberFormat("en-US", { maximumFractionDig
  * shown as a bar chart). See axisLabels.valueFormat. */
 function formatValue(v: number, format: ValueFormat | undefined): string {
   return format === "number" ? plainNumberFormatter.format(v) : currencyFormatter.format(v);
+}
+
+/** CSS font-family value for a chart's text (axis titles, ticks, legend) —
+ * "sans"/"mono" reuse the site's own already-loaded Geist fonts rather than
+ * pulling in anything new; "default"/unset means don't override at all
+ * (inherit whatever the page already uses). */
+function resolveFontFamily(family: FontFamily | undefined): string | undefined {
+  switch (family) {
+    case "sans":
+      return "var(--font-sans)";
+    case "serif":
+      return "serif";
+    case "mono":
+      return "var(--font-mono)";
+    default:
+      return undefined;
+  }
 }
 
 function EmptyState() {
@@ -97,6 +114,7 @@ function axisLabelProp(
     dy: offset?.dy ?? 0,
     style: {
       fontSize: axisLabels?.fontSize ?? 11,
+      fontFamily: resolveFontFamily(axisLabels?.fontFamily),
       textAnchor: "middle" as const,
       cursor: onDragStart ? "grab" : undefined,
     },
@@ -225,14 +243,14 @@ function LineWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -278,14 +296,14 @@ function AreaWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -359,7 +377,7 @@ function BarWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           interval={0}
@@ -369,7 +387,7 @@ function BarWidget({
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -410,7 +428,7 @@ function StackedBarWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="x"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           interval={0}
@@ -420,7 +438,7 @@ function StackedBarWidget({
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -428,7 +446,7 @@ function StackedBarWidget({
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
         <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Legend wrapperStyle={{ fontSize: 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }} />
         {series.map((s) => (
           <Bar
             key={s.key}
@@ -462,14 +480,14 @@ function MultiLineWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -477,7 +495,7 @@ function MultiLineWidget({
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
         <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Legend wrapperStyle={{ fontSize: 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }} />
         {series.map((s) => (
           <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2} dot={false} isAnimationActive={false} />
         ))}
@@ -504,14 +522,14 @@ function MultiAreaWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -519,7 +537,7 @@ function MultiAreaWidget({
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
         <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
-        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Legend wrapperStyle={{ fontSize: 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }} />
         {series.map((s) => (
           <Area
             key={s.key}
@@ -659,7 +677,7 @@ function ScatterWidget({
           dataKey="x"
           type="number"
           domain={["dataMin", "dataMax"]}
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           tickFormatter={shortDate}
@@ -667,7 +685,7 @@ function ScatterWidget({
         />
         <YAxis
           dataKey="y"
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
           tickLine={false}
           axisLine={false}
           width={56}

@@ -83,6 +83,16 @@ export type ValueFormat = (typeof VALUE_FORMATS)[number];
 // continuous, not another enum.
 const axisLabelOffsetSchema = z.object({ dx: z.number().min(-300).max(300), dy: z.number().min(-150).max(150) }).optional();
 
+// A curated handful rather than a freeform font string — same reasoning as
+// LINE_STYLES/FILL_PATTERNS: keeps the render surface small and the
+// editor's picker exhaustive. All four resolve to something that renders
+// everywhere with no extra loading: "sans"/"mono" reuse the site's own
+// already-loaded Geist fonts (--font-sans/--font-mono, see app/layout.tsx),
+// "serif" is the plain CSS generic family. Applies to every text element on
+// the chart (axis titles, tick labels, legend), not just the axis titles.
+export const FONT_FAMILIES = ["default", "sans", "serif", "mono"] as const;
+export type FontFamily = (typeof FONT_FAMILIES)[number];
+
 const axisLabelsSchema = z
   .object({
     x: z.string().max(60).optional(),
@@ -97,6 +107,7 @@ const axisLabelsSchema = z
     xTickFontSize: z.number().int().min(6).max(20).optional(),
     yTickFontSize: z.number().int().min(6).max(20).optional(),
     valueFormat: z.enum(VALUE_FORMATS).optional(),
+    fontFamily: z.enum(FONT_FAMILIES).optional(),
   })
   .optional();
 

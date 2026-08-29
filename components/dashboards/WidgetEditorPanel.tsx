@@ -39,8 +39,9 @@ import type {
   DateButtonPreset,
   LineStyle,
   FillPattern,
+  FontFamily,
 } from "@/lib/dashboardConfig";
-import { WIDGET_COLORS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS, LINE_STYLES, FILL_PATTERNS } from "@/lib/dashboardConfig";
+import { WIDGET_COLORS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS, LINE_STYLES, FILL_PATTERNS, FONT_FAMILIES } from "@/lib/dashboardConfig";
 
 type CategoryOption = { category: string; subcategory: string };
 type Account = { id: string; name: string };
@@ -196,6 +197,13 @@ const LINE_STYLE_LABELS: Record<LineStyle, string> = {
   dotted: "Dotted",
   dashDot: "Dash-dot",
   longDash: "Long dash",
+};
+
+const FONT_FAMILY_LABELS: Record<FontFamily, string> = {
+  default: "Default",
+  sans: "Sans-serif",
+  serif: "Serif",
+  mono: "Monospace",
 };
 
 const FILL_PATTERN_LABELS: Record<FillPattern, string> = {
@@ -525,16 +533,11 @@ export function WidgetEditorPanel({
   const [monthsWindowCount, setMonthsWindowCount] = useState<number>(
     chartConfig?.dateRange.mode === "monthsWindow" ? chartConfig.dateRange.months : 1,
   );
-  const [customMonthsDraft, setCustomMonthsDraft] = useState("");
-  // Same explicit-flag reasoning as customDaysActive below — "Last month" and
-  // "Past N months…" are both monthsWindow, distinguished only by months
-  // actually being 1, which breaks the moment the custom draft also happens
-  // to be 1.
-  const [customMonthsActive, setCustomMonthsActive] = useState(
-    () => chartConfig?.dateRange.mode === "monthsWindow" && chartConfig.dateRange.months !== 1,
+  const [customMonthsDraft, setCustomMonthsDraft] = useState(
+    chartConfig?.dateRange.mode === "monthsWindow" ? String(chartConfig.dateRange.months) : "1",
   );
-  // A single calendar month at a fixed offset — "This month" is 0, "N
-  // months ago…" is any offset typed in. Kept separate from
+  // A single calendar month at a fixed offset — 0 is this month (still
+  // filling in), 1 is last month, etc. Kept separate from
   // monthsWindow/monthsWindowCount above: that's a merged multi-month
   // range for one chart, this is one specific month, meant for several
   // widgets each pinned to a different offset (see relativeMonth's own
@@ -542,9 +545,8 @@ export function WidgetEditorPanel({
   const [relativeMonthsAgo, setRelativeMonthsAgo] = useState<number>(
     chartConfig?.dateRange.mode === "relativeMonth" ? chartConfig.dateRange.monthsAgo : 2,
   );
-  const [customMonthsAgoDraft, setCustomMonthsAgoDraft] = useState("");
-  const [customMonthsAgoActive, setCustomMonthsAgoActive] = useState(
-    () => chartConfig?.dateRange.mode === "relativeMonth" && chartConfig.dateRange.monthsAgo !== 0,
+  const [customMonthsAgoDraft, setCustomMonthsAgoDraft] = useState(
+    chartConfig?.dateRange.mode === "relativeMonth" ? String(chartConfig.dateRange.monthsAgo) : "2",
   );
   // Only shown once "Custom" is picked within the Fluid group — a free
   // number input for any N-days-back that isn't one of the preset pills.
@@ -609,6 +611,7 @@ export function WidgetEditorPanel({
   // narrow: shrinking just the ticks buys back the room they need.
   const [xTickFontSize, setXTickFontSize] = useState(chartConfig?.axisLabels?.xTickFontSize ?? 11);
   const [yTickFontSize, setYTickFontSize] = useState(chartConfig?.axisLabels?.yTickFontSize ?? 12);
+  const [fontFamily, setFontFamily] = useState<FontFamily>(chartConfig?.axisLabels?.fontFamily ?? "default");
 
   function handleAxisLabelOffsetChange(axis: "x" | "y", offset: { dx: number; dy: number }) {
     if (axis === "x") setXAxisOffset(offset);
@@ -786,13 +789,14 @@ export function WidgetEditorPanel({
     // together is a common case with no title involved, so the guard here
     // can't be "only if a title was typed."
     const axisLabels: ChartWidgetConfig["axisLabels"] =
-      showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim() || xTickFontSize !== 11 || yTickFontSize !== 12)
+      showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim() || xTickFontSize !== 11 || yTickFontSize !== 12 || fontFamily !== "default")
         ? {
             ...(xAxisLabel.trim() ? { x: xAxisLabel.trim(), xOffset: xAxisOffset } : {}),
             ...(yAxisLabel.trim() ? { y: yAxisLabel.trim(), yOffset: yAxisOffset } : {}),
             fontSize: axisFontSize,
             xTickFontSize,
             yTickFontSize,
+            ...(fontFamily !== "default" ? { fontFamily } : {}),
           }
         : undefined;
 
@@ -859,6 +863,7 @@ export function WidgetEditorPanel({
     axisFontSize,
     xTickFontSize,
     yTickFontSize,
+    fontFamily,
     color,
     colorMode,
     pointColors,
@@ -1226,47 +1231,21 @@ export function WidgetEditorPanel({
                                 type="button"
                                 onClick={() => {
                                   setDateMode("monthsWindow");
-                                  setMonthsWindowCount(1);
-                                  setCustomMonthsActive(false);
-                                }}
-                                className={pillClasses(dateMode === "monthsWindow" && !customMonthsActive)}
-                                title="The full previous calendar month — e.g. all of July if it's currently August"
-                              >
-                                Last month
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDateMode("monthsWindow");
-                                  setCustomMonthsActive(true);
                                   setCustomMonthsDraft(String(monthsWindowCount));
                                 }}
-                                className={pillClasses(dateMode === "monthsWindow" && customMonthsActive)}
+                                className={pillClasses(dateMode === "monthsWindow")}
+                                title="The N most recently completed calendar months — 1 is exactly last month"
                               >
                                 Past N months…
                               </button>
-                              <span aria-hidden className="h-5 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15]" />
                               <button
                                 type="button"
                                 onClick={() => {
                                   setDateMode("relativeMonth");
-                                  setRelativeMonthsAgo(0);
-                                  setCustomMonthsAgoActive(false);
-                                }}
-                                className={pillClasses(dateMode === "relativeMonth" && !customMonthsAgoActive)}
-                                title="This calendar month so far — still filling in as the month goes"
-                              >
-                                This month
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setDateMode("relativeMonth");
-                                  setCustomMonthsAgoActive(true);
                                   setCustomMonthsAgoDraft(String(relativeMonthsAgo));
                                 }}
-                                className={pillClasses(dateMode === "relativeMonth" && customMonthsAgoActive)}
-                                title="Pin this tile to one specific month-offset from today — several tiles at different offsets (0, 1, 2, ...) stay lined up and all shift forward together as the calendar turns"
+                                className={pillClasses(dateMode === "relativeMonth")}
+                                title="Pin this tile to one specific month-offset from today (0 = this month) — several tiles at different offsets stay lined up and all shift forward together as the calendar turns"
                               >
                                 N months ago…
                               </button>
@@ -1291,7 +1270,7 @@ export function WidgetEditorPanel({
                                 <span className="text-xs text-zinc-500">days ago, through today</span>
                               </div>
                             )}
-                            {dateMode === "monthsWindow" && customMonthsActive && (
+                            {dateMode === "monthsWindow" && (
                               <div className="flex flex-wrap items-center gap-2">
                                 <input
                                   type="number"
@@ -1311,7 +1290,7 @@ export function WidgetEditorPanel({
                                 <span className="text-xs text-zinc-500">most recently completed months</span>
                               </div>
                             )}
-                            {dateMode === "relativeMonth" && customMonthsAgoActive && (
+                            {dateMode === "relativeMonth" && (
                               <div className="flex flex-wrap items-center gap-2">
                                 <input
                                   type="number"
@@ -1826,74 +1805,6 @@ export function WidgetEditorPanel({
                   </label>
                 )}
 
-                {showAxisLabels && (
-                  <div className="flex flex-col gap-2">
-                    <span className={labelClasses}>Axis titles (optional)</span>
-                    <p className="text-[11px] text-zinc-500">
-                      Drag a title directly in the preview to reposition it — starts below the chart (X) / left of
-                      the chart (Y).
-                    </p>
-                    <input
-                      type="text"
-                      value={xAxisLabel}
-                      onChange={(e) => setXAxisLabel(e.target.value)}
-                      placeholder="X axis title"
-                      className={selectClasses}
-                    />
-                    <input
-                      type="text"
-                      value={yAxisLabel}
-                      onChange={(e) => setYAxisLabel(e.target.value)}
-                      placeholder="Y axis title"
-                      className={selectClasses}
-                    />
-                    <label className="flex items-center gap-2">
-                      <span className="text-[11px] text-zinc-500">Text size</span>
-                      <input
-                        type="number"
-                        min={8}
-                        max={24}
-                        value={axisFontSize}
-                        onChange={(e) => setAxisFontSize(Number(e.target.value) || 11)}
-                        className={selectClasses + " w-16"}
-                      />
-                      <span className="text-[11px] text-zinc-500">px</span>
-                    </label>
-
-                    <div className="mt-1 flex gap-3 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[11px] text-zinc-500">X axis</span>
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            min={6}
-                            max={20}
-                            value={xTickFontSize}
-                            onChange={(e) => setXTickFontSize(Number(e.target.value) || 11)}
-                            className={selectClasses + " w-16"}
-                          />
-                          <span className="text-[11px] text-zinc-500">px</span>
-                        </div>
-                      </label>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[11px] text-zinc-500">Y axis</span>
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            min={6}
-                            max={20}
-                            value={yTickFontSize}
-                            onChange={(e) => setYTickFontSize(Number(e.target.value) || 12)}
-                            className={selectClasses + " w-16"}
-                          />
-                          <span className="text-[11px] text-zinc-500">px</span>
-                        </div>
-                      </label>
-                    </div>
-                    <p className="text-[11px] text-zinc-500">Shrink these if bar/category names are squishing together.</p>
-                  </div>
-                )}
-
               </>
             )}
 
@@ -1959,16 +1870,15 @@ export function WidgetEditorPanel({
         </div>
 
         {typeChosen && !isText && (
-          <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+          <div className="flex flex-col gap-1.5 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
             <span className={labelClasses}>Date focus buttons</span>
-            <p className="text-[11px] text-zinc-500">Date focus buttons.</p>
 
             {dateButtons.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap gap-1">
                 {dateButtons.map((b, i) => (
                   <span
                     key={dateButtonKey(b)}
-                    className="flex items-center gap-1 rounded-full border border-black/[.12] px-2 py-1 text-xs dark:border-white/[.15]"
+                    className="flex items-center gap-1 rounded-full border border-black/[.12] px-2 py-0.5 text-xs dark:border-white/[.15]"
                     title={b.kind === "custom" ? `${b.start} – ${b.end}` : undefined}
                   >
                     {dateButtonLabel(b)}
@@ -2004,12 +1914,12 @@ export function WidgetEditorPanel({
             )}
 
             {dateButtons.length < 12 && (
-              <>
-                <div className="flex flex-col gap-1 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
+              <div className="flex flex-wrap gap-3">
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
                   <span className="text-[11px] text-zinc-500">
-                    Fluid — only ranges that fit inside the Date filter above ({widgetScopeDays === Infinity ? "unbounded" : `≤${widgetScopeDays}d`}) are offered
+                    Fluid ({widgetScopeDays === Infinity ? "unbounded" : `≤${widgetScopeDays}d`})
                   </span>
-                  <div className="flex flex-wrap items-center gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1">
                     {DATE_BUTTON_PRESETS.filter(
                       (p) =>
                         !dateButtons.some((b) => b.kind === "preset" && b.preset === p) &&
@@ -2024,9 +1934,8 @@ export function WidgetEditorPanel({
                         + {dateButtonLabel({ kind: "preset", preset: p as DateButtonPreset })}
                       </button>
                     ))}
-                    <span aria-hidden className="h-5 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15]" />
                     {addingCustomDaysButton ? (
-                      <div className="flex flex-wrap items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1">
                         <input
                           type="number"
                           min={0}
@@ -2035,9 +1944,8 @@ export function WidgetEditorPanel({
                           onChange={(e) => setCustomButtonDays(e.target.value)}
                           placeholder="e.g. 5"
                           autoFocus
-                          className={selectClasses + " w-20"}
+                          className={selectClasses + " w-16"}
                         />
-                        <span className="text-xs text-zinc-500">days ago</span>
                         <button
                           type="button"
                           onClick={addCustomDaysButton}
@@ -2047,7 +1955,7 @@ export function WidgetEditorPanel({
                             Number(customButtonDays) < 0 ||
                             Number(customButtonDays) > widgetScopeDays
                           }
-                          className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
+                          className="rounded-full bg-zinc-900 px-2 py-0.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
                         >
                           Add
                         </button>
@@ -2056,7 +1964,7 @@ export function WidgetEditorPanel({
                           onClick={() => setAddingCustomDaysButton(false)}
                           className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
                         >
-                          Cancel
+                          ✕
                         </button>
                       </div>
                     ) : (
@@ -2067,17 +1975,19 @@ export function WidgetEditorPanel({
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-1 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
-                  <span className="text-[11px] text-zinc-500">Fixed — an exact range, independent of the scope above</span>
+                <span aria-hidden className="w-px shrink-0 self-stretch bg-black/[.12] dark:bg-white/[.15]" />
+
+                <div className="flex min-w-0 flex-col gap-1">
+                  <span className="text-[11px] text-zinc-500">Fixed</span>
                   {addingCustomButton ? (
-                    <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="flex flex-wrap items-center gap-1">
                       <input
                         type="text"
                         value={customButtonLabel}
                         onChange={(e) => setCustomButtonLabel(e.target.value)}
-                        placeholder="Label (e.g. July)"
+                        placeholder="Label"
                         maxLength={20}
-                        className={selectClasses + " w-28"}
+                        className={selectClasses + " w-20"}
                       />
                       <input
                         type="date"
@@ -2096,7 +2006,7 @@ export function WidgetEditorPanel({
                         type="button"
                         onClick={addCustomDateButton}
                         disabled={!customButtonLabel.trim() || !customButtonStart || !customButtonEnd}
-                        className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
+                        className="rounded-full bg-zinc-900 px-2 py-0.5 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
                       >
                         Add
                       </button>
@@ -2105,7 +2015,7 @@ export function WidgetEditorPanel({
                         onClick={() => setAddingCustomButton(false)}
                         className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
                       >
-                        Cancel
+                        ✕
                       </button>
                     </div>
                   ) : (
@@ -2114,8 +2024,91 @@ export function WidgetEditorPanel({
                     </button>
                   )}
                 </div>
-              </>
+              </div>
             )}
+          </div>
+        )}
+
+        {typeChosen && showAxisLabels && (
+          <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+            <span className={labelClasses}>Text</span>
+
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] text-zinc-500">
+                Axis titles (optional) — drag one directly in the preview above to reposition it
+              </span>
+              <input
+                type="text"
+                value={xAxisLabel}
+                onChange={(e) => setXAxisLabel(e.target.value)}
+                placeholder="X axis title"
+                className={selectClasses}
+              />
+              <input
+                type="text"
+                value={yAxisLabel}
+                onChange={(e) => setYAxisLabel(e.target.value)}
+                placeholder="Y axis title"
+                className={selectClasses}
+              />
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">Title size</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={8}
+                    max={24}
+                    value={axisFontSize}
+                    onChange={(e) => setAxisFontSize(Number(e.target.value) || 11)}
+                    className={selectClasses + " w-16"}
+                  />
+                  <span className="text-[11px] text-zinc-500">px</span>
+                </div>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">X axis</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={6}
+                    max={20}
+                    value={xTickFontSize}
+                    onChange={(e) => setXTickFontSize(Number(e.target.value) || 11)}
+                    className={selectClasses + " w-16"}
+                  />
+                  <span className="text-[11px] text-zinc-500">px</span>
+                </div>
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">Y axis</span>
+                <div className="flex items-center gap-1">
+                  <input
+                    type="number"
+                    min={6}
+                    max={20}
+                    value={yTickFontSize}
+                    onChange={(e) => setYTickFontSize(Number(e.target.value) || 12)}
+                    className={selectClasses + " w-16"}
+                  />
+                  <span className="text-[11px] text-zinc-500">px</span>
+                </div>
+              </label>
+            </div>
+            <p className="text-[11px] text-zinc-500">Shrink X/Y if bar/category names are squishing together.</p>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-zinc-500">Font</span>
+              <select value={fontFamily} onChange={(e) => setFontFamily(e.target.value as FontFamily)} className={selectClasses}>
+                {FONT_FAMILIES.map((f) => (
+                  <option key={f} value={f}>
+                    {FONT_FAMILY_LABELS[f]}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         )}
 
