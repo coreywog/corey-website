@@ -61,13 +61,26 @@ const filtersSchema = z
 // supports, just the ones that make sense for "move the axis title".
 export const AXIS_X_POSITIONS = ["insideBottom", "bottom"] as const;
 export const AXIS_Y_POSITIONS = ["insideLeft", "left"] as const;
+export const VALUE_FORMATS = ["currency", "number"] as const;
+export type ValueFormat = (typeof VALUE_FORMATS)[number];
+
 const axisLabelsSchema = z
   .object({
     x: z.string().max(60).optional(),
     y: z.string().max(60).optional(),
     xPosition: z.enum(AXIS_X_POSITIONS).optional(),
     yPosition: z.enum(AXIS_Y_POSITIONS).optional(),
-    fontSize: z.number().int().min(8).max(24).optional(),
+    fontSize: z.number().int().min(8).max(24).optional(), // the axis *title* text, not the tick labels
+    // Tick label text — separately adjustable from the title above, since
+    // this is the actual fix for bar/category names overlapping each other
+    // once a tile gets resized narrow: shrinking just the ticks (not the
+    // title) buys back the room they need.
+    xTickFontSize: z.number().int().min(6).max(20).optional(),
+    yTickFontSize: z.number().int().min(6).max(20).optional(),
+    // Whether Y-axis ticks/tooltips read as "$1,234" or plain "1,234" — not
+    // every measure on this dashboard is a dollar amount (e.g. transaction
+    // count), so this shouldn't be permanently currency-only.
+    valueFormat: z.enum(VALUE_FORMATS).optional(),
   })
   .optional();
 

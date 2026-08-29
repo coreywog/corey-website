@@ -11,6 +11,7 @@ import {
   BarChart,
   Pie,
   PieChart,
+  Sector,
   Scatter,
   ScatterChart,
   Cell,
@@ -21,7 +22,8 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
-import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern, ValueFormat } from "@/lib/dashboardConfig";
+import type { BarShapeProps, PieSectorShapeProps } from "recharts";
 
 export type WidgetWithData = {
   id: string;
@@ -44,6 +46,15 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
   currency: "USD",
   maximumFractionDigits: 0,
 });
+const plainNumberFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+/** Y-axis ticks and tooltip values — currency by default (matches every
+ * chart before this was configurable), plain thousands-separated otherwise
+ * for measures that aren't dollar amounts (e.g. a transaction-count metric
+ * shown as a bar chart). See axisLabels.valueFormat. */
+function formatValue(v: number, format: ValueFormat | undefined): string {
+  return format === "number" ? plainNumberFormatter.format(v) : currencyFormatter.format(v);
+}
 
 function EmptyState() {
   return (
@@ -190,21 +201,21 @@ function LineWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x")}
         />
         <YAxis
-          tick={{ fontSize: 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
           tickLine={false}
           axisLine={false}
           width={56}
-          tickFormatter={(v: number) => currencyFormatter.format(v)}
+          tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y")}
         />
-        <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
+        <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
         <Line
           type="monotone"
           dataKey="value"
@@ -241,21 +252,21 @@ function AreaWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x")}
         />
         <YAxis
-          tick={{ fontSize: 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
           tickLine={false}
           axisLine={false}
           width={56}
-          tickFormatter={(v: number) => currencyFormatter.format(v)}
+          tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y")}
         />
-        <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
+        <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
         <Area
           type="monotone"
           dataKey="value"
@@ -288,6 +299,31 @@ function BarWidget({
 }) {
   if (points.length === 0) return <EmptyState />;
   const patternFor = (key: string) => fillPatternOverrides?.[key] ?? fillPattern;
+  // Custom shape instead of <Cell> children: a <Cell> can only restyle the
+  // bar's own outline, but "selected" needs to read as the whole bar lit
+  // up, not just a border — easiest done by drawing a second, brighter
+  // rectangle exactly on top of it.
+  const renderBar = (props: BarShapeProps) => {
+    const point = props.payload as AggregatedPoint;
+    const isSelected = selectedKeys?.has(point.key) ?? false;
+    return (
+      <g onClick={onPointClick ? () => onPointClick(point.key) : undefined} style={onPointClick ? { cursor: "pointer" } : undefined}>
+        <rect x={props.x} y={props.y} width={props.width} height={props.height} fill={resolveFill(patternFor(point.key), point.color)} />
+        {isSelected && (
+          <rect
+            x={props.x}
+            y={props.y}
+            width={props.width}
+            height={props.height}
+            fill="#6366f1"
+            fillOpacity={0.45}
+            stroke="#4338ca"
+            strokeWidth={2}
+          />
+        )}
+      </g>
+    );
+  };
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 28 : 16 }}>
@@ -295,7 +331,7 @@ function BarWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
           tickLine={false}
           axisLine={false}
           interval={0}
@@ -305,27 +341,15 @@ function BarWidget({
           label={axisLabelProp(axisLabels, "x")}
         />
         <YAxis
-          tick={{ fontSize: 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
           tickLine={false}
           axisLine={false}
           width={56}
-          tickFormatter={(v: number) => currencyFormatter.format(v)}
+          tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y")}
         />
-        <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
-        <Bar dataKey="value" isAnimationActive={false}>
-          {points.map((p) => (
-            <Cell
-              key={p.key}
-              fill={resolveFill(patternFor(p.key), p.color)}
-              onClick={onPointClick ? () => onPointClick(p.key) : undefined}
-              stroke={selectedKeys?.has(p.key) ? "#111827" : "none"}
-              strokeWidth={selectedKeys?.has(p.key) ? 2 : 0}
-              strokeDasharray={selectedKeys?.has(p.key) ? "4 3" : undefined}
-              style={onPointClick ? { cursor: "pointer" } : undefined}
-            />
-          ))}
-        </Bar>
+        <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
+        <Bar dataKey="value" isAnimationActive={false} shape={renderBar} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -335,10 +359,12 @@ function StackedBarWidget({
   points,
   series,
   fillPattern,
+  axisLabels,
 }: {
   points: StackedPoint[];
   series: StackedSeries[];
   fillPattern?: FillPattern;
+  axisLabels?: AxisLabels;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
@@ -346,15 +372,24 @@ function StackedBarWidget({
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: 28 }}>
         <FillPatternDefs items={series.map((s) => ({ pattern: fillPattern ?? "solid", color: s.color }))} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
-        <XAxis dataKey="x" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} interval={0} angle={-20} textAnchor="end" height={40} />
+        <XAxis
+          dataKey="x"
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
+          tickLine={false}
+          axisLine={false}
+          interval={0}
+          angle={-20}
+          textAnchor="end"
+          height={40}
+        />
         <YAxis
-          tick={{ fontSize: 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
           tickLine={false}
           axisLine={false}
           width={56}
-          tickFormatter={(v: number) => currencyFormatter.format(v)}
+          tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
         />
-        <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
+        <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
         <Legend wrapperStyle={{ fontSize: 11 }} />
         {series.map((s) => (
           <Bar key={s.key} dataKey={s.key} name={s.label} stackId="stack" fill={resolveFill(fillPattern, s.color)} isAnimationActive={false} />
@@ -379,24 +414,47 @@ function PieWidget({
 }) {
   if (points.length === 0) return <EmptyState />;
   const patternFor = (key: string) => fillPatternOverrides?.[key] ?? fillPattern;
+  // Custom shape, same reasoning as BarWidget's renderBar: a selected slice
+  // needs to read as lit up, not just outlined — drawn here as the normal
+  // sector plus a second, slightly larger translucent sector on top, which
+  // also pops the selection outward a few pixels.
+  const renderSlice = (props: PieSectorShapeProps) => {
+    const point = props.payload as AggregatedPoint;
+    const isSelected = selectedKeys?.has(point.key) ?? false;
+    return (
+      <g onClick={onPointClick ? () => onPointClick(point.key) : undefined} style={onPointClick ? { cursor: "pointer" } : undefined}>
+        <Sector
+          cx={props.cx}
+          cy={props.cy}
+          innerRadius={props.innerRadius}
+          outerRadius={props.outerRadius}
+          startAngle={props.startAngle}
+          endAngle={props.endAngle}
+          fill={resolveFill(patternFor(point.key), point.color)}
+        />
+        {isSelected && (
+          <Sector
+            cx={props.cx}
+            cy={props.cy}
+            innerRadius={props.innerRadius}
+            outerRadius={props.outerRadius + 6}
+            startAngle={props.startAngle}
+            endAngle={props.endAngle}
+            fill="#6366f1"
+            fillOpacity={0.45}
+            stroke="#4338ca"
+            strokeWidth={2}
+          />
+        )}
+      </g>
+    );
+  };
   return (
     <ResponsiveContainer width="100%" height="100%">
       <PieChart>
         <FillPatternDefs items={points.map((p) => ({ pattern: patternFor(p.key) ?? "solid", color: p.color }))} />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
-        <Pie data={points} dataKey="value" nameKey="label" innerRadius="45%" outerRadius="80%" isAnimationActive={false}>
-          {points.map((p) => (
-            <Cell
-              key={p.key}
-              fill={resolveFill(patternFor(p.key), p.color)}
-              onClick={onPointClick ? () => onPointClick(p.key) : undefined}
-              stroke={selectedKeys?.has(p.key) ? "#111827" : "none"}
-              strokeWidth={selectedKeys?.has(p.key) ? 2 : 0}
-              strokeDasharray={selectedKeys?.has(p.key) ? "4 3" : undefined}
-              style={onPointClick ? { cursor: "pointer" } : undefined}
-            />
-          ))}
-        </Pie>
+        <Pie data={points} dataKey="value" nameKey="label" innerRadius="45%" outerRadius="80%" isAnimationActive={false} shape={renderSlice} />
       </PieChart>
     </ResponsiveContainer>
   );
@@ -416,7 +474,7 @@ function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLab
           dataKey="x"
           type="number"
           domain={["dataMin", "dataMax"]}
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11 }}
           tickLine={false}
           axisLine={false}
           tickFormatter={shortDate}
@@ -424,15 +482,15 @@ function ScatterWidget({ points, axisLabels }: { points: ScatterPoint[]; axisLab
         />
         <YAxis
           dataKey="y"
-          tick={{ fontSize: 12 }}
+          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12 }}
           tickLine={false}
           axisLine={false}
           width={56}
-          tickFormatter={(v: number) => currencyFormatter.format(v)}
+          tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y")}
         />
         <Tooltip
-          formatter={(v, name) => (name === "y" ? currencyFormatter.format(Number(v)) : shortDate(Number(v)))}
+          formatter={(v, name) => (name === "y" ? formatValue(Number(v), axisLabels?.valueFormat) : shortDate(Number(v)))}
           labelFormatter={() => ""}
         />
         <Scatter data={points} isAnimationActive={false}>
@@ -772,7 +830,12 @@ export function Widget({
         ) : result.kind === "scatter" ? (
           <ScatterWidget points={result.points} axisLabels={chartConfig?.axisLabels} />
         ) : result.kind === "stacked" ? (
-          <StackedBarWidget points={result.points} series={result.series} fillPattern={chartConfig?.fillPattern} />
+          <StackedBarWidget
+            points={result.points}
+            series={result.series}
+            fillPattern={chartConfig?.fillPattern}
+            axisLabels={chartConfig?.axisLabels}
+          />
         ) : result.kind === "stat" ? (
           <StatWidget result={result} color={chartConfig?.color} />
         ) : widget.type === "bar" || widget.type === "histogram" ? (

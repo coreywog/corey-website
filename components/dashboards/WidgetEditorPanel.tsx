@@ -38,8 +38,18 @@ import type {
   DateButtonPreset,
   LineStyle,
   FillPattern,
+  ValueFormat,
 } from "@/lib/dashboardConfig";
-import { WIDGET_COLORS, AXIS_X_POSITIONS, AXIS_Y_POSITIONS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS, LINE_STYLES, FILL_PATTERNS } from "@/lib/dashboardConfig";
+import {
+  WIDGET_COLORS,
+  AXIS_X_POSITIONS,
+  AXIS_Y_POSITIONS,
+  DATE_BUTTON_PRESETS,
+  GRADIENT_PRESETS,
+  LINE_STYLES,
+  FILL_PATTERNS,
+  VALUE_FORMATS,
+} from "@/lib/dashboardConfig";
 
 type CategoryOption = { category: string; subcategory: string };
 type Account = { id: string; name: string };
@@ -507,6 +517,13 @@ export function WidgetEditorPanel({
     chartConfig?.axisLabels?.yPosition ?? "insideLeft",
   );
   const [axisFontSize, setAxisFontSize] = useState(chartConfig?.axisLabels?.fontSize ?? 11);
+  // The tick labels themselves (bar names, day labels, dollar values) —
+  // independent of the axis title's font size above. This is the actual
+  // fix for category names squishing together once a tile gets resized
+  // narrow: shrinking just the ticks buys back the room they need.
+  const [xTickFontSize, setXTickFontSize] = useState(chartConfig?.axisLabels?.xTickFontSize ?? 11);
+  const [yTickFontSize, setYTickFontSize] = useState(chartConfig?.axisLabels?.yTickFontSize ?? 12);
+  const [valueFormat, setValueFormat] = useState<ValueFormat>(chartConfig?.axisLabels?.valueFormat ?? "currency");
   const [dateButtons, setDateButtons] = useState<DateButtonConfig[]>(chartConfig?.dateButtons ?? []);
   const [addingCustomButton, setAddingCustomButton] = useState(false);
   const [customButtonLabel, setCustomButtonLabel] = useState("");
@@ -541,7 +558,7 @@ export function WidgetEditorPanel({
   const needsGroupBy = !isText && !isScatter && !isHistogram && !isCalendar && type !== "stat";
   const isTimeSeries = groupBy === "day" || groupBy === "month";
   const showLimit = (needsGroupBy && groupBy !== "" && !isTimeSeries && (type === "bar" || type === "pie")) || isStackedBar;
-  const showAxisLabels = type === "line" || type === "area" || type === "bar" || isScatter || isHistogram;
+  const showAxisLabels = type === "line" || type === "area" || type === "bar" || isScatter || isHistogram || isStackedBar;
   const showColor = type === "line" || type === "area" || type === "stat" || isCalendar;
   // The other coloring mode — per-point, for chart types with more than one
   // visual element at once. Mutually exclusive with showColor by type (a
@@ -658,12 +675,19 @@ export function WidgetEditorPanel({
       ...(parsedAmountMax !== undefined && !Number.isNaN(parsedAmountMax) ? { amountMax: parsedAmountMax } : {}),
     };
 
+    // Unlike the axis-title fields below, tick size/value format are worth
+    // keeping even with no title text set at all — shrinking bar-name text
+    // to stop it squishing together is a common case with no title
+    // involved, so the guard here can't be "only if a title was typed."
     const axisLabels: ChartWidgetConfig["axisLabels"] =
-      showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim())
+      showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim() || xTickFontSize !== 11 || yTickFontSize !== 12 || valueFormat !== "currency")
         ? {
             ...(xAxisLabel.trim() ? { x: xAxisLabel.trim(), xPosition: xAxisPosition } : {}),
             ...(yAxisLabel.trim() ? { y: yAxisLabel.trim(), yPosition: yAxisPosition } : {}),
             fontSize: axisFontSize,
+            xTickFontSize,
+            yTickFontSize,
+            ...(valueFormat !== "currency" ? { valueFormat } : {}),
           }
         : undefined;
 
@@ -713,6 +737,9 @@ export function WidgetEditorPanel({
     xAxisPosition,
     yAxisPosition,
     axisFontSize,
+    xTickFontSize,
+    yTickFontSize,
+    valueFormat,
     color,
     colorMode,
     pointColors,
@@ -863,14 +890,20 @@ export function WidgetEditorPanel({
           (mounted ? "translate-x-0" : "-translate-x-full")
         }
       >
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{existing ? "Edit widget" : "Add widget"}</h2>
-          <button type="button" onClick={onClose} className="text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100">
-            ✕
-          </button>
-        </div>
+        {/* No heading here on purpose — "Add widget"/"Edit widget" was just
+            a label the drawer's own presence already makes obvious, and
+            dropping it lets everything below start higher up. The close
+            button floats in the corner instead of taking its own row. */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute top-4 right-4 text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100"
+        >
+          ✕
+        </button>
 
-        <label className="flex flex-col gap-1">
+        <label className="flex flex-col gap-1 pr-8">
           <span className={labelClasses}>Title (optional — auto-generated if left blank)</span>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className={selectClasses} />
         </label>
@@ -1000,123 +1033,127 @@ export function WidgetEditorPanel({
 
                     {isOpen && filterKey === "date" && (
                       <div className="flex flex-col gap-2.5 py-1 pl-5">
-                        <div className="flex flex-col gap-1">
-                          <span className="text-[11px] text-zinc-500">
-                            Fluid — recalculated from today every time this is viewed
-                          </span>
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {([1, 3, 6, 12] as const).map((m) => (
-                              <button
-                                key={m}
-                                type="button"
-                                onClick={() => {
-                                  setDateMode("relative");
-                                  setRelativeMonths(m);
-                                }}
-                                className={pillClasses(dateMode === "relative" && relativeMonths === m)}
-                              >
-                                {m}mo
+                        <div className="flex flex-wrap gap-3">
+                          <div className="flex min-w-0 flex-1 flex-col gap-1">
+                            <span className="text-[11px] text-zinc-500">
+                              Fluid — recalculated from today every time this is viewed
+                            </span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {([1, 3, 6, 12] as const).map((m) => (
+                                <button
+                                  key={m}
+                                  type="button"
+                                  onClick={() => {
+                                    setDateMode("relative");
+                                    setRelativeMonths(m);
+                                  }}
+                                  className={pillClasses(dateMode === "relative" && relativeMonths === m)}
+                                >
+                                  {m}mo
+                                </button>
+                              ))}
+                              {RELATIVE_DAY_OPTIONS.map((d) => (
+                                <button
+                                  key={d.label}
+                                  type="button"
+                                  onClick={() => {
+                                    setDateMode("relativeDays");
+                                    setRelativeDaysAgo(d.days);
+                                  }}
+                                  className={pillClasses(dateMode === "relativeDays" && relativeDaysAgo === d.days)}
+                                >
+                                  {d.label}
+                                </button>
+                              ))}
+                              <button type="button" onClick={() => setDateMode("ytd")} className={pillClasses(dateMode === "ytd")}>
+                                Year to date
                               </button>
-                            ))}
-                            {RELATIVE_DAY_OPTIONS.map((d) => (
+                              <button type="button" onClick={() => setDateMode("allTime")} className={pillClasses(dateMode === "allTime")}>
+                                All time
+                              </button>
                               <button
-                                key={d.label}
                                 type="button"
                                 onClick={() => {
                                   setDateMode("relativeDays");
-                                  setRelativeDaysAgo(d.days);
+                                  setCustomDaysAgoDraft(String(relativeDaysAgo));
                                 }}
-                                className={pillClasses(dateMode === "relativeDays" && relativeDaysAgo === d.days)}
+                                className={pillClasses(
+                                  dateMode === "relativeDays" && !RELATIVE_DAY_OPTIONS.some((d) => d.days === relativeDaysAgo),
+                                )}
                               >
-                                {d.label}
-                              </button>
-                            ))}
-                            <button type="button" onClick={() => setDateMode("ytd")} className={pillClasses(dateMode === "ytd")}>
-                              Year to date
-                            </button>
-                            <button type="button" onClick={() => setDateMode("allTime")} className={pillClasses(dateMode === "allTime")}>
-                              All time
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setDateMode("relativeDays");
-                                setCustomDaysAgoDraft(String(relativeDaysAgo));
-                              }}
-                              className={pillClasses(
-                                dateMode === "relativeDays" && !RELATIVE_DAY_OPTIONS.some((d) => d.days === relativeDaysAgo),
-                              )}
-                            >
-                              Custom…
-                            </button>
-                          </div>
-                          {dateMode === "relativeDays" && !RELATIVE_DAY_OPTIONS.some((d) => d.days === relativeDaysAgo) && (
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="number"
-                                min={0}
-                                max={3650}
-                                value={customDaysAgoDraft}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  setCustomDaysAgoDraft(v);
-                                  const n = Number(v);
-                                  if (v.trim() && Number.isInteger(n) && n >= 0 && n <= 3650) setRelativeDaysAgo(n);
-                                }}
-                                placeholder="45"
-                                className={selectClasses + " w-20"}
-                              />
-                              <span className="text-xs text-zinc-500">days ago, through today</span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex flex-col gap-1 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
-                          <span className="text-[11px] text-zinc-500">Fixed — an exact range that doesn&apos;t move</span>
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <button type="button" onClick={() => setDateMode("custom")} className={pillClasses(dateMode === "custom")}>
-                              Custom range
-                            </button>
-                          </div>
-                          {dateMode === "specific" && (
-                            // Legacy "one month" widgets saved before this mode was
-                            // retired from the picker — still editable so an old
-                            // config doesn't strand its owner, just no longer a way
-                            // to newly enter this mode.
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="month"
-                                value={specificMonth}
-                                onChange={(e) => setSpecificMonth(e.target.value)}
-                                className={selectClasses}
-                              />
-                              {formatMonthValue(specificMonth) && (
-                                <span className="text-xs text-zinc-500">{formatMonthValue(specificMonth)}</span>
-                              )}
-                              <button type="button" onClick={() => setDateMode("custom")} className="text-xs text-indigo-600 underline dark:text-indigo-400">
-                                Switch to custom range
+                                Custom…
                               </button>
                             </div>
-                          )}
-                          {dateMode === "custom" && (
-                            <div className="flex flex-col gap-1.5">
-                              <div className="flex items-center gap-2">
-                                <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
-                                <span className="text-xs text-zinc-500">to</span>
+                            {dateMode === "relativeDays" && !RELATIVE_DAY_OPTIONS.some((d) => d.days === relativeDaysAgo) && (
+                              <div className="flex flex-wrap items-center gap-2">
                                 <input
-                                  type="date"
-                                  value={customEnd}
-                                  onChange={(e) => setCustomEnd(e.target.value)}
-                                  disabled={openEnded}
-                                  className={selectClasses + (openEnded ? " opacity-40" : "")}
+                                  type="number"
+                                  min={0}
+                                  max={3650}
+                                  value={customDaysAgoDraft}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setCustomDaysAgoDraft(v);
+                                    const n = Number(v);
+                                    if (v.trim() && Number.isInteger(n) && n >= 0 && n <= 3650) setRelativeDaysAgo(n);
+                                  }}
+                                  placeholder="45"
+                                  className={selectClasses + " w-20"}
                                 />
+                                <span className="text-xs text-zinc-500">days ago, through today</span>
                               </div>
-                              <label className="flex items-center gap-2">
-                                <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
-                                <span className="text-sm">No end date — always include the latest data</span>
-                              </label>
+                            )}
+                          </div>
+
+                          <span aria-hidden className="w-px shrink-0 self-stretch bg-black/[.12] dark:bg-white/[.15]" />
+
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <span className="text-[11px] text-zinc-500">Fixed — an exact range that doesn&apos;t move</span>
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <button type="button" onClick={() => setDateMode("custom")} className={pillClasses(dateMode === "custom")}>
+                                Custom range
+                              </button>
                             </div>
-                          )}
+                            {dateMode === "specific" && (
+                              // Legacy "one month" widgets saved before this mode was
+                              // retired from the picker — still editable so an old
+                              // config doesn't strand its owner, just no longer a way
+                              // to newly enter this mode.
+                              <div className="flex flex-wrap items-center gap-2">
+                                <input
+                                  type="month"
+                                  value={specificMonth}
+                                  onChange={(e) => setSpecificMonth(e.target.value)}
+                                  className={selectClasses}
+                                />
+                                {formatMonthValue(specificMonth) && (
+                                  <span className="text-xs text-zinc-500">{formatMonthValue(specificMonth)}</span>
+                                )}
+                                <button type="button" onClick={() => setDateMode("custom")} className="text-xs text-indigo-600 underline dark:text-indigo-400">
+                                  Switch to custom range
+                                </button>
+                              </div>
+                            )}
+                            {dateMode === "custom" && (
+                              <div className="flex flex-col gap-1.5">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
+                                  <span className="text-xs text-zinc-500">to</span>
+                                  <input
+                                    type="date"
+                                    value={customEnd}
+                                    onChange={(e) => setCustomEnd(e.target.value)}
+                                    disabled={openEnded}
+                                    className={selectClasses + (openEnded ? " opacity-40" : "")}
+                                  />
+                                </div>
+                                <label className="flex items-center gap-2">
+                                  <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
+                                  <span className="text-sm">No end date — always include the latest data</span>
+                                </label>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         {availableRange?.earliest && availableRange?.latest && (
@@ -1490,6 +1527,48 @@ export function WidgetEditorPanel({
                       />
                       <span className="text-[11px] text-zinc-500">px</span>
                     </label>
+
+                    <div className="mt-1 flex flex-col gap-1.5 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
+                      <span className="text-[11px] text-zinc-500">
+                        Labels &amp; values — shrink these if bar/category names are squishing together
+                      </span>
+                      <label className="flex items-center gap-2">
+                        <span className="text-[11px] text-zinc-500">Bar/category names</span>
+                        <input
+                          type="number"
+                          min={6}
+                          max={20}
+                          value={xTickFontSize}
+                          onChange={(e) => setXTickFontSize(Number(e.target.value) || 11)}
+                          className={selectClasses + " w-16"}
+                        />
+                        <span className="text-[11px] text-zinc-500">px</span>
+                      </label>
+                      <label className="flex items-center gap-2">
+                        <span className="text-[11px] text-zinc-500">Values</span>
+                        <input
+                          type="number"
+                          min={6}
+                          max={20}
+                          value={yTickFontSize}
+                          onChange={(e) => setYTickFontSize(Number(e.target.value) || 12)}
+                          className={selectClasses + " w-16"}
+                        />
+                        <span className="text-[11px] text-zinc-500">px</span>
+                      </label>
+                      <div className="flex items-center gap-1.5">
+                        {VALUE_FORMATS.map((f) => (
+                          <button
+                            key={f}
+                            type="button"
+                            onClick={() => setValueFormat(f)}
+                            className={pillClasses(valueFormat === f)}
+                          >
+                            {f === "currency" ? "$1,234" : "1,234"}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
                 )}
 

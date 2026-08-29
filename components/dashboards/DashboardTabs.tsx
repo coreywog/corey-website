@@ -66,6 +66,10 @@ export function DashboardTabs({
   const [error, setError] = useState<string | null>(null);
   const [published, setPublished] = useState(initialPublished);
   const [togglingPublish, setTogglingPublish] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteNameInput, setDeleteNameInput] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // A refresh (e.g. after adding a widget) re-renders with the same set of
   // tab ids, so activeTabId just carries over untouched. Only reset it when
@@ -121,6 +125,25 @@ export function DashboardTabs({
       router.refresh();
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function handleDeleteDashboard() {
+    if (deleteNameInput !== dashboardName) return; // button is disabled for this too — just a safety net
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const res = await fetch(`/api/dashboards/${dashboardId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setDeleteError(body?.error ?? `Failed to delete dashboard (${res.status}).`);
+        setDeleting(false);
+        return;
+      }
+      router.push("/dashboards");
+    } catch {
+      setDeleteError("Network error — try again.");
+      setDeleting(false);
     }
   }
 
@@ -220,9 +243,66 @@ export function DashboardTabs({
           >
             {published ? "Edit dashboard" : "Publish"}
           </button>
+          <button
+            type="button"
+            onClick={() => setDeleteModalOpen(true)}
+            className="rounded-md border border-red-200 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:border-red-900/50 dark:text-red-400 dark:hover:bg-red-950/30"
+          >
+            Delete dashboard
+          </button>
         </div>
       </div>
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+
+      {deleteModalOpen && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/40" onClick={() => (deleting ? null : setDeleteModalOpen(false))} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="flex w-full max-w-sm flex-col gap-3 rounded-xl border border-black/[.1] bg-[var(--background)] p-5 shadow-xl dark:border-white/[.15]">
+              <h2 className="text-lg font-semibold text-red-600 dark:text-red-400">Delete dashboard</h2>
+              <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                This will permanently delete <span className="font-semibold">{dashboardName}</span> — every tab and
+                every widget in it. This cannot be undone.
+              </p>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">
+                  Type <span className="font-mono font-semibold">{dashboardName}</span> to confirm
+                </span>
+                <input
+                  type="text"
+                  autoFocus
+                  value={deleteNameInput}
+                  onChange={(e) => setDeleteNameInput(e.target.value)}
+                  className={inputClasses}
+                />
+              </label>
+              {deleteError && <p className="text-sm text-red-600 dark:text-red-400">{deleteError}</p>}
+              <div className="mt-1 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteModalOpen(false);
+                    setDeleteNameInput("");
+                    setDeleteError(null);
+                  }}
+                  disabled={deleting}
+                  className="rounded-md border border-black/[.1] px-4 py-2 text-sm text-zinc-600 hover:bg-black/[.03] disabled:opacity-50 dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteDashboard}
+                  disabled={deleting || deleteNameInput !== dashboardName}
+                  className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-40 dark:bg-red-700 dark:hover:bg-red-600"
+                >
+                  {deleting ? "Deleting…" : "Confirm delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
       {activeTab && (
         <DashboardGrid
