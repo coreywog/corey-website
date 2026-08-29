@@ -100,17 +100,24 @@ export function resolveFill(pattern: FillPattern | undefined, color: string): st
   return `url(#${fillPatternId(pattern, color)})`;
 }
 
-/** Renders one <pattern> per distinct color for the chosen texture — sits
- * inside the chart's own <defs>, right next to the shapes that reference
- * it via resolveFill/fillPatternId. No-op for "solid" (nothing to define).
- * Exported so the editor's Style section can render true-to-life preview
- * swatches off the exact same pattern defs, not a hand-drawn approximation. */
-export function FillPatternDefs({ pattern, colors }: { pattern: FillPattern | undefined; colors: string[] }) {
-  if (!pattern || pattern === "solid") return null;
-  const unique = [...new Set(colors)];
+/** Renders one <pattern> per distinct (pattern, color) pair actually in use
+ * — sits inside the chart's own <defs>, right next to the shapes that
+ * reference it via resolveFill/fillPatternId. Takes a list rather than one
+ * shared pattern + colors so per-point overrides (fillPatternOverrides) can
+ * mix textures within a single chart, e.g. one bar dotted, the rest solid.
+ * "solid" entries need no def and are skipped. Exported so the editor's
+ * Style section can render true-to-life preview swatches off the exact
+ * same pattern defs, not a hand-drawn approximation. */
+export function FillPatternDefs({ items }: { items: { pattern: FillPattern; color: string }[] }) {
+  const unique = new Map<string, { pattern: FillPattern; color: string }>();
+  for (const item of items) {
+    if (item.pattern === "solid") continue;
+    unique.set(fillPatternId(item.pattern, item.color), item);
+  }
+  if (unique.size === 0) return null;
   return (
     <defs>
-      {unique.map((c) => {
+      {[...unique.values()].map(({ pattern, color: c }) => {
         const id = fillPatternId(pattern, c);
         switch (pattern) {
           case "dots":
@@ -155,6 +162,10 @@ export function FillPatternDefs({ pattern, colors }: { pattern: FillPattern | un
                 <line x1={3.5} y1={0} x2={3.5} y2={7} stroke={c} strokeWidth={2} />
               </pattern>
             );
+          case "solid":
+            // Filtered out above — kept only so the switch is exhaustive
+            // over FillPattern without an unchecked `default`.
+            return null;
         }
       })}
     </defs>
@@ -226,7 +237,7 @@ function AreaWidget({
   return (
     <ResponsiveContainer width="100%" height="100%">
       <AreaChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 20 : 0 }}>
-        <FillPatternDefs pattern={fillPattern} colors={[fill]} />
+        <FillPatternDefs items={[{ pattern: fillPattern ?? "solid", color: fill }]} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
@@ -264,16 +275,23 @@ function BarWidget({
   points,
   axisLabels,
   fillPattern,
+  fillPatternOverrides,
+  onPointClick,
+  selectedKeys,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
   fillPattern?: FillPattern;
+  fillPatternOverrides?: Record<string, FillPattern>;
+  onPointClick?: (key: string) => void;
+  selectedKeys?: Set<string>;
 }) {
   if (points.length === 0) return <EmptyState />;
+  const patternFor = (key: string) => fillPatternOverrides?.[key] ?? fillPattern;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: axisLabels?.x ? 28 : 16 }}>
-        <FillPatternDefs pattern={fillPattern} colors={points.map((p) => p.color)} />
+        <FillPatternDefs items={points.map((p) => ({ pattern: patternFor(p.key) ?? "solid", color: p.color }))} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
@@ -297,7 +315,15 @@ function BarWidget({
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Bar dataKey="value" isAnimationActive={false}>
           {points.map((p) => (
-            <Cell key={p.key} fill={resolveFill(fillPattern, p.color)} />
+            <Cell
+              key={p.key}
+              fill={resolveFill(patternFor(p.key), p.color)}
+              onClick={onPointClick ? () => onPointClick(p.key) : undefined}
+              stroke={selectedKeys?.has(p.key) ? "#111827" : "none"}
+              strokeWidth={selectedKeys?.has(p.key) ? 2 : 0}
+              strokeDasharray={selectedKeys?.has(p.key) ? "4 3" : undefined}
+              style={onPointClick ? { cursor: "pointer" } : undefined}
+            />
           ))}
         </Bar>
       </BarChart>
@@ -318,7 +344,7 @@ function StackedBarWidget({
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8, bottom: 28 }}>
-        <FillPatternDefs pattern={fillPattern} colors={series.map((s) => s.color)} />
+        <FillPatternDefs items={series.map((s) => ({ pattern: fillPattern ?? "solid", color: s.color }))} />
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis dataKey="x" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} interval={0} angle={-20} textAnchor="end" height={40} />
         <YAxis
@@ -338,16 +364,37 @@ function StackedBarWidget({
   );
 }
 
-function PieWidget({ points, fillPattern }: { points: AggregatedPoint[]; fillPattern?: FillPattern }) {
+function PieWidget({
+  points,
+  fillPattern,
+  fillPatternOverrides,
+  onPointClick,
+  selectedKeys,
+}: {
+  points: AggregatedPoint[];
+  fillPattern?: FillPattern;
+  fillPatternOverrides?: Record<string, FillPattern>;
+  onPointClick?: (key: string) => void;
+  selectedKeys?: Set<string>;
+}) {
   if (points.length === 0) return <EmptyState />;
+  const patternFor = (key: string) => fillPatternOverrides?.[key] ?? fillPattern;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <PieChart>
-        <FillPatternDefs pattern={fillPattern} colors={points.map((p) => p.color)} />
+        <FillPatternDefs items={points.map((p) => ({ pattern: patternFor(p.key) ?? "solid", color: p.color }))} />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
         <Pie data={points} dataKey="value" nameKey="label" innerRadius="45%" outerRadius="80%" isAnimationActive={false}>
           {points.map((p) => (
-            <Cell key={p.key} fill={resolveFill(fillPattern, p.color)} />
+            <Cell
+              key={p.key}
+              fill={resolveFill(patternFor(p.key), p.color)}
+              onClick={onPointClick ? () => onPointClick(p.key) : undefined}
+              stroke={selectedKeys?.has(p.key) ? "#111827" : "none"}
+              strokeWidth={selectedKeys?.has(p.key) ? 2 : 0}
+              strokeDasharray={selectedKeys?.has(p.key) ? "4 3" : undefined}
+              style={onPointClick ? { cursor: "pointer" } : undefined}
+            />
           ))}
         </Pie>
       </PieChart>
@@ -427,14 +474,30 @@ function TextWidget({ text }: { text: string }) {
   );
 }
 
-function TableWidget({ points }: { points: AggregatedPoint[] }) {
+function TableWidget({
+  points,
+  onPointClick,
+  selectedKeys,
+}: {
+  points: AggregatedPoint[];
+  onPointClick?: (key: string) => void;
+  selectedKeys?: Set<string>;
+}) {
   if (points.length === 0) return <EmptyState />;
   return (
     <div className="h-full overflow-y-auto text-sm">
       <table className="w-full">
         <tbody>
           {points.map((p) => (
-            <tr key={p.key} className="border-b border-black/[.05] dark:border-white/[.06]">
+            <tr
+              key={p.key}
+              onClick={onPointClick ? () => onPointClick(p.key) : undefined}
+              className={
+                "border-b border-black/[.05] dark:border-white/[.06] " +
+                (onPointClick ? "cursor-pointer " : "") +
+                (selectedKeys?.has(p.key) ? "bg-black/[.05] dark:bg-white/[.08]" : "")
+              }
+            >
               <td className="py-1 pr-2">
                 <span className="mr-2 inline-block h-2 w-2 rounded-full align-middle" style={{ backgroundColor: p.color }} />
                 {p.label}
@@ -630,7 +693,20 @@ function DateRangeButtons({
  * interactive content underneath (a future table's scroll, tooltips) isn't
  * fighting drag gestures.
  */
-export function Widget({ widget }: { widget: WidgetWithData }) {
+export function Widget({
+  widget,
+  onPointClick,
+  selectedKeys,
+}: {
+  widget: WidgetWithData;
+  // Editor-only: lets a viewer click a bar/slice/row directly in the chart
+  // to select it for bulk color/pattern editing, instead of a separate list
+  // of chip buttons. Undefined on the real dashboard (Widget is rendered
+  // read-only there), so this is a no-op there — no cursor change, no click
+  // handler attached.
+  onPointClick?: (key: string) => void;
+  selectedKeys?: Set<string>;
+}) {
   const title = widget.title ?? "Widget";
   const chartConfig = widget.config?.dataSource === "transactions" ? widget.config : undefined;
   const dateButtons = chartConfig?.dateButtons ?? [];
@@ -700,11 +776,24 @@ export function Widget({ widget }: { widget: WidgetWithData }) {
         ) : result.kind === "stat" ? (
           <StatWidget result={result} color={chartConfig?.color} />
         ) : widget.type === "bar" || widget.type === "histogram" ? (
-          <BarWidget points={result.points} axisLabels={chartConfig?.axisLabels} fillPattern={chartConfig?.fillPattern} />
+          <BarWidget
+            points={result.points}
+            axisLabels={chartConfig?.axisLabels}
+            fillPattern={chartConfig?.fillPattern}
+            fillPatternOverrides={chartConfig?.fillPatternOverrides}
+            onPointClick={onPointClick}
+            selectedKeys={selectedKeys}
+          />
         ) : widget.type === "pie" ? (
-          <PieWidget points={result.points} fillPattern={chartConfig?.fillPattern} />
+          <PieWidget
+            points={result.points}
+            fillPattern={chartConfig?.fillPattern}
+            fillPatternOverrides={chartConfig?.fillPatternOverrides}
+            onPointClick={onPointClick}
+            selectedKeys={selectedKeys}
+          />
         ) : widget.type === "table" ? (
-          <TableWidget points={result.points} />
+          <TableWidget points={result.points} onPointClick={onPointClick} selectedKeys={selectedKeys} />
         ) : widget.type === "calendar" ? (
           <CalendarWidget points={result.points} color={chartConfig?.color} />
         ) : widget.type === "area" ? (

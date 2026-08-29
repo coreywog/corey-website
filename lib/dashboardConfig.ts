@@ -186,6 +186,11 @@ const chartConfigSchema = z.object({
   // set either, both, or neither.
   lineStyle: z.enum(LINE_STYLES).optional(),
   fillPattern: z.enum(FILL_PATTERNS).optional(),
+  // Per-point pattern overrides — same shape and same selection mechanism
+  // as colorOverrides above (click points in the editor's live preview,
+  // then pick a pattern), keyed by the point's own `key` so it survives
+  // re-sorting or a changed Top-N limit just like colorOverrides does.
+  fillPatternOverrides: z.record(z.string(), z.enum(FILL_PATTERNS)).optional(),
   // Renders a small quick-range button row on the tile itself — on the
   // live dashboard, not just the editor — that overrides dateRange for
   // that viewer's session only (re-fetches via the same preview endpoint

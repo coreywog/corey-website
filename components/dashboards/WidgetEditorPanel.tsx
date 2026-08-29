@@ -187,6 +187,30 @@ const FILL_PATTERN_LABELS: Record<FillPattern, string> = {
   verticalLines: "Vertical",
 };
 
+// Rendered twice in the Style section (the chart-wide default, and — only
+// once something's selected in the preview — an "apply to just these"
+// row), so it's its own component rather than inline JSX repeated twice.
+function FillPatternButton({ pattern, active, onClick }: { pattern: FillPattern; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "flex items-center gap-2 rounded-lg border-2 px-2.5 py-1.5 text-xs font-medium transition-colors " +
+        (active
+          ? "border-zinc-900 bg-zinc-900/[.04] text-zinc-900 dark:border-zinc-50 dark:bg-zinc-50/[.08] dark:text-zinc-50 creamsicle:border-orange-600 creamsicle:bg-orange-50 creamsicle:text-orange-900"
+          : "border-black/[.1] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]")
+      }
+    >
+      <svg width="20" height="16" viewBox="0 0 20 16" aria-hidden className="shrink-0 rounded-sm">
+        <FillPatternDefs items={[{ pattern, color: "#6366f1" }]} />
+        <rect width="20" height="16" rx="2" fill={resolveFill(pattern, "#6366f1")} />
+      </svg>
+      {FILL_PATTERN_LABELS[pattern]}
+    </button>
+  );
+}
+
 /**
  * Add/edit panel for one widget — a left-side drawer, not a centered modal.
  * Laid out as two columns once a type is picked: data sources on the left,
@@ -283,6 +307,12 @@ export function WidgetEditorPanel({
   // none) is active above.
   const [lineStyle, setLineStyle] = useState<LineStyle>(chartConfig?.lineStyle ?? "solid");
   const [fillPattern, setFillPattern] = useState<FillPattern>(chartConfig?.fillPattern ?? "solid");
+  // Per-point pattern overrides — shares selectedPointKeys with Specific
+  // Colors above (click the same bars/slices in the preview, apply either
+  // a color or a pattern, or both, to that same selection).
+  const [fillPatternOverrides, setFillPatternOverrides] = useState<Record<string, FillPattern>>(
+    chartConfig?.fillPatternOverrides ?? {},
+  );
 
   function togglePointSelected(key: string) {
     setSelectedPointKeys((prev) => {
@@ -305,6 +335,22 @@ export function WidgetEditorPanel({
   function resetPointColors() {
     setPointColors({});
     setSelectedPointKeys(new Set());
+  }
+
+  // Applies a fill pattern to whichever points are selected — same
+  // selection used by applyColorToSelected above, so one click in the
+  // preview sets up both a color and a pattern at once if you want.
+  function applyPatternToSelected(pattern: FillPattern) {
+    if (selectedPointKeys.size === 0) return;
+    setFillPatternOverrides((prev) => {
+      const next = { ...prev };
+      for (const key of selectedPointKeys) next[key] = pattern;
+      return next;
+    });
+  }
+
+  function resetFillPatternOverrides() {
+    setFillPatternOverrides({});
   }
 
   function pickColor(next: string) {
@@ -356,6 +402,7 @@ export function WidgetEditorPanel({
     if (dateButtons.some((b) => b.kind === "relativeDays" && b.days === n)) return;
     setDateButtons((prev) => [...prev, { kind: "relativeDays", days: n }]);
     setCustomButtonDays("");
+    setAddingCustomDaysButton(false);
   }
   const [metric, setMetric] = useState<Metric>(chartConfig?.metric ?? "spendingTotal");
   const [customMetricId, setCustomMetricId] = useState<string | undefined>(chartConfig?.customMetricId);
@@ -465,6 +512,7 @@ export function WidgetEditorPanel({
   const [customButtonLabel, setCustomButtonLabel] = useState("");
   const [customButtonStart, setCustomButtonStart] = useState("");
   const [customButtonEnd, setCustomButtonEnd] = useState("");
+  const [addingCustomDaysButton, setAddingCustomDaysButton] = useState(false);
   const [customButtonDays, setCustomButtonDays] = useState("");
 
   const [preview, setPreview] = useState<WidgetWithData["result"] | null>(null);
@@ -504,6 +552,12 @@ export function WidgetEditorPanel({
   // table/stat/calendar/scatter don't have one worth theming this way).
   const showLineStyle = type === "line" || type === "area";
   const showFillPattern = type === "bar" || isHistogram || type === "pie" || isStackedBar || type === "area";
+  // Whether Color/Colors and Style each have anything to show at all — used
+  // to lay them out as two side-by-side columns when both apply (so
+  // picking a color doesn't push the style options below the fold), or
+  // just one full-width column when only one does.
+  const hasColorSection = showColor || showMultiColor;
+  const hasStyleSection = showLineStyle || showFillPattern;
   // Every account explicitly checked, individually, one at a time — not the
   // same as an empty selection (which means "no filter, use the same
   // cash-flow-account default every other page uses"). Selecting every
@@ -628,6 +682,7 @@ export function WidgetEditorPanel({
       ...(showMultiColor && colorMode === "specific" && Object.keys(pointColors).length ? { colorOverrides: pointColors } : {}),
       ...(showLineStyle && lineStyle !== "solid" ? { lineStyle } : {}),
       ...(showFillPattern && fillPattern !== "solid" ? { fillPattern } : {}),
+      ...(showFillPattern && Object.keys(fillPatternOverrides).length ? { fillPatternOverrides } : {}),
       ...(dateButtons.length ? { dateButtons } : {}),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
@@ -665,6 +720,7 @@ export function WidgetEditorPanel({
     gradientTo,
     lineStyle,
     fillPattern,
+    fillPatternOverrides,
     dateButtons,
   ]);
 
@@ -702,7 +758,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, dateButtons]);
+  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, fillPatternOverrides, dateButtons]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -716,11 +772,6 @@ export function WidgetEditorPanel({
     if (config.dataSource === "text") return { kind: "text", text: config.text };
     return preview ?? { error: previewLoading ? "Loading…" : "Fill in the fields to see a preview." };
   }, [config, isText, preview, previewLoading]);
-
-  // The live preview's own points double as the "columns to color" list in
-  // the Specific Colors card below — always in sync with whatever the
-  // current groupBy/filters actually produce, no separate fetch needed.
-  const previewPoints = "kind" in draftResult && draftResult.kind === "series" ? draftResult.points : [];
 
   // Reports the current draft up to DashboardGrid, which renders it in the
   // actual grid slot too — sizing/dragging the ghost tile still works the
@@ -1494,9 +1545,14 @@ export function WidgetEditorPanel({
         }
       >
         <span className={labelClasses}>Preview</span>
+        {showMultiColor && (
+          <p className="-mt-2 text-[11px] text-zinc-500">Click a bar, slice, or row below to select it for Colors/Style.</p>
+        )}
         <div className="h-96 shrink-0 overflow-hidden rounded-xl border border-black/[.08] dark:border-white/[.1]">
           <Widget
             widget={{ id: "__preview__", type, title: title.trim() || null, x: 0, y: 0, w: 0, h: 0, result: draftResult, config }}
+            onPointClick={showMultiColor ? togglePointSelected : undefined}
+            selectedKeys={showMultiColor ? selectedPointKeys : undefined}
           />
         </div>
 
@@ -1551,7 +1607,7 @@ export function WidgetEditorPanel({
                   <span className="text-[11px] text-zinc-500">
                     Fluid — only ranges that fit inside the Date filter above ({widgetScopeDays === Infinity ? "unbounded" : `≤${widgetScopeDays}d`}) are offered
                   </span>
-                  <div className="flex flex-wrap gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     {DATE_BUTTON_PRESETS.filter(
                       (p) =>
                         !dateButtons.some((b) => b.kind === "preset" && b.preset === p) &&
@@ -1566,31 +1622,46 @@ export function WidgetEditorPanel({
                         + {dateButtonLabel({ kind: "preset", preset: p as DateButtonPreset })}
                       </button>
                     ))}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <input
-                      type="number"
-                      min={0}
-                      max={widgetScopeDays === Infinity ? 3650 : widgetScopeDays}
-                      value={customButtonDays}
-                      onChange={(e) => setCustomButtonDays(e.target.value)}
-                      placeholder="e.g. 5"
-                      className={selectClasses + " w-20"}
-                    />
-                    <span className="text-xs text-zinc-500">days ago</span>
-                    <button
-                      type="button"
-                      onClick={addCustomDaysButton}
-                      disabled={
-                        !customButtonDays.trim() ||
-                        !Number.isInteger(Number(customButtonDays)) ||
-                        Number(customButtonDays) < 0 ||
-                        Number(customButtonDays) > widgetScopeDays
-                      }
-                      className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
-                    >
-                      Add
-                    </button>
+                    <span aria-hidden className="h-5 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15]" />
+                    {addingCustomDaysButton ? (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <input
+                          type="number"
+                          min={0}
+                          max={widgetScopeDays === Infinity ? 3650 : widgetScopeDays}
+                          value={customButtonDays}
+                          onChange={(e) => setCustomButtonDays(e.target.value)}
+                          placeholder="e.g. 5"
+                          autoFocus
+                          className={selectClasses + " w-20"}
+                        />
+                        <span className="text-xs text-zinc-500">days ago</span>
+                        <button
+                          type="button"
+                          onClick={addCustomDaysButton}
+                          disabled={
+                            !customButtonDays.trim() ||
+                            !Number.isInteger(Number(customButtonDays)) ||
+                            Number(customButtonDays) < 0 ||
+                            Number(customButtonDays) > widgetScopeDays
+                          }
+                          className="rounded-full bg-zinc-900 px-3 py-1 text-xs font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900"
+                        >
+                          Add
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAddingCustomDaysButton(false)}
+                          className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => setAddingCustomDaysButton(true)} className={pillClasses(false)}>
+                        + Custom
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -1646,275 +1717,271 @@ export function WidgetEditorPanel({
           </div>
         )}
 
-        {typeChosen && showColor && (
-          <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
-            <span className={labelClasses}>Color</span>
-            <div className="flex items-center gap-1.5">
-              {WIDGET_COLORS.map((c) => (
-                <button
-                  key={c}
-                  type="button"
-                  onClick={() => (color === c ? clearColor() : pickColor(c))}
-                  aria-label={`Color ${c}`}
-                  className={
-                    "h-6 w-6 rounded-full border-2 transition-transform " +
-                    (color === c ? "scale-110 border-zinc-900 dark:border-zinc-50" : "border-transparent")
-                  }
-                  style={{ backgroundColor: c }}
-                />
-              ))}
-              {/* Open picker — its swatch face always shows some color, so
-                  it doubles as a 7th preset once you've used it once
-                  (defaults to the first preset only for its own display,
-                  not as a selection). */}
-              <input
-                type="color"
-                value={color ?? WIDGET_COLORS[0]}
-                onChange={(e) => pickColor(e.target.value)}
-                title="Custom color"
-                aria-label="Custom color"
-                className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
-              />
-              <input
-                type="text"
-                value={hexDraft}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setHexDraft(v);
-                  if (HEX_COLOR_PATTERN.test(v)) pickColor(v);
-                }}
-                onBlur={() => {
-                  // Reverts a half-typed, never-valid hex back to whatever
-                  // color is actually in effect, rather than leaving the
-                  // field stuck showing something that was never applied.
-                  if (!HEX_COLOR_PATTERN.test(hexDraft)) setHexDraft(color ?? "");
-                }}
-                placeholder="#RRGGBB"
-                maxLength={7}
-                className={selectClasses + " w-24 font-mono text-xs"}
-              />
-            </div>
+        {typeChosen && (hasColorSection || hasStyleSection) && (
+          <div className={hasColorSection && hasStyleSection ? "grid grid-cols-2 gap-3" : "flex flex-col gap-3"}>
+            {hasColorSection && (
+              <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+                {showColor && (
+                  <>
+                    <span className={labelClasses}>Color</span>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {WIDGET_COLORS.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => (color === c ? clearColor() : pickColor(c))}
+                          aria-label={`Color ${c}`}
+                          className={
+                            "h-6 w-6 rounded-full border-2 transition-transform " +
+                            (color === c ? "scale-110 border-zinc-900 dark:border-zinc-50" : "border-transparent")
+                          }
+                          style={{ backgroundColor: c }}
+                        />
+                      ))}
+                      {/* Open picker — its swatch face always shows some color, so
+                          it doubles as a 7th preset once you've used it once
+                          (defaults to the first preset only for its own display,
+                          not as a selection). */}
+                      <input
+                        type="color"
+                        value={color ?? WIDGET_COLORS[0]}
+                        onChange={(e) => pickColor(e.target.value)}
+                        title="Custom color"
+                        aria-label="Custom color"
+                        className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                      />
+                      <input
+                        type="text"
+                        value={hexDraft}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setHexDraft(v);
+                          if (HEX_COLOR_PATTERN.test(v)) pickColor(v);
+                        }}
+                        onBlur={() => {
+                          // Reverts a half-typed, never-valid hex back to whatever
+                          // color is actually in effect, rather than leaving the
+                          // field stuck showing something that was never applied.
+                          if (!HEX_COLOR_PATTERN.test(hexDraft)) setHexDraft(color ?? "");
+                        }}
+                        placeholder="#RRGGBB"
+                        maxLength={7}
+                        className={selectClasses + " w-24 font-mono text-xs"}
+                      />
+                    </div>
 
-            {recentColors.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <span className="text-[11px] text-zinc-500">Recent</span>
-                {recentColors.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => pickColor(c)}
-                    aria-label={`Color ${c}`}
-                    className={
-                      "h-5 w-5 rounded-full border-2 transition-transform " +
-                      (color === c ? "scale-110 border-zinc-900 dark:border-zinc-50" : "border-transparent")
-                    }
-                    style={{ backgroundColor: c }}
-                  />
-                ))}
+                    {recentColors.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] text-zinc-500">Recent</span>
+                        {recentColors.map((c) => (
+                          <button
+                            key={c}
+                            type="button"
+                            onClick={() => pickColor(c)}
+                            aria-label={`Color ${c}`}
+                            className={
+                              "h-5 w-5 rounded-full border-2 transition-transform " +
+                              (color === c ? "scale-110 border-zinc-900 dark:border-zinc-50" : "border-transparent")
+                            }
+                            style={{ backgroundColor: c }}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {showMultiColor && (
+                  <>
+                    <span className={labelClasses}>Colors</span>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      {(
+                        [
+                          ["specific", "Specific Colors"],
+                          ["gradient", "Gradients"],
+                        ] as const
+                      ).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          onClick={() => setColorMode((prev) => (prev === mode ? "none" : mode))}
+                          className={
+                            "rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors " +
+                            (colorMode === mode
+                              ? "border-zinc-900 bg-zinc-900/[.04] text-zinc-900 dark:border-zinc-50 dark:bg-zinc-50/[.08] dark:text-zinc-50 creamsicle:border-orange-600 creamsicle:bg-orange-50 creamsicle:text-orange-900"
+                              : "border-black/[.1] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]")
+                          }
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+
+                    {colorMode === "specific" && (
+                      <div className="flex flex-col gap-2">
+                        <p className="text-[11px] text-zinc-500">
+                          Click a bar, slice, or row in the Preview panel to select it, then pick a color to apply
+                          to everything selected.
+                        </p>
+                        {selectedPointKeys.size > 0 ? (
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="color"
+                              value={/^#[0-9a-fA-F]{6}$/.test(batchHexDraft) ? batchHexDraft : "#6366f1"}
+                              onChange={(e) => {
+                                setBatchHexDraft(e.target.value);
+                                applyColorToSelected(e.target.value);
+                              }}
+                              title="Apply color to selected"
+                              className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                            />
+                            <input
+                              type="text"
+                              value={batchHexDraft}
+                              onChange={(e) => {
+                                setBatchHexDraft(e.target.value);
+                                if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) applyColorToSelected(e.target.value);
+                              }}
+                              placeholder="#RRGGBB"
+                              maxLength={7}
+                              className={selectClasses + " w-24 font-mono text-xs"}
+                            />
+                            <span className="text-[11px] text-zinc-500">{selectedPointKeys.size} selected</span>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-zinc-500">Nothing selected in the preview yet.</span>
+                        )}
+
+                        {Object.keys(pointColors).length > 0 && (
+                          <button
+                            type="button"
+                            onClick={resetPointColors}
+                            className="self-start text-xs text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200"
+                          >
+                            Reset all to default colors
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {colorMode === "gradient" && (
+                      <div className="flex flex-col gap-2">
+                        <div className="flex flex-wrap gap-2">
+                          {GRADIENT_PRESETS.map((g) => (
+                            <button
+                              key={g.label}
+                              type="button"
+                              onClick={() => {
+                                setGradientFrom(g.from);
+                                setGradientTo(g.to);
+                              }}
+                              title={g.label}
+                              className={
+                                "h-7 w-16 rounded-md border-2 transition-transform " +
+                                (gradientFrom === g.from && gradientTo === g.to
+                                  ? "scale-105 border-zinc-900 dark:border-zinc-50"
+                                  : "border-transparent")
+                              }
+                              style={{ background: `linear-gradient(to right, ${g.from}, ${g.to})` }}
+                            />
+                          ))}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="text-zinc-500">Custom:</span>
+                          <input
+                            type="color"
+                            value={gradientFrom}
+                            onChange={(e) => setGradientFrom(e.target.value)}
+                            className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                          />
+                          <span className="text-zinc-500">to</span>
+                          <input
+                            type="color"
+                            value={gradientTo}
+                            onChange={(e) => setGradientTo(e.target.value)}
+                            className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
+                          />
+                          <span
+                            className="h-5 flex-1 rounded-md"
+                            style={{ background: `linear-gradient(to right, ${gradientFrom}, ${gradientTo})` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
-          </div>
-        )}
 
-        {typeChosen && showMultiColor && (
-          <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
-            <span className={labelClasses}>Colors</span>
+            {hasStyleSection && (
+              <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+                <span className={labelClasses}>Style</span>
 
-            <div className="grid grid-cols-2 gap-2">
-              {(
-                [
-                  ["specific", "Specific Colors"],
-                  ["gradient", "Gradients"],
-                ] as const
-              ).map(([mode, label]) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => setColorMode((prev) => (prev === mode ? "none" : mode))}
-                  className={
-                    "rounded-lg border-2 px-3 py-2 text-sm font-medium transition-colors " +
-                    (colorMode === mode
-                      ? "border-zinc-900 bg-zinc-900/[.04] text-zinc-900 dark:border-zinc-50 dark:bg-zinc-50/[.08] dark:text-zinc-50 creamsicle:border-orange-600 creamsicle:bg-orange-50 creamsicle:text-orange-900"
-                      : "border-black/[.1] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]")
-                  }
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {colorMode === "specific" && (
-              <div className="flex flex-col gap-2">
-                <p className="text-[11px] text-zinc-500">
-                  Click one or more below, then pick a color to apply to all of them at once.
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {previewPoints.map((p) => (
-                    <button
-                      key={p.key}
-                      type="button"
-                      onClick={() => togglePointSelected(p.key)}
-                      className={
-                        "flex items-center gap-1.5 rounded-full border-2 px-2 py-1 text-xs transition-colors " +
-                        (selectedPointKeys.has(p.key)
-                          ? "border-zinc-900 dark:border-zinc-50 creamsicle:border-orange-600"
-                          : "border-transparent bg-black/[.04] hover:bg-black/[.07] dark:bg-white/[.06] dark:hover:bg-white/[.1]")
-                      }
-                    >
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: pointColors[p.key] ?? p.color }}
-                      />
-                      {p.label}
-                    </button>
-                  ))}
-                  {previewPoints.length === 0 && (
-                    <span className="text-xs text-zinc-500">Fill in the fields above to see columns to color.</span>
-                  )}
-                </div>
-
-                {selectedPointKeys.size > 0 && (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="color"
-                      value={/^#[0-9a-fA-F]{6}$/.test(batchHexDraft) ? batchHexDraft : "#6366f1"}
-                      onChange={(e) => {
-                        setBatchHexDraft(e.target.value);
-                        applyColorToSelected(e.target.value);
-                      }}
-                      title="Apply color to selected"
-                      className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
-                    />
-                    <input
-                      type="text"
-                      value={batchHexDraft}
-                      onChange={(e) => {
-                        setBatchHexDraft(e.target.value);
-                        if (/^#[0-9a-fA-F]{6}$/.test(e.target.value)) applyColorToSelected(e.target.value);
-                      }}
-                      placeholder="#RRGGBB"
-                      maxLength={7}
-                      className={selectClasses + " w-24 font-mono text-xs"}
-                    />
-                    <span className="text-[11px] text-zinc-500">
-                      {selectedPointKeys.size} selected
-                    </span>
+                {showLineStyle && (
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] text-zinc-500">Line style</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {LINE_STYLES.map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setLineStyle(s)}
+                          className={
+                            "flex items-center gap-2 rounded-lg border-2 px-2.5 py-1.5 text-xs font-medium transition-colors " +
+                            (lineStyle === s
+                              ? "border-zinc-900 bg-zinc-900/[.04] text-zinc-900 dark:border-zinc-50 dark:bg-zinc-50/[.08] dark:text-zinc-50 creamsicle:border-orange-600 creamsicle:bg-orange-50 creamsicle:text-orange-900"
+                              : "border-black/[.1] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]")
+                          }
+                        >
+                          <svg width="26" height="10" viewBox="0 0 26 10" aria-hidden className="shrink-0">
+                            <line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={LINE_STYLE_DASH[s]} />
+                          </svg>
+                          {LINE_STYLE_LABELS[s]}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
 
-                {Object.keys(pointColors).length > 0 && (
-                  <button
-                    type="button"
-                    onClick={resetPointColors}
-                    className="self-start text-xs text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200"
-                  >
-                    Reset all to default colors
-                  </button>
+                {showFillPattern && (
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-[11px] text-zinc-500">Fill pattern</span>
+                    <div className="flex flex-wrap gap-1.5">
+                      {FILL_PATTERNS.map((p) => (
+                        <FillPatternButton key={p} pattern={p} active={fillPattern === p} onClick={() => setFillPattern(p)} />
+                      ))}
+                    </div>
+
+                    {showMultiColor &&
+                      (selectedPointKeys.size > 0 ? (
+                        <div className="flex flex-col gap-1.5 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
+                          <span className="text-[11px] text-zinc-500">
+                            {selectedPointKeys.size} selected — apply a pattern to just these
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {FILL_PATTERNS.map((p) => (
+                              <FillPatternButton key={p} pattern={p} active={false} onClick={() => applyPatternToSelected(p)} />
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-zinc-500">
+                          Click a bar or slice in the Preview panel to give just that one a different pattern.
+                        </span>
+                      ))}
+
+                    {Object.keys(fillPatternOverrides).length > 0 && (
+                      <button
+                        type="button"
+                        onClick={resetFillPatternOverrides}
+                        className="self-start text-xs text-zinc-500 underline hover:text-zinc-800 dark:hover:text-zinc-200"
+                      >
+                        Reset all to default pattern
+                      </button>
+                    )}
+                  </div>
                 )}
-              </div>
-            )}
-
-            {colorMode === "gradient" && (
-              <div className="flex flex-col gap-2">
-                <div className="flex flex-wrap gap-2">
-                  {GRADIENT_PRESETS.map((g) => (
-                    <button
-                      key={g.label}
-                      type="button"
-                      onClick={() => {
-                        setGradientFrom(g.from);
-                        setGradientTo(g.to);
-                      }}
-                      title={g.label}
-                      className={
-                        "h-7 w-16 rounded-md border-2 transition-transform " +
-                        (gradientFrom === g.from && gradientTo === g.to
-                          ? "scale-105 border-zinc-900 dark:border-zinc-50"
-                          : "border-transparent")
-                      }
-                      style={{ background: `linear-gradient(to right, ${g.from}, ${g.to})` }}
-                    />
-                  ))}
-                </div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-zinc-500">Custom:</span>
-                  <input
-                    type="color"
-                    value={gradientFrom}
-                    onChange={(e) => setGradientFrom(e.target.value)}
-                    className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
-                  />
-                  <span className="text-zinc-500">to</span>
-                  <input
-                    type="color"
-                    value={gradientTo}
-                    onChange={(e) => setGradientTo(e.target.value)}
-                    className="h-6 w-6 cursor-pointer rounded-full border-0 bg-transparent p-0"
-                  />
-                  <span
-                    className="h-5 flex-1 rounded-md"
-                    style={{ background: `linear-gradient(to right, ${gradientFrom}, ${gradientTo})` }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {typeChosen && (showLineStyle || showFillPattern) && (
-          <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
-            <span className={labelClasses}>Style</span>
-
-            {showLineStyle && (
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] text-zinc-500">Line style</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {LINE_STYLES.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => setLineStyle(s)}
-                      className={
-                        "flex items-center gap-2 rounded-lg border-2 px-2.5 py-1.5 text-xs font-medium transition-colors " +
-                        (lineStyle === s
-                          ? "border-zinc-900 bg-zinc-900/[.04] text-zinc-900 dark:border-zinc-50 dark:bg-zinc-50/[.08] dark:text-zinc-50 creamsicle:border-orange-600 creamsicle:bg-orange-50 creamsicle:text-orange-900"
-                          : "border-black/[.1] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]")
-                      }
-                    >
-                      <svg width="26" height="10" viewBox="0 0 26 10" aria-hidden className="shrink-0">
-                        <line x1="1" y1="5" x2="25" y2="5" stroke="currentColor" strokeWidth="2" strokeDasharray={LINE_STYLE_DASH[s]} />
-                      </svg>
-                      {LINE_STYLE_LABELS[s]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {showFillPattern && (
-              <div className="flex flex-col gap-1.5">
-                <span className="text-[11px] text-zinc-500">Fill pattern</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {FILL_PATTERNS.map((p) => (
-                    <button
-                      key={p}
-                      type="button"
-                      onClick={() => setFillPattern(p)}
-                      className={
-                        "flex items-center gap-2 rounded-lg border-2 px-2.5 py-1.5 text-xs font-medium transition-colors " +
-                        (fillPattern === p
-                          ? "border-zinc-900 bg-zinc-900/[.04] text-zinc-900 dark:border-zinc-50 dark:bg-zinc-50/[.08] dark:text-zinc-50 creamsicle:border-orange-600 creamsicle:bg-orange-50 creamsicle:text-orange-900"
-                          : "border-black/[.1] text-zinc-500 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]")
-                      }
-                    >
-                      <svg width="20" height="16" viewBox="0 0 20 16" aria-hidden className="shrink-0 rounded-sm">
-                        <FillPatternDefs pattern={p} colors={["#6366f1"]} />
-                        <rect width="20" height="16" rx="2" fill={resolveFill(p, "#6366f1")} />
-                      </svg>
-                      {FILL_PATTERN_LABELS[p]}
-                    </button>
-                  ))}
-                </div>
               </div>
             )}
           </div>
