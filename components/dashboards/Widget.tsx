@@ -442,10 +442,12 @@ function DateRangeButtons({
   const btnClasses = (isActive: boolean) =>
     "rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors " +
     (isActive
-      ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900"
-      : "text-zinc-500 hover:bg-black/[.06] dark:text-zinc-400 dark:hover:bg-white/[.1]");
+      ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900 creamsicle:bg-orange-600 creamsicle:text-white"
+      : "text-zinc-500 hover:bg-black/[.06] dark:text-zinc-400 dark:hover:bg-white/[.1] creamsicle:text-orange-700 creamsicle:hover:bg-orange-100");
   return (
-    <div className="flex shrink-0 flex-wrap items-center gap-1 px-3 pt-2">
+    // Same pill-group-next-to-heading treatment as the original Finance
+    // tab's RangeSelector (components/finance/RangeSelector.tsx).
+    <div className="flex shrink-0 flex-wrap items-center justify-end gap-1 rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
       {buttons.map((b) => {
         const key = dateButtonKey(b);
         return (
@@ -498,16 +500,23 @@ export function Widget({ widget }: { widget: WidgetWithData }) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-black/[.08] bg-[var(--background)] dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
-      <div className="widget-drag-handle cursor-move select-none border-b border-black/[.08] px-3 py-2 text-sm font-medium text-zinc-500 dark:border-white/[.1] dark:text-zinc-500 creamsicle:border-orange-200 creamsicle:text-orange-700">
-        {title}
+      <div className="flex items-center justify-between gap-2 border-b border-black/[.08] px-3 py-2 dark:border-white/[.1] creamsicle:border-orange-200">
+        {/* Only the title itself is the drag handle, not the whole header
+            row — so clicking a date button never risks starting a drag
+            (see DashboardGrid's dragConfig, which matches this exact
+            class). Same header-row placement as the original Finance tab's
+            RangeSelector-next-to-heading pattern (DailyCashFlowChart). */}
+        <span className="widget-drag-handle min-w-0 flex-1 cursor-move truncate text-sm font-medium text-zinc-500 select-none dark:text-zinc-500 creamsicle:text-orange-700">
+          {title}
+        </span>
+        {dateButtons.length > 0 && (
+          <DateRangeButtons
+            buttons={dateButtons}
+            activeKey={activeButton ? dateButtonKey(activeButton) : null}
+            onChange={setActiveButton}
+          />
+        )}
       </div>
-      {dateButtons.length > 0 && (
-        <DateRangeButtons
-          buttons={dateButtons}
-          activeKey={activeButton ? dateButtonKey(activeButton) : null}
-          onChange={setActiveButton}
-        />
-      )}
       <div className="min-h-0 flex-1 p-3">
         {"error" in result ? (
           <div className="flex h-full items-center justify-center text-center text-sm text-red-600 dark:text-red-400">

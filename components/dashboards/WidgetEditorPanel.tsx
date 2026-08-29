@@ -109,7 +109,7 @@ function FilterChip({ label }: { label: string }) {
   );
 }
 
-type DateRangeMode = "relative" | "relativeDays" | "specific" | "allTime" | "custom";
+type DateRangeMode = "relative" | "relativeDays" | "ytd" | "specific" | "allTime" | "custom";
 
 const selectClasses =
   "rounded-md border border-black/[.1] bg-white px-2 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500";
@@ -144,9 +144,10 @@ function formatMonthValue(value: string): string | null {
 const RELATIVE_DAY_OPTIONS = [
   { label: "Today", days: 0 },
   { label: "Yesterday", days: 1 },
-  { label: "2 days", days: 2 },
-  { label: "7 days", days: 7 },
-  { label: "30 days", days: 30 },
+  { label: "2 days ago", days: 2 },
+  { label: "3 days ago", days: 3 },
+  { label: "7 days ago", days: 7 },
+  { label: "30 days ago", days: 30 },
 ] as const;
 
 /**
@@ -358,9 +359,12 @@ export function WidgetEditorPanel({
   const [relativeMonths, setRelativeMonths] = useState<1 | 3 | 6 | 12>(
     chartConfig?.dateRange.mode === "relative" ? chartConfig.dateRange.months : 6,
   );
-  const [relativeDaysAgo, setRelativeDaysAgo] = useState<0 | 1 | 2 | 7 | 30>(
+  const [relativeDaysAgo, setRelativeDaysAgo] = useState<number>(
     chartConfig?.dateRange.mode === "relativeDays" ? chartConfig.dateRange.days : 1,
   );
+  // Only shown once "Custom" is picked within the Fluid group — a free
+  // number input for any N-days-back that isn't one of the preset pills.
+  const [customDaysAgoDraft, setCustomDaysAgoDraft] = useState("");
   const [specificMonth, setSpecificMonth] = useState(
     chartConfig?.dateRange.mode === "specific" ? chartConfig.dateRange.month : "",
   );
@@ -460,15 +464,17 @@ export function WidgetEditorPanel({
   const dateRangeSummary =
     dateMode === "allTime"
       ? "All time"
-      : dateMode === "relativeDays"
-        ? (RELATIVE_DAY_OPTIONS.find((d) => d.days === relativeDaysAgo)?.label ?? "Recent")
-        : dateMode === "specific"
-          ? formatMonthValue(specificMonth) || "Pick a month"
-          : dateMode === "custom"
-            ? customStart
-              ? `${formatDate(customStart)} – ${openEnded ? "latest" : customEnd ? formatDate(customEnd) : "?"}`
-              : "Pick a range"
-            : `Last ${relativeMonths} month${relativeMonths === 1 ? "" : "s"}`;
+      : dateMode === "ytd"
+        ? "Year to date"
+        : dateMode === "relativeDays"
+          ? (RELATIVE_DAY_OPTIONS.find((d) => d.days === relativeDaysAgo)?.label ?? `${relativeDaysAgo} days ago`)
+          : dateMode === "specific"
+            ? formatMonthValue(specificMonth) || "Pick a month"
+            : dateMode === "custom"
+              ? customStart
+                ? `${formatDate(customStart)} – ${openEnded ? "latest" : customEnd ? formatDate(customEnd) : "?"}`
+                : "Pick a range"
+              : `Last ${relativeMonths} month${relativeMonths === 1 ? "" : "s"}`;
 
   // Memoized, not recomputed-and-thrown-away every render: this is used as
   // a useEffect dependency below (both the preview fetch and the
@@ -488,13 +494,15 @@ export function WidgetEditorPanel({
     const dateRange: ChartWidgetConfig["dateRange"] =
       dateMode === "allTime"
         ? { mode: "allTime" }
-        : dateMode === "relativeDays"
-          ? { mode: "relativeDays", days: relativeDaysAgo }
-          : dateMode === "specific"
-            ? { mode: "specific", month: specificMonth }
-            : dateMode === "custom"
-              ? { mode: "custom", start: customStart, ...(openEnded ? {} : { end: customEnd }) }
-              : { mode: "relative", months: relativeMonths };
+        : dateMode === "ytd"
+          ? { mode: "ytd" }
+          : dateMode === "relativeDays"
+            ? { mode: "relativeDays", days: relativeDaysAgo }
+            : dateMode === "specific"
+              ? { mode: "specific", month: specificMonth }
+              : dateMode === "custom"
+                ? { mode: "custom", start: customStart, ...(openEnded ? {} : { end: customEnd }) }
+                : { mode: "relative", months: relativeMonths };
 
     const parsedAmountMin = amountMin.trim() ? Number(amountMin) : undefined;
     const parsedAmountMax = amountMax.trim() ? Number(amountMax) : undefined;
@@ -855,77 +863,125 @@ export function WidgetEditorPanel({
                     )}
 
                     {isOpen && filterKey === "date" && (
-                      <div className="flex flex-col gap-1.5 py-1 pl-5">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          {([1, 3, 6, 12] as const).map((m) => (
-                            <button
-                              key={m}
-                              type="button"
-                              onClick={() => {
-                                setDateMode("relative");
-                                setRelativeMonths(m);
-                              }}
-                              className={pillClasses(dateMode === "relative" && relativeMonths === m)}
-                            >
-                              {m}mo
+                      <div className="flex flex-col gap-2.5 py-1 pl-5">
+                        <div className="flex flex-col gap-1">
+                          <span className="text-[11px] text-zinc-500">
+                            Fluid — recalculated from today every time this is viewed
+                          </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {([1, 3, 6, 12] as const).map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => {
+                                  setDateMode("relative");
+                                  setRelativeMonths(m);
+                                }}
+                                className={pillClasses(dateMode === "relative" && relativeMonths === m)}
+                              >
+                                {m}mo
+                              </button>
+                            ))}
+                            {RELATIVE_DAY_OPTIONS.map((d) => (
+                              <button
+                                key={d.label}
+                                type="button"
+                                onClick={() => {
+                                  setDateMode("relativeDays");
+                                  setRelativeDaysAgo(d.days);
+                                }}
+                                className={pillClasses(dateMode === "relativeDays" && relativeDaysAgo === d.days)}
+                              >
+                                {d.label}
+                              </button>
+                            ))}
+                            <button type="button" onClick={() => setDateMode("ytd")} className={pillClasses(dateMode === "ytd")}>
+                              Year to date
                             </button>
-                          ))}
-                          {RELATIVE_DAY_OPTIONS.map((d) => (
+                            <button type="button" onClick={() => setDateMode("allTime")} className={pillClasses(dateMode === "allTime")}>
+                              All time
+                            </button>
                             <button
-                              key={d.label}
                               type="button"
                               onClick={() => {
                                 setDateMode("relativeDays");
-                                setRelativeDaysAgo(d.days);
+                                setCustomDaysAgoDraft(String(relativeDaysAgo));
                               }}
-                              className={pillClasses(dateMode === "relativeDays" && relativeDaysAgo === d.days)}
+                              className={pillClasses(
+                                dateMode === "relativeDays" && !RELATIVE_DAY_OPTIONS.some((d) => d.days === relativeDaysAgo),
+                              )}
                             >
-                              {d.label}
+                              Custom…
                             </button>
-                          ))}
-                          <button type="button" onClick={() => setDateMode("allTime")} className={pillClasses(dateMode === "allTime")}>
-                            All time
-                          </button>
-                          <button type="button" onClick={() => setDateMode("specific")} className={pillClasses(dateMode === "specific")}>
-                            One month
-                          </button>
-                          <button type="button" onClick={() => setDateMode("custom")} className={pillClasses(dateMode === "custom")}>
-                            Custom range
-                          </button>
+                          </div>
+                          {dateMode === "relativeDays" && !RELATIVE_DAY_OPTIONS.some((d) => d.days === relativeDaysAgo) && (
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                min={0}
+                                max={3650}
+                                value={customDaysAgoDraft}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setCustomDaysAgoDraft(v);
+                                  const n = Number(v);
+                                  if (v.trim() && Number.isInteger(n) && n >= 0 && n <= 3650) setRelativeDaysAgo(n);
+                                }}
+                                placeholder="45"
+                                className={selectClasses + " w-20"}
+                              />
+                              <span className="text-xs text-zinc-500">days ago, through today</span>
+                            </div>
+                          )}
                         </div>
 
-                        {dateMode === "specific" && (
-                          <div className="flex items-center gap-2">
-                            <input
-                              type="month"
-                              value={specificMonth}
-                              onChange={(e) => setSpecificMonth(e.target.value)}
-                              className={selectClasses}
-                            />
-                            {formatMonthValue(specificMonth) && (
-                              <span className="text-xs text-zinc-500">{formatMonthValue(specificMonth)}</span>
-                            )}
+                        <div className="flex flex-col gap-1 border-t border-black/[.06] pt-2 dark:border-white/[.08]">
+                          <span className="text-[11px] text-zinc-500">Fixed — an exact range that doesn&apos;t move</span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button type="button" onClick={() => setDateMode("custom")} className={pillClasses(dateMode === "custom")}>
+                              Custom range
+                            </button>
                           </div>
-                        )}
-                        {dateMode === "custom" && (
-                          <div className="flex flex-col gap-1.5">
+                          {dateMode === "specific" && (
+                            // Legacy "one month" widgets saved before this mode was
+                            // retired from the picker — still editable so an old
+                            // config doesn't strand its owner, just no longer a way
+                            // to newly enter this mode.
                             <div className="flex items-center gap-2">
-                              <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
-                              <span className="text-xs text-zinc-500">to</span>
                               <input
-                                type="date"
-                                value={customEnd}
-                                onChange={(e) => setCustomEnd(e.target.value)}
-                                disabled={openEnded}
-                                className={selectClasses + (openEnded ? " opacity-40" : "")}
+                                type="month"
+                                value={specificMonth}
+                                onChange={(e) => setSpecificMonth(e.target.value)}
+                                className={selectClasses}
                               />
+                              {formatMonthValue(specificMonth) && (
+                                <span className="text-xs text-zinc-500">{formatMonthValue(specificMonth)}</span>
+                              )}
+                              <button type="button" onClick={() => setDateMode("custom")} className="text-xs text-indigo-600 underline dark:text-indigo-400">
+                                Switch to custom range
+                              </button>
                             </div>
-                            <label className="flex items-center gap-2">
-                              <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
-                              <span className="text-sm">No end date — always include the latest data</span>
-                            </label>
-                          </div>
-                        )}
+                          )}
+                          {dateMode === "custom" && (
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex items-center gap-2">
+                                <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} className={selectClasses} />
+                                <span className="text-xs text-zinc-500">to</span>
+                                <input
+                                  type="date"
+                                  value={customEnd}
+                                  onChange={(e) => setCustomEnd(e.target.value)}
+                                  disabled={openEnded}
+                                  className={selectClasses + (openEnded ? " opacity-40" : "")}
+                                />
+                              </div>
+                              <label className="flex items-center gap-2">
+                                <input type="checkbox" checked={openEnded} onChange={(e) => setOpenEnded(e.target.checked)} />
+                                <span className="text-sm">No end date — always include the latest data</span>
+                              </label>
+                            </div>
+                          )}
+                        </div>
 
                         {availableRange?.earliest && availableRange?.latest && (
                           <p className="text-[11px] text-zinc-500">
@@ -1047,7 +1103,7 @@ export function WidgetEditorPanel({
               <button
                 type="button"
                 onClick={() => pickType("bar")}
-                className={squareClasses(!isText)}
+                className={squareClasses(typeChosen && !isText)}
                 title="Graph"
                 aria-label="Graph"
               >
@@ -1056,7 +1112,7 @@ export function WidgetEditorPanel({
               <button
                 type="button"
                 onClick={() => pickType("text")}
-                className={squareClasses(isText)}
+                className={squareClasses(typeChosen && isText)}
                 title="Text"
                 aria-label="Text"
               >

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { formatCategoryLabel } from "@/lib/finance";
 import { TransactionReviewCard, type ReviewTxn } from "./TransactionReviewCard";
 import { BulkApproveBar, hasSuggestedCategory } from "./BulkApproveBar";
+import { DateQuickFilter } from "./DateQuickFilter";
 
 type CategoryOption = { category: string; subcategory: string };
 
@@ -38,6 +39,7 @@ export function CategoryReviewView({
   const [remaining, setRemaining] = useState(needsReview);
   const [justApproved, setJustApproved] = useState<ReviewTxn[]>([]);
   const [search, setSearch] = useState("");
+  const [dateFilter, setDateFilter] = useState<string | null>(null);
 
   function handleApproved(id: string, sweep?: { pattern: string; exactAmount: number | null }) {
     const toMove = remaining.filter((t) => t.id === id || (sweep && ruleSweepMatches(t, sweep)));
@@ -62,8 +64,8 @@ export function CategoryReviewView({
 
   const approvedList = [...justApproved, ...approved];
   const q = search.trim().toLowerCase();
-  const filteredRemaining = q ? remaining.filter((t) => matches(t, q)) : remaining;
-  const filteredApproved = q ? approvedList.filter((t) => matches(t, q)) : approvedList;
+  const filteredRemaining = remaining.filter((t) => (!q || matches(t, q)) && (!dateFilter || t.date === dateFilter));
+  const filteredApproved = approvedList.filter((t) => (!q || matches(t, q)) && (!dateFilter || t.date === dateFilter));
   const withGuess = useMemo(() => filteredRemaining.filter(hasSuggestedCategory), [filteredRemaining]);
 
   return (
@@ -89,6 +91,7 @@ export function CategoryReviewView({
           className="min-w-[10rem] flex-1 rounded-md border border-black/[.1] bg-white px-3 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500"
         />
       </div>
+      <DateQuickFilter value={dateFilter} onChange={setDateFilter} />
 
       {tab === "needs-review" && <BulkApproveBar candidates={withGuess} onApproved={handleBulkApproved} />}
 

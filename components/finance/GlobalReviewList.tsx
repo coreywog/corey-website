@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { formatCategoryLabel } from "@/lib/finance";
 import { TransactionReviewCard, type ReviewTxn } from "./TransactionReviewCard";
 import { BulkApproveBar, hasSuggestedCategory } from "./BulkApproveBar";
+import { DateQuickFilter } from "./DateQuickFilter";
 
 type CategoryOption = { category: string; subcategory: string };
 
@@ -34,6 +35,7 @@ export function GlobalReviewList({
 }) {
   const [remaining, setRemaining] = useState(transactions);
   const [search, setSearch] = useState("");
+  const [dateFilter, setDateFilter] = useState<string | null>(null);
 
   function handleApproved(id: string, sweep?: { pattern: string; exactAmount: number | null }) {
     setRemaining((prev) => prev.filter((t) => !(t.id === id || (sweep && ruleSweepMatches(t, sweep)))));
@@ -41,9 +43,8 @@ export function GlobalReviewList({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return remaining;
-    return remaining.filter((t) => matches(t, q));
-  }, [remaining, search]);
+    return remaining.filter((t) => (!q || matches(t, q)) && (!dateFilter || t.date === dateFilter));
+  }, [remaining, search, dateFilter]);
   const withGuess = useMemo(() => filtered.filter(hasSuggestedCategory), [filtered]);
 
   return (
@@ -55,6 +56,7 @@ export function GlobalReviewList({
         placeholder="Search transactions, categories…"
         className="rounded-md border border-black/[.1] bg-white px-3 py-2 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500"
       />
+      <DateQuickFilter value={dateFilter} onChange={setDateFilter} />
       <BulkApproveBar
         candidates={withGuess}
         onApproved={(ids) => {

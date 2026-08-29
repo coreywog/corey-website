@@ -10,13 +10,12 @@ import { z } from "zod";
 
 const dateRangeSchema = z.union([
   z.object({ mode: z.literal("relative"), months: z.union([z.literal(1), z.literal(3), z.literal(6), z.literal(12)]) }),
-  // Day-granularity version of the above ("Today"/"Yesterday"/...) — see
-  // lib/finance.ts's DateRangeSelection for why this is its own mode
-  // rather than a UI-only convenience.
-  z.object({
-    mode: z.literal("relativeDays"),
-    days: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(7), z.literal(30)]),
-  }),
+  // Day-granularity version of the above ("Today"/"Yesterday"/...), or any
+  // custom N-days-back the user types in — see lib/finance.ts's
+  // DateRangeSelection for why this is its own mode rather than a UI-only
+  // convenience.
+  z.object({ mode: z.literal("relativeDays"), days: z.number().int().min(0).max(3650) }),
+  z.object({ mode: z.literal("ytd") }),
   z.object({ mode: z.literal("specific"), month: z.string().regex(/^\d{4}-\d{2}$/) }),
   z.object({ mode: z.literal("allTime") }),
   z.object({
