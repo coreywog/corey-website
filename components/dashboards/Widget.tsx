@@ -17,6 +17,7 @@ import {
   Cell,
   Tooltip,
   Legend,
+  LabelList,
   XAxis,
   YAxis,
   ResponsiveContainer,
@@ -73,6 +74,34 @@ function resolveFontFamily(family: FontFamily | undefined): string | undefined {
     default:
       return undefined;
   }
+}
+
+/** recharts' XAxis/YAxis `tick` prop — the tick-size/font object normally,
+ * or `false` to hide the tick labels entirely (showXTicks/showYTicks:
+ * false) for a cleaner tile with no category names or axis clutter. */
+function tickProp(axisLabels: AxisLabels | undefined, axis: "x" | "y"): false | { fontSize: number; fontFamily?: string } {
+  const visible = axis === "x" ? (axisLabels?.showXTicks ?? true) : (axisLabels?.showYTicks ?? true);
+  if (!visible) return false;
+  return {
+    fontSize: axis === "x" ? (axisLabels?.xTickFontSize ?? 11) : (axisLabels?.yTickFontSize ?? 12),
+    fontFamily: resolveFontFamily(axisLabels?.fontFamily),
+  };
+}
+
+/** Small value label rendered on/above each bar or line/area point — off
+ * unless config.showDataLabels is set. Reuses formatValue so it respects
+ * the same $/plain-number choice as the axis ticks/tooltip. */
+function dataLabelList(show: boolean | undefined, valueFormat: ValueFormat | undefined, dataKey = "value") {
+  if (!show) return null;
+  return (
+    <LabelList
+      dataKey={dataKey}
+      position="top"
+      fontSize={10}
+      fill="currentColor"
+      formatter={(v: unknown) => formatValue(Number(v), valueFormat)}
+    />
+  );
 }
 
 function EmptyState() {
@@ -229,12 +258,14 @@ function LineWidget({
   color,
   lineStyle,
   onAxisDragStart,
+  showDataLabels,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
   color?: string;
   lineStyle?: LineStyle;
   onAxisDragStart?: AxisDragHandler;
+  showDataLabels?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
@@ -243,14 +274,14 @@ function LineWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "x")}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "y")}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -266,7 +297,9 @@ function LineWidget({
           strokeDasharray={LINE_STYLE_DASH[lineStyle ?? "solid"]}
           dot={false}
           isAnimationActive={false}
-        />
+        >
+          {dataLabelList(showDataLabels, axisLabels?.valueFormat)}
+        </Line>
       </LineChart>
     </ResponsiveContainer>
   );
@@ -279,6 +312,7 @@ function AreaWidget({
   lineStyle,
   fillPattern,
   onAxisDragStart,
+  showDataLabels,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
@@ -286,6 +320,7 @@ function AreaWidget({
   lineStyle?: LineStyle;
   fillPattern?: FillPattern;
   onAxisDragStart?: AxisDragHandler;
+  showDataLabels?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   const fill = color ?? "#6366f1";
@@ -296,14 +331,14 @@ function AreaWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "x")}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "y")}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -320,7 +355,9 @@ function AreaWidget({
           fill={resolveFill(fillPattern, fill)}
           fillOpacity={fillPattern && fillPattern !== "solid" ? 1 : 0.2}
           isAnimationActive={false}
-        />
+        >
+          {dataLabelList(showDataLabels, axisLabels?.valueFormat)}
+        </Area>
       </AreaChart>
     </ResponsiveContainer>
   );
@@ -334,6 +371,7 @@ function BarWidget({
   onPointClick,
   selectedKeys,
   onAxisDragStart,
+  showDataLabels,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
@@ -342,6 +380,7 @@ function BarWidget({
   onPointClick?: (key: string) => void;
   selectedKeys?: Set<string>;
   onAxisDragStart?: AxisDragHandler;
+  showDataLabels?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   const patternFor = (key: string) => fillPatternOverrides?.[key] ?? fillPattern;
@@ -377,7 +416,7 @@ function BarWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "x")}
           tickLine={false}
           axisLine={false}
           interval={0}
@@ -387,7 +426,7 @@ function BarWidget({
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "y")}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -395,7 +434,9 @@ function BarWidget({
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
         <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
-        <Bar dataKey="value" isAnimationActive={false} shape={renderBar} />
+        <Bar dataKey="value" isAnimationActive={false} shape={renderBar}>
+          {dataLabelList(showDataLabels, axisLabels?.valueFormat)}
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
@@ -408,6 +449,7 @@ function StackedBarWidget({
   axisLabels,
   stacked = true,
   onAxisDragStart,
+  showDataLabels,
 }: {
   points: StackedPoint[];
   series: StackedSeries[];
@@ -419,6 +461,7 @@ function StackedBarWidget({
   // which is always stacked.
   stacked?: boolean;
   onAxisDragStart?: AxisDragHandler;
+  showDataLabels?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
@@ -428,7 +471,7 @@ function StackedBarWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="x"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "x")}
           tickLine={false}
           axisLine={false}
           interval={0}
@@ -438,7 +481,7 @@ function StackedBarWidget({
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "y")}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -455,7 +498,9 @@ function StackedBarWidget({
             stackId={stacked ? "stack" : undefined}
             fill={resolveFill(fillPattern, s.color)}
             isAnimationActive={false}
-          />
+          >
+            {dataLabelList(showDataLabels, axisLabels?.valueFormat, s.key)}
+          </Bar>
         ))}
       </BarChart>
     </ResponsiveContainer>
@@ -467,11 +512,13 @@ function MultiLineWidget({
   series,
   axisLabels,
   onAxisDragStart,
+  showDataLabels,
 }: {
   points: StackedPoint[];
   series: StackedSeries[];
   axisLabels?: AxisLabels;
   onAxisDragStart?: AxisDragHandler;
+  showDataLabels?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
@@ -480,14 +527,14 @@ function MultiLineWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "x")}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "y")}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -497,7 +544,9 @@ function MultiLineWidget({
         <Tooltip formatter={(v) => formatValue(Number(v), axisLabels?.valueFormat)} />
         <Legend wrapperStyle={{ fontSize: 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }} />
         {series.map((s) => (
-          <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2} dot={false} isAnimationActive={false} />
+          <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2} dot={false} isAnimationActive={false}>
+            {dataLabelList(showDataLabels, axisLabels?.valueFormat, s.key)}
+          </Line>
         ))}
       </LineChart>
     </ResponsiveContainer>
@@ -509,11 +558,13 @@ function MultiAreaWidget({
   series,
   axisLabels,
   onAxisDragStart,
+  showDataLabels,
 }: {
   points: StackedPoint[];
   series: StackedSeries[];
   axisLabels?: AxisLabels;
   onAxisDragStart?: AxisDragHandler;
+  showDataLabels?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
@@ -522,14 +573,14 @@ function MultiAreaWidget({
         <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "x")}
           tickLine={false}
           axisLine={false}
           minTickGap={32}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "y")}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -549,7 +600,9 @@ function MultiAreaWidget({
             fill={s.color}
             fillOpacity={0.18}
             isAnimationActive={false}
-          />
+          >
+            {dataLabelList(showDataLabels, axisLabels?.valueFormat, s.key)}
+          </Area>
         ))}
       </AreaChart>
     </ResponsiveContainer>
@@ -677,7 +730,7 @@ function ScatterWidget({
           dataKey="x"
           type="number"
           domain={["dataMin", "dataMax"]}
-          tick={{ fontSize: axisLabels?.xTickFontSize ?? 11, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "x")}
           tickLine={false}
           axisLine={false}
           tickFormatter={shortDate}
@@ -685,7 +738,7 @@ function ScatterWidget({
         />
         <YAxis
           dataKey="y"
-          tick={{ fontSize: axisLabels?.yTickFontSize ?? 12, fontFamily: resolveFontFamily(axisLabels?.fontFamily) }}
+          tick={tickProp(axisLabels, "y")}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -1113,12 +1166,25 @@ export function Widget({
             fillPattern={chartConfig?.fillPattern}
             axisLabels={effectiveAxisLabels}
             onAxisDragStart={axisDragHandler}
+            showDataLabels={chartConfig?.showDataLabels}
           />
         ) : result.kind === "multiSeries" ? (
           widget.type === "line" ? (
-            <MultiLineWidget points={result.points} series={result.series} axisLabels={effectiveAxisLabels} onAxisDragStart={axisDragHandler} />
+            <MultiLineWidget
+              points={result.points}
+              series={result.series}
+              axisLabels={effectiveAxisLabels}
+              onAxisDragStart={axisDragHandler}
+              showDataLabels={chartConfig?.showDataLabels}
+            />
           ) : widget.type === "area" ? (
-            <MultiAreaWidget points={result.points} series={result.series} axisLabels={effectiveAxisLabels} onAxisDragStart={axisDragHandler} />
+            <MultiAreaWidget
+              points={result.points}
+              series={result.series}
+              axisLabels={effectiveAxisLabels}
+              onAxisDragStart={axisDragHandler}
+              showDataLabels={chartConfig?.showDataLabels}
+            />
           ) : (
             // bar, histogram, and stackedBar all share the same wide-row
             // shape — grouped (side-by-side) unless the widget type is
@@ -1130,6 +1196,7 @@ export function Widget({
               axisLabels={effectiveAxisLabels}
               onAxisDragStart={axisDragHandler}
               stacked={widget.type === "stackedBar"}
+              showDataLabels={chartConfig?.showDataLabels}
             />
           )
         ) : result.kind === "stat" ? (
@@ -1143,6 +1210,7 @@ export function Widget({
             onPointClick={onPointClick}
             selectedKeys={selectedKeys}
             onAxisDragStart={axisDragHandler}
+            showDataLabels={chartConfig?.showDataLabels}
           />
         ) : widget.type === "pie" ? (
           <PieWidget
@@ -1165,6 +1233,7 @@ export function Widget({
             lineStyle={chartConfig?.lineStyle}
             fillPattern={chartConfig?.fillPattern}
             onAxisDragStart={axisDragHandler}
+            showDataLabels={chartConfig?.showDataLabels}
           />
         ) : (
           <LineWidget
@@ -1173,6 +1242,7 @@ export function Widget({
             color={chartConfig?.color}
             lineStyle={chartConfig?.lineStyle}
             onAxisDragStart={axisDragHandler}
+            showDataLabels={chartConfig?.showDataLabels}
           />
         )}
       </div>

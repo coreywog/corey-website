@@ -612,6 +612,9 @@ export function WidgetEditorPanel({
   const [xTickFontSize, setXTickFontSize] = useState(chartConfig?.axisLabels?.xTickFontSize ?? 11);
   const [yTickFontSize, setYTickFontSize] = useState(chartConfig?.axisLabels?.yTickFontSize ?? 12);
   const [fontFamily, setFontFamily] = useState<FontFamily>(chartConfig?.axisLabels?.fontFamily ?? "default");
+  const [showXTicks, setShowXTicks] = useState(chartConfig?.axisLabels?.showXTicks ?? true);
+  const [showYTicks, setShowYTicks] = useState(chartConfig?.axisLabels?.showYTicks ?? true);
+  const [showDataLabels, setShowDataLabels] = useState(chartConfig?.showDataLabels ?? false);
 
   function handleAxisLabelOffsetChange(axis: "x" | "y", offset: { dx: number; dy: number }) {
     if (axis === "x") setXAxisOffset(offset);
@@ -662,6 +665,10 @@ export function WidgetEditorPanel({
   // table/stat/calendar/scatter don't have one worth theming this way).
   const showLineStyle = type === "line" || type === "area";
   const showFillPattern = type === "bar" || isHistogram || type === "pie" || isStackedBar || type === "area";
+  // "Show values" (config.showDataLabels) — every point/bar prints its own
+  // number. Scatter excluded: one raw transaction per point means way too
+  // many labels to be readable.
+  const showDataLabelsOption = type === "line" || type === "area" || type === "bar" || isHistogram || isStackedBar;
   // Whether Color/Colors and Style each have anything to show at all — used
   // to lay them out as two side-by-side columns when both apply (so
   // picking a color doesn't push the style options below the fold), or
@@ -789,7 +796,8 @@ export function WidgetEditorPanel({
     // together is a common case with no title involved, so the guard here
     // can't be "only if a title was typed."
     const axisLabels: ChartWidgetConfig["axisLabels"] =
-      showAxisLabels && (xAxisLabel.trim() || yAxisLabel.trim() || xTickFontSize !== 11 || yTickFontSize !== 12 || fontFamily !== "default")
+      showAxisLabels &&
+      (xAxisLabel.trim() || yAxisLabel.trim() || xTickFontSize !== 11 || yTickFontSize !== 12 || fontFamily !== "default" || !showXTicks || !showYTicks)
         ? {
             ...(xAxisLabel.trim() ? { x: xAxisLabel.trim(), xOffset: xAxisOffset } : {}),
             ...(yAxisLabel.trim() ? { y: yAxisLabel.trim(), yOffset: yAxisOffset } : {}),
@@ -797,6 +805,8 @@ export function WidgetEditorPanel({
             xTickFontSize,
             yTickFontSize,
             ...(fontFamily !== "default" ? { fontFamily } : {}),
+            ...(!showXTicks ? { showXTicks: false } : {}),
+            ...(!showYTicks ? { showYTicks: false } : {}),
           }
         : undefined;
 
@@ -830,6 +840,7 @@ export function WidgetEditorPanel({
           }
         : {}),
       ...(type === "pie" && pieLabelShow ? { pieLabels: { show: pieLabelShow, position: pieLabelPosition } } : {}),
+      ...(showDataLabelsOption && showDataLabels ? { showDataLabels: true } : {}),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
   }, [
@@ -864,6 +875,9 @@ export function WidgetEditorPanel({
     xTickFontSize,
     yTickFontSize,
     fontFamily,
+    showXTicks,
+    showYTicks,
+    showDataLabels,
     color,
     colorMode,
     pointColors,
@@ -2071,29 +2085,37 @@ export function WidgetEditorPanel({
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-zinc-500">X axis</span>
+                <span className="flex items-center gap-1 text-[11px] text-zinc-500">
+                  <input type="checkbox" checked={showXTicks} onChange={(e) => setShowXTicks(e.target.checked)} />
+                  X axis
+                </span>
                 <div className="flex items-center gap-1">
                   <input
                     type="number"
                     min={6}
                     max={20}
                     value={xTickFontSize}
+                    disabled={!showXTicks}
                     onChange={(e) => setXTickFontSize(Number(e.target.value) || 11)}
-                    className={selectClasses + " w-16"}
+                    className={selectClasses + " w-16" + (showXTicks ? "" : " opacity-40")}
                   />
                   <span className="text-[11px] text-zinc-500">px</span>
                 </div>
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-[11px] text-zinc-500">Y axis</span>
+                <span className="flex items-center gap-1 text-[11px] text-zinc-500">
+                  <input type="checkbox" checked={showYTicks} onChange={(e) => setShowYTicks(e.target.checked)} />
+                  Y axis
+                </span>
                 <div className="flex items-center gap-1">
                   <input
                     type="number"
                     min={6}
                     max={20}
                     value={yTickFontSize}
+                    disabled={!showYTicks}
                     onChange={(e) => setYTickFontSize(Number(e.target.value) || 12)}
-                    className={selectClasses + " w-16"}
+                    className={selectClasses + " w-16" + (showYTicks ? "" : " opacity-40")}
                   />
                   <span className="text-[11px] text-zinc-500">px</span>
                 </div>
@@ -2109,7 +2131,9 @@ export function WidgetEditorPanel({
                 </select>
               </label>
             </div>
-            <p className="text-[11px] text-zinc-500">Shrink X/Y if bar/category names are squishing together.</p>
+            <p className="text-[11px] text-zinc-500">
+              Shrink X/Y if bar/category names are squishing together, or uncheck one to remove it entirely.
+            </p>
           </div>
           )}
           </div>
@@ -2315,6 +2339,13 @@ export function WidgetEditorPanel({
             {hasStyleSection && (
               <div className="flex flex-col gap-3 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
                 <span className={labelClasses}>Style</span>
+
+                {showDataLabelsOption && (
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={showDataLabels} onChange={(e) => setShowDataLabels(e.target.checked)} />
+                    <span className="text-sm">Show values on each bar/point</span>
+                  </label>
+                )}
 
                 {showLineStyle && (
                   <div className="flex flex-col gap-1.5">

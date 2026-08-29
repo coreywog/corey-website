@@ -108,6 +108,13 @@ const axisLabelsSchema = z
     yTickFontSize: z.number().int().min(6).max(20).optional(),
     valueFormat: z.enum(VALUE_FORMATS).optional(),
     fontFamily: z.enum(FONT_FAMILIES).optional(),
+    // Whether the tick labels (category/day names on X, dollar amounts on
+    // Y) render at all — omitted/true is shown, same as always; false hides
+    // them entirely for a cleaner/sparkline-style tile. Independent of
+    // xTickFontSize/yTickFontSize above (shrinking vs. removing outright are
+    // two different asks).
+    showXTicks: z.boolean().optional(),
+    showYTicks: z.boolean().optional(),
   })
   .optional();
 
@@ -279,6 +286,11 @@ const chartConfigSchema = z.object({
       position: z.enum(["inside", "outside"]).optional(),
     })
     .optional(),
+  // Prints the actual value on/above each bar, and at each point on a line
+  // or area — line/area/bar/stackedBar/histogram only. Off by default: on a
+  // line with many points (e.g. daily data over months) this gets crowded
+  // fast, so it's an explicit opt-in rather than always-on.
+  showDataLabels: z.boolean().optional(),
 });
 
 // A free-text tile — no data behind it at all, just whatever the user
