@@ -56,9 +56,9 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
   );
 
   // Options for the widget editor's filter/category pickers — same source
-  // as the Review tab's category picker (Data Management Hub's Finance tab,
+  // as the Review tab's category picker (Data Management's Finance tab,
   // app/(site)/data-hub/page.tsx).
-  const [accounts, categorized, spendingDescriptions] = await Promise.all([
+  const [accounts, categorized, spendingDescriptions, calculatedMetrics] = await Promise.all([
     prisma.financeAccount.findMany({ where: { archived: false }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
     prisma.transaction.findMany({
       where: { category: "spending", merchantCategory: { not: null, notIn: ["other"] }, merchantSubcategory: { not: null } },
@@ -73,6 +73,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
       where: { category: "spending", description: { not: null } },
       select: { description: true },
     }),
+    prisma.calculatedMetric.findMany({ orderBy: [{ order: "asc" }, { createdAt: "asc" }] }),
   ]);
   const categoryOptions = categorized
     .map((c) => ({ category: c.merchantCategory as string, subcategory: c.merchantSubcategory as string }))
@@ -90,6 +91,7 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
         accounts={accounts}
         categoryOptions={categoryOptions}
         merchantOptions={merchantOptions}
+        calculatedMetrics={calculatedMetrics}
         initialPublished={dashboard.published}
       />
     </div>

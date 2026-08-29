@@ -8,6 +8,12 @@ import type { WidgetWithData } from "./Widget";
 type Tab = { id: string; name: string; widgets: WidgetWithData[] };
 type Account = { id: string; name: string };
 type CategoryOption = { category: string; subcategory: string };
+export type CalculatedMetricOption = {
+  id: string;
+  name: string;
+  aggregation: string;
+  transactionCategory: string | null;
+};
 
 const inputClasses =
   "rounded-md border border-black/[.1] bg-white px-2 py-1 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500";
@@ -39,6 +45,7 @@ export function DashboardTabs({
   accounts,
   categoryOptions,
   merchantOptions,
+  calculatedMetrics,
   initialPublished,
 }: {
   dashboardId: string;
@@ -47,6 +54,7 @@ export function DashboardTabs({
   accounts: Account[];
   categoryOptions: CategoryOption[];
   merchantOptions: string[];
+  calculatedMetrics: CalculatedMetricOption[];
   initialPublished: boolean;
 }) {
   const router = useRouter();
@@ -225,6 +233,7 @@ export function DashboardTabs({
           accounts={accounts}
           categoryOptions={categoryOptions}
           merchantOptions={merchantOptions}
+          calculatedMetrics={calculatedMetrics}
           published={published}
         />
       )}

@@ -1,4 +1,4 @@
-// Parses uploaded CSVs for the Data Management Hub. Hand-rolled rather than
+// Parses uploaded CSVs for Data Management. Hand-rolled rather than
 // a dependency (Papaparse, etc.) — correct CSV parsing (quoted fields,
 // embedded commas/newlines, escaped quotes) is a small, self-contained,
 // well-understood problem, and every dependency here is one more thing

@@ -3,11 +3,11 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ReactGridLayout, { useContainerWidth, type Layout } from "react-grid-layout";
-import { calcGridCellDimensions } from "react-grid-layout/core";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { Widget, type WidgetWithData } from "./Widget";
 import { WidgetEditorPanel, type ExistingWidget, type WidgetDraft } from "./WidgetEditorPanel";
+import type { CalculatedMetricOption } from "./DashboardTabs";
 
 // Debounced, not fired on every pixel of movement — react-grid-layout's
 // onLayoutChange fires continuously during a drag/resize (that's what
@@ -37,29 +37,6 @@ function layoutFromWidgets(list: WidgetWithData[]): Layout {
   return list.map((widget) => ({ i: widget.id, x: widget.x, y: widget.y, w: widget.w, h: widget.h }));
 }
 
-/** Every grid cell not covered by any layout item other than `excludeId`. */
-function emptyCells(layout: Layout, excludeId: string): { x: number; y: number }[] {
-  const occupied = new Set<string>();
-  let bottom = 0;
-  for (const item of layout) {
-    if (item.i === excludeId) continue;
-    bottom = Math.max(bottom, item.y + item.h);
-    for (let x = item.x; x < item.x + item.w; x++) {
-      for (let y = item.y; y < item.y + item.h; y++) {
-        occupied.add(`${x},${y}`);
-      }
-    }
-  }
-  const rows = bottom + 2; // a little slack below the current content
-  const cells: { x: number; y: number }[] = [];
-  for (let y = 0; y < rows; y++) {
-    for (let x = 0; x < COLS; x++) {
-      if (!occupied.has(`${x},${y}`)) cells.push({ x, y });
-    }
-  }
-  return cells;
-}
-
 export function DashboardGrid({
   dashboardId,
   tabId,
@@ -67,6 +44,7 @@ export function DashboardGrid({
   accounts,
   categoryOptions,
   merchantOptions,
+  calculatedMetrics,
   published,
 }: {
   dashboardId: string;
@@ -75,6 +53,7 @@ export function DashboardGrid({
   accounts: Account[];
   categoryOptions: CategoryOption[];
   merchantOptions: string[];
+  calculatedMetrics: CalculatedMetricOption[];
   // Dashboard-level, not per-tab (see DashboardTabs, which owns the toggle
   // and the header row it lives in) — passed straight through here to gate
   // drag/resize and the add/edit/delete controls.
@@ -106,10 +85,6 @@ export function DashboardGrid({
   );
   const [draft, setDraft] = useState<WidgetDraft | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  // Set while a drag or resize is in progress (to the id of the item being
-  // moved) so the grid can show dashed "you can drop it here" outlines over
-  // every other open cell — cleared the instant the gesture ends.
-  const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const isAdding = editorState?.mode === "add";
 
   const persistLayout = useCallback(
@@ -189,9 +164,6 @@ export function DashboardGrid({
     });
   }
 
-  const cellDims = calcGridCellDimensions({ width, cols: COLS, rowHeight: ROW_HEIGHT, margin: MARGIN });
-  const openSlots = !published && activeItemId ? emptyCells(layout, activeItemId) : [];
-
   return (
     <>
       <div ref={containerRef} className="relative">
@@ -203,10 +175,6 @@ export function DashboardGrid({
             dragConfig={{ enabled: !published, handle: ".widget-drag-handle" }}
             resizeConfig={{ enabled: !published, handles: RESIZE_HANDLES }}
             onLayoutChange={handleLayoutChange}
-            onDragStart={(_layout, _oldItem, newItem) => setActiveItemId(newItem?.i ?? null)}
-            onDragStop={() => setActiveItemId(null)}
-            onResizeStart={(_layout, _oldItem, newItem) => setActiveItemId(newItem?.i ?? null)}
-            onResizeStop={() => setActiveItemId(null)}
           >
             {displayWidgets.map((widget) => (
               <div key={widget.id} className="group relative">
@@ -249,28 +217,6 @@ export function DashboardGrid({
           </ReactGridLayout>
         )}
 
-        {/* Snap-target hints — every open cell, shown only while a drag or
-            resize is actively in progress, so it's obvious where else the
-            tile could go. Purely visual, not part of react-grid-layout's own
-            layout tree — absolutely positioned over it using the same pixel
-            math the grid itself uses (calcGridCellDimensions), so they line
-            up exactly. */}
-        {openSlots.length > 0 && (
-          <div className="pointer-events-none absolute inset-0 z-0">
-            {openSlots.map(({ x, y }) => (
-              <div
-                key={`${x},${y}`}
-                className="absolute rounded-lg border-2 border-dashed border-indigo-400/50 dark:border-indigo-300/40"
-                style={{
-                  left: cellDims.offsetX + x * (cellDims.cellWidth + cellDims.gapX),
-                  top: cellDims.offsetY + y * (cellDims.cellHeight + cellDims.gapY),
-                  width: cellDims.cellWidth,
-                  height: cellDims.cellHeight,
-                }}
-              />
-            ))}
-          </div>
-        )}
       </div>
 
       {!published && !editorState && (
@@ -291,6 +237,7 @@ export function DashboardGrid({
           accounts={accounts}
           categoryOptions={categoryOptions}
           merchantOptions={merchantOptions}
+          calculatedMetrics={calculatedMetrics}
           existing={editorState.mode === "edit" ? editorState.widget : undefined}
           ghostLayout={
             isAdding && ghostLayoutItem

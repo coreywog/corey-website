@@ -24,7 +24,7 @@ export async function GET() {
 }
 
 /**
- * Uploads a CSV as a new Dataset tab in the Data Management Hub. XLSX isn't
+ * Uploads a CSV as a new Dataset tab in Data Management. XLSX isn't
  * supported yet — the only maintained parser (the `xlsx` npm package) ships
  * with two unpatched high-severity CVEs (prototype pollution, ReDoS) for
  * exactly this — parsing an untrusted uploaded file — so it isn't worth

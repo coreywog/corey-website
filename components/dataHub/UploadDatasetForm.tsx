@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 /**
- * Adds a new Dataset tab to the Data Management Hub. CSV only for now — see
+ * Adds a new Dataset tab to Data Management. CSV only for now — see
  * app/api/data-hub/datasets/route.ts for why XLSX isn't supported yet.
  */
 export function UploadDatasetForm() {

@@ -62,7 +62,7 @@ const tabLinkClasses = (active: boolean) =>
     : "text-zinc-500 hover:bg-black/[.05] dark:text-zinc-400 dark:hover:bg-white/[.08] creamsicle:text-orange-600 creamsicle:hover:bg-orange-50");
 
 /**
- * The Data Management Hub — one tab per connected data source. Finance
+ * Data Management — one tab per connected data source. Finance
  * (Plaid-backed transactions) is one tab among others, shown only once
  * there's actually an account connected; every uploaded dataset gets its
  * own. Deliberately all server-rendered, tab switching via plain links
@@ -191,7 +191,7 @@ export default async function DataHubPage({
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-16">
-      <h1 className="text-2xl font-semibold tracking-tight">Data Management Hub</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Data Management</h1>
 
       <div className="flex flex-wrap items-center gap-2">
         {showFinanceTab && (

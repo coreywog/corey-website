@@ -137,6 +137,11 @@ export const GRADIENT_PRESETS = [
 const chartConfigSchema = z.object({
   dataSource: z.literal("transactions"), // only value today — explicit for future data sources
   metric: z.enum(METRICS),
+  // A saved CalculatedMetric (see prisma/schema.prisma) takes over from
+  // `metric` entirely when set — `metric` stays required/populated anyway
+  // so a config always validates and has a sane fallback if the referenced
+  // CalculatedMetric is ever deleted (see lib/dashboardQuery.ts).
+  customMetricId: z.string().optional(),
   groupBy: z.enum(GROUP_BYS).optional(), // omitted for stat tiles
   dateRange: dateRangeSchema,
   filters: filtersSchema,

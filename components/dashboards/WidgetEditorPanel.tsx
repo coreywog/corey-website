@@ -18,6 +18,7 @@ import {
   CalendarIcon,
 } from "./icons";
 import { Widget, dateButtonLabel, dateButtonKey, type WidgetWithData } from "./Widget";
+import type { CalculatedMetricOption } from "./DashboardTabs";
 import type { WidgetConfig, ChartWidgetConfig, WidgetType, Metric, GroupBy, DateButtonConfig, DateButtonPreset } from "@/lib/dashboardConfig";
 import { WIDGET_COLORS, AXIS_X_POSITIONS, AXIS_Y_POSITIONS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS } from "@/lib/dashboardConfig";
 
@@ -77,16 +78,18 @@ const RECENT_COLORS_KEY = "dashboardWidgetRecentColors";
 // per-account variation to show here. Purely informational (see Metric/
 // Group by above for where these actually get used); D/T/# mark date/text/
 // numeric the same way the very first sketch of this panel did.
+// Account isn't in this list — it gets its own dropdown pinned above it
+// (see the Data sources panel below), not the click-a-row pattern the rest
+// of these use.
 const TRANSACTION_FIELDS: { name: string; kind: "D" | "T" | "#" }[] = [
   { name: "Date", kind: "D" },
   { name: "Amount", kind: "#" },
   { name: "Merchant", kind: "T" },
   { name: "Category", kind: "T" },
   { name: "Subcategory", kind: "T" },
-  { name: "Account", kind: "T" },
 ];
 
-type ColumnFilterKey = "date" | "amount" | "merchant" | "category" | "subcategory" | "account";
+type ColumnFilterKey = "date" | "amount" | "merchant" | "category" | "subcategory";
 // Every field is filterable now, independent of whatever it's also used
 // for (Group By, Metric) — grouping by Category while filtering to three
 // specific categories is a completely normal thing to want at once.
@@ -96,7 +99,6 @@ const COLUMN_FILTER_KEYS: Record<string, ColumnFilterKey> = {
   Merchant: "merchant",
   Category: "category",
   Subcategory: "subcategory",
-  Account: "account",
 };
 
 function FilterChip({ label }: { label: string }) {
@@ -165,6 +167,7 @@ export function WidgetEditorPanel({
   accounts,
   categoryOptions,
   merchantOptions,
+  calculatedMetrics: initialCalculatedMetrics,
   existing,
   ghostLayout,
   onClose,
@@ -176,6 +179,7 @@ export function WidgetEditorPanel({
   accounts: Account[];
   categoryOptions: CategoryOption[];
   merchantOptions: string[];
+  calculatedMetrics: CalculatedMetricOption[];
   existing?: ExistingWidget;
   // The not-yet-real widget's current position/size in the grid (add mode
   // only) — read at Save time so the size the user dragged it to is what
@@ -303,6 +307,52 @@ export function WidgetEditorPanel({
     setAddingCustomButton(false);
   }
   const [metric, setMetric] = useState<Metric>(chartConfig?.metric ?? "spendingTotal");
+  const [customMetricId, setCustomMetricId] = useState<string | undefined>(chartConfig?.customMetricId);
+  // Local copy, not just the prop directly — saving a new one appends here
+  // immediately so it's selectable right away, without waiting on a
+  // router.refresh() to re-fetch the server-side list.
+  const [calculatedMetrics, setCalculatedMetrics] = useState<CalculatedMetricOption[]>(initialCalculatedMetrics);
+  const [creatingMetric, setCreatingMetric] = useState(false);
+  const [newMetricName, setNewMetricName] = useState("");
+  const [newMetricAggregation, setNewMetricAggregation] = useState<"sum" | "average" | "count" | "min" | "max">("sum");
+  const [newMetricCategory, setNewMetricCategory] = useState("");
+  const [savingMetric, setSavingMetric] = useState(false);
+  const [metricError, setMetricError] = useState<string | null>(null);
+
+  async function handleCreateMetric() {
+    const name = newMetricName.trim();
+    if (!name) return;
+    setSavingMetric(true);
+    setMetricError(null);
+    try {
+      const res = await fetch("/api/dashboards/metrics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          aggregation: newMetricAggregation,
+          transactionCategory: newMetricCategory || null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setMetricError(body?.error ?? `Failed to save (${res.status}).`);
+        return;
+      }
+      const body = await res.json();
+      setCalculatedMetrics((prev) => [...prev, body.metric]);
+      setCustomMetricId(body.metric.id);
+      setCreatingMetric(false);
+      setNewMetricName("");
+      setNewMetricAggregation("sum");
+      setNewMetricCategory("");
+    } catch {
+      setMetricError("Network error — try again.");
+    } finally {
+      setSavingMetric(false);
+    }
+  }
+
   const [groupBy, setGroupBy] = useState<GroupBy | "">(chartConfig?.groupBy ?? "merchantCategory");
   const [dateMode, setDateMode] = useState<DateRangeMode>(chartConfig?.dateRange.mode ?? "relative");
   const [relativeMonths, setRelativeMonths] = useState<1 | 3 | 6 | 12>(
@@ -341,9 +391,10 @@ export function WidgetEditorPanel({
   // be filtered now, including one that's also the current Group By/Metric
   // — grouping by category and filtering to just three categories is a
   // completely normal thing to want at the same time.
-  const [openColumnFilter, setOpenColumnFilter] = useState<
-    "date" | "amount" | "merchant" | "category" | "subcategory" | "account" | null
-  >(null);
+  const [openColumnFilter, setOpenColumnFilter] = useState<ColumnFilterKey | null>(null);
+  // Account gets its own dropdown, pinned above the rest — closed by
+  // default, same reasoning as openColumnFilter above.
+  const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [transactionCategory, setTransactionCategory] = useState<string>(chartConfig?.filters?.transactionCategory ?? "");
   const [limit, setLimit] = useState(chartConfig?.limit ? String(chartConfig.limit) : "");
   const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
@@ -475,6 +526,7 @@ export function WidgetEditorPanel({
     return {
       dataSource: "transactions",
       metric,
+      ...(customMetricId ? { customMetricId } : {}),
       ...(needsGroupBy ? { groupBy: groupBy as GroupBy } : isCalendar ? { groupBy: "day" as const } : {}),
       dateRange,
       ...(Object.keys(filters).length ? { filters } : {}),
@@ -492,6 +544,7 @@ export function WidgetEditorPanel({
     text,
     type,
     metric,
+    customMetricId,
     groupBy,
     dateMode,
     relativeMonths,
@@ -556,7 +609,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, transactionCategory, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo]);
+  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, transactionCategory, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -685,6 +738,56 @@ export function WidgetEditorPanel({
           {!isText && (
             <div className="flex flex-col gap-1 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
               <span className={labelClasses}>Data sources — click a column to filter by it</span>
+
+              {/* Pinned above the rest, not folded into the click-a-column
+                  list below — accounts are more "which data feeds this at
+                  all" than a per-value filter, so it stays a dropdown up
+                  top like before. */}
+              <div className="mb-1 flex flex-col gap-1 border-b border-black/[.06] pb-2 dark:border-white/[.08]">
+                <button
+                  type="button"
+                  onClick={() => setAccountDropdownOpen((v) => !v)}
+                  className="flex w-full items-center justify-between gap-2 rounded px-1 py-0.5 text-xs text-zinc-600 hover:bg-black/[.03] hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/[.05] dark:hover:text-zinc-100"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="w-3 font-mono font-medium text-zinc-400 dark:text-zinc-500">T</span>
+                    <span>Account</span>
+                  </span>
+                  <span className="flex items-center gap-1.5 text-zinc-500">
+                    {accountIds.length === 0
+                      ? "All accounts"
+                      : accountIds.length === 1
+                        ? (accounts.find((a) => a.id === accountIds[0])?.name ?? "1 selected")
+                        : `${accountIds.length} selected`}
+                    <span aria-hidden="true">{accountDropdownOpen ? "▾" : "▸"}</span>
+                  </span>
+                </button>
+                {accountDropdownOpen && (
+                  <div className="flex flex-col gap-1 py-1 pl-5">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={allAccountsChecked || accountIds.length === 0}
+                        onChange={() => setAccountIds([])}
+                      />
+                      All connected accounts
+                    </label>
+                    {accounts.map((a) => (
+                      <label key={a.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={accountIds.includes(a.id)}
+                          onChange={(e) =>
+                            setAccountIds((prev) => (e.target.checked ? [...prev, a.id] : prev.filter((id) => id !== a.id)))
+                          }
+                        />
+                        {a.name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {TRANSACTION_FIELDS.map((f) => {
                 const filterKey = COLUMN_FILTER_KEYS[f.name];
                 // Highlights the column(s) actually powering this graph
@@ -705,9 +808,7 @@ export function WidgetEditorPanel({
                           ? groupBy === "merchantCategory"
                           : f.name === "Subcategory"
                             ? groupBy === "merchantSubcategory"
-                            : f.name === "Account"
-                              ? groupBy === "account"
-                              : false;
+                            : false;
                 const isOpen = openColumnFilter === filterKey;
                 return (
                   <div
@@ -750,14 +851,6 @@ export function WidgetEditorPanel({
                         {f.name === "Subcategory" &&
                           merchantSubcategories.map((s) => <FilterChip key={s} label={formatCategoryLabel(s)} />)}
                         {f.name === "Merchant" && merchants.map((m) => <FilterChip key={m} label={m} />)}
-                        {f.name === "Account" &&
-                          (accountIds.length === 0 ? (
-                            <span className="text-[11px] text-zinc-500">All accounts</span>
-                          ) : (
-                            accountIds.map((id) => (
-                              <FilterChip key={id} label={accounts.find((a) => a.id === id)?.name ?? id} />
-                            ))
-                          ))}
                       </div>
                     )}
 
@@ -941,31 +1034,6 @@ export function WidgetEditorPanel({
                         )}
                       </div>
                     )}
-
-                    {isOpen && filterKey === "account" && (
-                      <div className="flex flex-col gap-1 py-1 pl-5">
-                        <label className="flex items-center gap-2 text-sm">
-                          <input
-                            type="checkbox"
-                            checked={allAccountsChecked || accountIds.length === 0}
-                            onChange={() => setAccountIds([])}
-                          />
-                          All connected accounts
-                        </label>
-                        {accounts.map((a) => (
-                          <label key={a.id} className="flex items-center gap-2 text-sm">
-                            <input
-                              type="checkbox"
-                              checked={accountIds.includes(a.id)}
-                              onChange={(e) =>
-                                setAccountIds((prev) => (e.target.checked ? [...prev, a.id] : prev.filter((id) => id !== a.id)))
-                              }
-                            />
-                            {a.name}
-                          </label>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 );
               })}
@@ -1025,7 +1093,23 @@ export function WidgetEditorPanel({
 
                 <label className="flex flex-col gap-1">
                   <span className={labelClasses}>Metric</span>
-                  <select value={metric} onChange={(e) => setMetric(e.target.value as Metric)} className={selectClasses}>
+                  <select
+                    value={customMetricId ? `custom:${customMetricId}` : metric}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      if (v === "__new__") {
+                        setCreatingMetric(true);
+                        return;
+                      }
+                      if (v.startsWith("custom:")) {
+                        setCustomMetricId(v.slice("custom:".length));
+                        return;
+                      }
+                      setCustomMetricId(undefined);
+                      setMetric(v as Metric);
+                    }}
+                    className={selectClasses}
+                  >
                     {/* "Transaction count" is meaningless per-transaction —
                         every scatter point or histogram sample is exactly
                         one, so it'd produce a flat line of dots or a single
@@ -1035,8 +1119,89 @@ export function WidgetEditorPanel({
                         {o.label}
                       </option>
                     ))}
+                    {/* Saved metrics apply to bucketed/stat results only —
+                        scatter plots raw transactions and histogram bins by
+                        magnitude, neither of which has a "sum vs. average"
+                        distinction to offer. */}
+                    {!isScatter && !isHistogram && !isStackedBar && (
+                      <>
+                        {calculatedMetrics.length > 0 && (
+                          <optgroup label="Your metrics">
+                            {calculatedMetrics.map((m) => (
+                              <option key={m.id} value={`custom:${m.id}`}>
+                                {m.name}
+                              </option>
+                            ))}
+                          </optgroup>
+                        )}
+                        <option value="__new__">+ New calculated metric…</option>
+                      </>
+                    )}
                   </select>
                 </label>
+
+                {creatingMetric && (
+                  <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
+                    <span className={labelClasses}>New calculated metric</span>
+                    <p className="text-[11px] text-zinc-500">
+                      Saved once, usable as the Metric on any widget from now on.
+                    </p>
+                    <input
+                      type="text"
+                      value={newMetricName}
+                      onChange={(e) => setNewMetricName(e.target.value)}
+                      placeholder="Name (e.g. Average grocery trip)"
+                      maxLength={60}
+                      className={selectClasses}
+                    />
+                    <div className="flex gap-1.5">
+                      <select
+                        value={newMetricAggregation}
+                        onChange={(e) => setNewMetricAggregation(e.target.value as typeof newMetricAggregation)}
+                        className={selectClasses}
+                      >
+                        <option value="sum">Sum</option>
+                        <option value="average">Average</option>
+                        <option value="count">Count</option>
+                        <option value="min">Minimum</option>
+                        <option value="max">Maximum</option>
+                      </select>
+                      <select
+                        value={newMetricCategory}
+                        onChange={(e) => setNewMetricCategory(e.target.value)}
+                        className={selectClasses}
+                      >
+                        <option value="">Any transaction type</option>
+                        {TRANSACTION_CATEGORY_OPTIONS.map((c) => (
+                          <option key={c} value={c}>
+                            {c} only
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {metricError && <p className="text-sm text-red-600 dark:text-red-400">{metricError}</p>}
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCreatingMetric(false);
+                          setMetricError(null);
+                        }}
+                        className="rounded-md border border-black/[.1] px-3 py-1.5 text-sm text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCreateMetric}
+                        disabled={!newMetricName.trim() || savingMetric}
+                        className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
+                      >
+                        {savingMetric ? "Saving…" : "Save metric"}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {needsGroupBy && (
                   <label className="flex flex-col gap-1">

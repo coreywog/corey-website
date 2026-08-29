@@ -298,3 +298,22 @@ model DatasetRow {
 
   @@index([datasetId])
 }
+
+// A user-built, saved metric — the answer to "I don't like being limited
+// to 4 fixed metrics" (spendingTotal/incomeTotal/net/transactionCount).
+// Deliberately not a full formula/expression language: an aggregation
+// (sum/average/count/min/max) applied to transaction amount, optionally
+// narrowed to one category (income/spending/transfer/other) — those two
+// choices already cover a lot of ground ("average transaction size",
+// "largest single spend", "how many income transactions") without the
+// security surface of evaluating arbitrary user-authored expressions.
+// Saved centrally (not per-widget) so building one once makes it available
+// to every dashboard widget from then on — see lib/dashboardQuery.ts.
+model CalculatedMetric {
+  id                  String   @id @default(cuid())
+  name                String   @unique
+  aggregation         String // "sum" | "average" | "count" | "min" | "max"
+  transactionCategory String? // "income" | "spending" | "transfer" | "other" | null (= any)
+  order               Int      @default(0)
+  createdAt           DateTime @default(now())
+}

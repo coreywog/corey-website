@@ -63,6 +63,44 @@ function metricContribution(row: { amount: number; category: string }, metric: M
   }
 }
 
+type Aggregation = "sum" | "average" | "count" | "min" | "max";
+type CustomMetric = { aggregation: Aggregation; transactionCategory: string | null };
+
+/** A row's contribution under a saved CalculatedMetric — absolute value,
+ * not signed: the category filter is what narrows to spending-only/
+ * income-only/etc., so "average transaction size" doesn't get thrown off
+ * by this app's negative-for-spending sign convention. */
+function customMetricRowValue(row: { amount: number; category: string }, metric: CustomMetric): number | null {
+  if (metric.transactionCategory && row.category !== metric.transactionCategory) return null;
+  return Math.abs(row.amount);
+}
+
+function emptyAccumulator() {
+  return { sum: 0, count: 0, min: Infinity, max: -Infinity };
+}
+
+function accumulate(acc: ReturnType<typeof emptyAccumulator>, value: number) {
+  acc.sum += value;
+  acc.count += 1;
+  if (value < acc.min) acc.min = value;
+  if (value > acc.max) acc.max = value;
+}
+
+function finalizeAccumulator(acc: ReturnType<typeof emptyAccumulator>, aggregation: Aggregation): number {
+  switch (aggregation) {
+    case "sum":
+      return acc.sum;
+    case "count":
+      return acc.count;
+    case "average":
+      return acc.count > 0 ? acc.sum / acc.count : 0;
+    case "min":
+      return acc.count > 0 ? acc.min : 0;
+    case "max":
+      return acc.count > 0 ? acc.max : 0;
+  }
+}
+
 function keyAndLabelFor(row: DecryptedRow, groupBy: GroupBy): { key: string; label: string } {
   switch (groupBy) {
     case "day": {
@@ -153,14 +191,22 @@ function buildWhere(config: ChartWidgetConfig, start: string, end: string) {
       : {}),
     // The metric fixes category for spendingTotal/incomeTotal — an explicit
     // transactionCategory filter would just be redundant (or contradictory)
-    // there, so it only applies for net/transactionCount.
-    ...(config.metric === "spendingTotal"
-      ? { category: "spending" }
-      : config.metric === "incomeTotal"
-        ? { category: "income" }
-        : config.filters?.transactionCategory
-          ? { category: config.filters.transactionCategory }
-          : {}),
+    // there, so it only applies for net/transactionCount. Skipped entirely
+    // when a saved CalculatedMetric is in play: `metric` still holds
+    // whatever it defaulted to (customMetricId overrides it, see
+    // computeWidgetData), so forcing spending/income here from that stale
+    // value would silently wrong-filter a custom "income" or "any" metric.
+    // The metric's own transactionCategory is applied post-fetch instead —
+    // see customMetricRowValue.
+    ...(config.customMetricId
+      ? {}
+      : config.metric === "spendingTotal"
+        ? { category: "spending" }
+        : config.metric === "incomeTotal"
+          ? { category: "income" }
+          : config.filters?.transactionCategory
+            ? { category: config.filters.transactionCategory }
+            : {}),
   };
 }
 
@@ -204,10 +250,16 @@ function filterByMerchant(rows: DecryptedRow[], merchants: string[] | undefined)
  * least $50" shouldn't need the user to think about which way the number's
  * signed).
  */
-function filterByAmount(rows: DecryptedRow[], metric: Metric, amountMin?: number, amountMax?: number): DecryptedRow[] {
+function filterByAmount(
+  rows: DecryptedRow[],
+  metric: Metric,
+  amountMin: number | undefined,
+  amountMax: number | undefined,
+  customMetric: CustomMetric | null,
+): DecryptedRow[] {
   if (amountMin === undefined && amountMax === undefined) return rows;
   return rows.filter((r) => {
-    const contribution = metricContribution(r, metric);
+    const contribution = customMetric ? customMetricRowValue(r, customMetric) : metricContribution(r, metric);
     if (contribution === null) return false;
     const magnitude = Math.abs(contribution);
     if (amountMin !== undefined && magnitude < amountMin) return false;
@@ -231,6 +283,23 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   }
 
   const { start, end } = resolveDateRange(config.dateRange);
+
+  // A saved CalculatedMetric (see prisma/schema.prisma), if this widget
+  // uses one, takes over from the built-in `metric` everywhere below — one
+  // extra query, only when actually referenced. Falls back to the built-in
+  // metric (rather than erroring the whole widget) if it's ever been
+  // deleted since this widget was configured — same defensive-read
+  // philosophy as a bad WidgetConfig JSON blob. Loaded before buildWhere/
+  // filterByAmount since both need to know whether it's active: forcing
+  // category="spending" from a stale, ignored `metric` field, or measuring
+  // "amount" filters against the wrong metric's contribution, would
+  // silently wrong-filter a custom "income" or "any" metric otherwise.
+  const customMetric: CustomMetric | null = config.customMetricId
+    ? await prisma.calculatedMetric
+        .findUnique({ where: { id: config.customMetricId } })
+        .then((m) => (m ? { aggregation: m.aggregation as Aggregation, transactionCategory: m.transactionCategory } : null))
+    : null;
+
   const where = buildWhere(config, start, end);
   // Merchant names aren't a plain DB column (see filtersSchema's own
   // comment in lib/dashboardConfig.ts) — decrypting descriptions is the
@@ -242,6 +311,7 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     config.metric,
     config.filters?.amountMin,
     config.filters?.amountMax,
+    customMetric,
   );
 
   // Scatter is the one chart type that plots raw transactions instead of an
@@ -346,10 +416,20 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   }
 
   if (!config.groupBy) {
-    let value = 0;
-    for (const r of rows) {
-      const c = metricContribution(r, config.metric);
-      if (c !== null) value += c;
+    let value: number;
+    if (customMetric) {
+      const acc = emptyAccumulator();
+      for (const r of rows) {
+        const v = customMetricRowValue(r, customMetric);
+        if (v !== null) accumulate(acc, v);
+      }
+      value = finalizeAccumulator(acc, customMetric.aggregation);
+    } else {
+      value = 0;
+      for (const r of rows) {
+        const c = metricContribution(r, config.metric);
+        if (c !== null) value += c;
+      }
     }
     value = round2(value);
 
@@ -367,24 +447,54 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
       config.metric,
       config.filters?.amountMin,
       config.filters?.amountMax,
+      customMetric,
     );
-    let previousValue = 0;
-    for (const r of prevRows) {
-      const c = metricContribution(r, config.metric);
-      if (c !== null) previousValue += c;
+    let previousValue: number;
+    if (customMetric) {
+      const acc = emptyAccumulator();
+      for (const r of prevRows) {
+        const v = customMetricRowValue(r, customMetric);
+        if (v !== null) accumulate(acc, v);
+      }
+      previousValue = finalizeAccumulator(acc, customMetric.aggregation);
+    } else {
+      previousValue = 0;
+      for (const r of prevRows) {
+        const c = metricContribution(r, config.metric);
+        if (c !== null) previousValue += c;
+      }
     }
     return { kind: "stat", value, previousValue: round2(previousValue) };
   }
 
   const groupBy = config.groupBy;
   const totals = new Map<string, { label: string; value: number }>();
+  const customAccumulators = new Map<string, ReturnType<typeof emptyAccumulator>>();
   for (const r of rows) {
+    const { key, label } = keyAndLabelFor(r, groupBy);
+    if (customMetric) {
+      const v = customMetricRowValue(r, customMetric);
+      if (v === null) continue;
+      if (!customAccumulators.has(key)) customAccumulators.set(key, emptyAccumulator());
+      accumulate(customAccumulators.get(key)!, v);
+      if (!totals.has(key)) totals.set(key, { label, value: 0 }); // value filled in below, once accumulation is complete
+      continue;
+    }
     const contribution = metricContribution(r, config.metric);
     if (contribution === null) continue;
-    const { key, label } = keyAndLabelFor(r, groupBy);
     const existing = totals.get(key);
     if (existing) existing.value += contribution;
     else totals.set(key, { label, value: contribution });
+  }
+
+  // Fill in each group's real value now that every row's been accumulated —
+  // can't finalize per-row above since average/min/max need the whole
+  // group's data first, unlike a running sum.
+  if (customMetric) {
+    for (const [key, acc] of customAccumulators) {
+      const existing = totals.get(key);
+      if (existing) existing.value = finalizeAccumulator(acc, customMetric.aggregation);
+    }
   }
 
   let points: AggregatedPoint[] = [...totals.entries()].map(([key, { label, value }]) => ({
