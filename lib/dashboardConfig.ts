@@ -23,6 +23,13 @@ const dateRangeSchema = z.union([
   // DateRangeSelection for why this is a distinct mode from "relative"
   // (which is a rolling N-months-back-by-day window instead).
   z.object({ mode: z.literal("monthsWindow"), months: z.number().int().min(1).max(24) }),
+  // A single calendar month at a fixed offset from "now" — 0 is this
+  // month, 1 is last month, 2 is two months back, etc. Distinct from
+  // monthsWindow above (one merged range across several months for a
+  // single chart): this is one specific month, meant for several widgets
+  // each pinned to a different offset so they stay lined up and all shift
+  // forward together as the calendar turns.
+  z.object({ mode: z.literal("relativeMonth"), monthsAgo: z.number().int().min(0).max(36) }),
   z.object({
     mode: z.literal("custom"),
     start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),

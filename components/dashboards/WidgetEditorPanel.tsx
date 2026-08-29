@@ -149,7 +149,7 @@ function FilterChip({ label }: { label: string }) {
   );
 }
 
-type DateRangeMode = "relative" | "relativeDays" | "monthsWindow" | "ytd" | "specific" | "allTime" | "custom";
+type DateRangeMode = "relative" | "relativeDays" | "monthsWindow" | "relativeMonth" | "ytd" | "specific" | "allTime" | "custom";
 
 const selectClasses =
   "rounded-md border border-black/[.1] bg-white px-2 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500";
@@ -533,6 +533,19 @@ export function WidgetEditorPanel({
   const [customMonthsActive, setCustomMonthsActive] = useState(
     () => chartConfig?.dateRange.mode === "monthsWindow" && chartConfig.dateRange.months !== 1,
   );
+  // A single calendar month at a fixed offset — "This month" is 0, "N
+  // months ago…" is any offset typed in. Kept separate from
+  // monthsWindow/monthsWindowCount above: that's a merged multi-month
+  // range for one chart, this is one specific month, meant for several
+  // widgets each pinned to a different offset (see relativeMonth's own
+  // comment in lib/finance.ts).
+  const [relativeMonthsAgo, setRelativeMonthsAgo] = useState<number>(
+    chartConfig?.dateRange.mode === "relativeMonth" ? chartConfig.dateRange.monthsAgo : 2,
+  );
+  const [customMonthsAgoDraft, setCustomMonthsAgoDraft] = useState("");
+  const [customMonthsAgoActive, setCustomMonthsAgoActive] = useState(
+    () => chartConfig?.dateRange.mode === "relativeMonth" && chartConfig.dateRange.monthsAgo !== 0,
+  );
   // Only shown once "Custom" is picked within the Fluid group — a free
   // number input for any N-days-back that isn't one of the preset pills.
   const [customDaysAgoDraft, setCustomDaysAgoDraft] = useState("");
@@ -676,13 +689,15 @@ export function WidgetEditorPanel({
           ? (RELATIVE_DAY_OPTIONS.find((d) => d.days === relativeDaysAgo)?.label ?? `${relativeDaysAgo} days ago`)
           : dateMode === "monthsWindow"
             ? describeDateRangeSelection({ mode: "monthsWindow", months: monthsWindowCount })
-            : dateMode === "specific"
-              ? formatMonthValue(specificMonth) || "Pick a month"
-              : dateMode === "custom"
-                ? customStart
-                  ? `${formatDate(customStart)} – ${openEnded ? "latest" : customEnd ? formatDate(customEnd) : "?"}`
-                  : "Pick a range"
-                : `Last ${relativeMonths} month${relativeMonths === 1 ? "" : "s"}`;
+            : dateMode === "relativeMonth"
+              ? describeDateRangeSelection({ mode: "relativeMonth", monthsAgo: relativeMonthsAgo })
+              : dateMode === "specific"
+                ? formatMonthValue(specificMonth) || "Pick a month"
+                : dateMode === "custom"
+                  ? customStart
+                    ? `${formatDate(customStart)} – ${openEnded ? "latest" : customEnd ? formatDate(customEnd) : "?"}`
+                    : "Pick a range"
+                  : `Last ${relativeMonths} month${relativeMonths === 1 ? "" : "s"}`;
 
   // How many days this widget's own configured Date filter actually spans
   // — used below to decide which Date focus buttons make sense to offer on
@@ -699,6 +714,8 @@ export function WidgetEditorPanel({
         return relativeMonths * 31;
       case "monthsWindow":
         return monthsWindowCount * 31;
+      case "relativeMonth":
+        return 31;
       case "ytd": {
         const now = new Date();
         return Math.floor((now.getTime() - Date.UTC(now.getUTCFullYear(), 0, 1)) / 86400000);
@@ -741,11 +758,13 @@ export function WidgetEditorPanel({
             ? { mode: "relativeDays", days: relativeDaysAgo }
             : dateMode === "monthsWindow"
               ? { mode: "monthsWindow", months: monthsWindowCount }
-              : dateMode === "specific"
-                ? { mode: "specific", month: specificMonth }
-                : dateMode === "custom"
-                  ? { mode: "custom", start: customStart, ...(openEnded ? {} : { end: customEnd }) }
-                  : { mode: "relative", months: relativeMonths };
+              : dateMode === "relativeMonth"
+                ? { mode: "relativeMonth", monthsAgo: relativeMonthsAgo }
+                : dateMode === "specific"
+                  ? { mode: "specific", month: specificMonth }
+                  : dateMode === "custom"
+                    ? { mode: "custom", start: customStart, ...(openEnded ? {} : { end: customEnd }) }
+                    : { mode: "relative", months: relativeMonths };
 
     const parsedAmountMin = amountMin.trim() ? Number(amountMin) : undefined;
     const parsedAmountMax = amountMax.trim() ? Number(amountMax) : undefined;
@@ -820,6 +839,7 @@ export function WidgetEditorPanel({
     relativeMonths,
     relativeDaysAgo,
     monthsWindowCount,
+    relativeMonthsAgo,
     specificMonth,
     customStart,
     customEnd,
@@ -888,7 +908,7 @@ export function WidgetEditorPanel({
       clearTimeout(timeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, monthsWindowCount, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, fillPatternOverrides, dateButtons, multiSeries, seriesList]);
+  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, monthsWindowCount, relativeMonthsAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, fillPatternOverrides, dateButtons, multiSeries, seriesList]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -1225,6 +1245,31 @@ export function WidgetEditorPanel({
                               >
                                 Past N months…
                               </button>
+                              <span aria-hidden className="h-5 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15]" />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDateMode("relativeMonth");
+                                  setRelativeMonthsAgo(0);
+                                  setCustomMonthsAgoActive(false);
+                                }}
+                                className={pillClasses(dateMode === "relativeMonth" && !customMonthsAgoActive)}
+                                title="This calendar month so far — still filling in as the month goes"
+                              >
+                                This month
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDateMode("relativeMonth");
+                                  setCustomMonthsAgoActive(true);
+                                  setCustomMonthsAgoDraft(String(relativeMonthsAgo));
+                                }}
+                                className={pillClasses(dateMode === "relativeMonth" && customMonthsAgoActive)}
+                                title="Pin this tile to one specific month-offset from today — several tiles at different offsets (0, 1, 2, ...) stay lined up and all shift forward together as the calendar turns"
+                              >
+                                N months ago…
+                              </button>
                             </div>
                             {dateMode === "relativeDays" && customDaysActive && (
                               <div className="flex flex-wrap items-center gap-2">
@@ -1264,6 +1309,26 @@ export function WidgetEditorPanel({
                                   className={selectClasses + " w-20"}
                                 />
                                 <span className="text-xs text-zinc-500">most recently completed months</span>
+                              </div>
+                            )}
+                            {dateMode === "relativeMonth" && customMonthsAgoActive && (
+                              <div className="flex flex-wrap items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={36}
+                                  value={customMonthsAgoDraft}
+                                  autoFocus
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setCustomMonthsAgoDraft(v);
+                                    const n = Number(v);
+                                    if (v.trim() && Number.isInteger(n) && n >= 0 && n <= 36) setRelativeMonthsAgo(n);
+                                  }}
+                                  placeholder="2"
+                                  className={selectClasses + " w-20"}
+                                />
+                                <span className="text-xs text-zinc-500">months ago (0 = this month)</span>
                               </div>
                             )}
                           </div>
