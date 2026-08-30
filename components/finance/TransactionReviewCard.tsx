@@ -143,10 +143,26 @@ export function TransactionReviewCard({
     () => [...new Set(categoryOptions.map((c) => c.category))].sort(),
     [categoryOptions],
   );
-  const subcategoriesForCategory = useMemo(
-    () => [...new Set(categoryOptions.filter((c) => c.category === category).map((c) => c.subcategory))].sort(),
-    [categoryOptions, category],
+  // Every subcategory, not scoped to the currently-picked category — you
+  // often know "Coffee" before you know it lives under "Food", so let that
+  // search run first and back-fill the category from it (see
+  // handleSubcategoryChange) rather than forcing category-then-subcategory.
+  const allSubcategories = useMemo(
+    () => [...new Set(categoryOptions.map((c) => c.subcategory))].sort(),
+    [categoryOptions],
   );
+
+  function handleSubcategoryChange(v: string) {
+    setSubcategory(v);
+    if (v === NEW_VALUE || category === NEW_VALUE) return;
+    // Same subcategory name can exist under more than one category (e.g.
+    // "Other" under both Food and Shopping) — keep the already-picked
+    // category if it's a valid match, otherwise resolve to whichever
+    // category it belongs to earliest alphabetically.
+    const matches = [...new Set(categoryOptions.filter((c) => c.subcategory === v).map((c) => c.category))];
+    if (matches.length === 0) return;
+    if (!category || !matches.includes(category)) setCategory(matches.sort()[0]);
+  }
 
   const resolvedCategory = category === NEW_VALUE ? newCategory.trim() : category;
   const resolvedSubcategory = subcategory === NEW_VALUE ? newSubcategory.trim() : subcategory;
@@ -233,17 +249,15 @@ export function TransactionReviewCard({
               </label>
             )}
 
-            {category && (
-              <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
-                <span className="text-[11px] text-zinc-500">Subcategory</span>
-                <SearchableSelect
-                  value={subcategory}
-                  onChange={setSubcategory}
-                  options={subcategoriesForCategory.map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
-                  extraOption={{ value: NEW_VALUE, label: "+ New subcategory" }}
-                />
-              </label>
-            )}
+            <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
+              <span className="text-[11px] text-zinc-500">Subcategory</span>
+              <SearchableSelect
+                value={subcategory}
+                onChange={handleSubcategoryChange}
+                options={allSubcategories.map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
+                extraOption={{ value: NEW_VALUE, label: "+ New subcategory" }}
+              />
+            </label>
             {subcategory === NEW_VALUE && (
               <label className="flex flex-1 min-w-[7rem] flex-col gap-1">
                 <span className="text-[11px] text-zinc-500">New subcategory name</span>

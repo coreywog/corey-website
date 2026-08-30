@@ -42,10 +42,22 @@ export function CategoryReassignPanel({
   const [error, setError] = useState<string | null>(null);
 
   const categories = useMemo(() => [...new Set(categoryOptions.map((c) => c.category))].sort(), [categoryOptions]);
-  const subcategoriesForCategory = useMemo(
-    () => [...new Set(categoryOptions.filter((c) => c.category === category).map((c) => c.subcategory))].sort(),
-    [categoryOptions, category],
+  // Every subcategory, not scoped to the currently-picked category — see the
+  // same comment in TransactionReviewCard.tsx. Selecting one below
+  // back-fills the correct category via handleSubcategoryChange instead of
+  // requiring category-then-subcategory.
+  const allSubcategories = useMemo(
+    () => [...new Set(categoryOptions.map((c) => c.subcategory))].sort(),
+    [categoryOptions],
   );
+
+  function handleSubcategoryChange(v: string) {
+    setSubcategory(v);
+    if (v === NEW_VALUE || category === NEW_VALUE) return;
+    const matches = [...new Set(categoryOptions.filter((c) => c.subcategory === v).map((c) => c.category))];
+    if (matches.length === 0) return;
+    if (!category || !matches.includes(category)) setCategory(matches.sort()[0]);
+  }
 
   const resolvedCategory = category === NEW_VALUE ? newCategory.trim() : category;
   const resolvedSubcategory = subcategory === NEW_VALUE ? newSubcategory.trim() : subcategory;
@@ -110,15 +122,13 @@ export function CategoryReassignPanel({
               className={selectClasses}
             />
           )}
-          {category && (
-            <SearchableSelect
-              value={subcategory}
-              onChange={setSubcategory}
-              options={subcategoriesForCategory.map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
-              extraOption={{ value: NEW_VALUE, label: "+ New subcategory" }}
-              placeholder="Subcategory…"
-            />
-          )}
+          <SearchableSelect
+            value={subcategory}
+            onChange={handleSubcategoryChange}
+            options={allSubcategories.map((s) => ({ value: s, label: formatCategoryLabel(s) }))}
+            extraOption={{ value: NEW_VALUE, label: "+ New subcategory" }}
+            placeholder="Subcategory…"
+          />
           {subcategory === NEW_VALUE && (
             <input
               type="text"
