@@ -808,7 +808,17 @@ export function WidgetEditorPanel({
 
     const parsedAmountMin = amountMin.trim() ? Number(amountMin) : undefined;
     const parsedAmountMax = amountMax.trim() ? Number(amountMax) : undefined;
-    const parsedYTickCount = yTickCount.trim() ? Number(yTickCount) : undefined;
+    // Clamped/rounded here, not just left to the <input>'s own min/max/step —
+    // those only constrain the native spinner and scroll-wheel stepping;
+    // typing (or pasting) "1", "25", or "3.5" directly bypasses them
+    // entirely, and the schema's own min(2).max(20).int() would then reject
+    // the *whole* config, breaking the live preview until the field is
+    // corrected — not just refusing this one value.
+    const parsedYTickCountRaw = yTickCount.trim() ? Number(yTickCount) : undefined;
+    const parsedYTickCount =
+      parsedYTickCountRaw !== undefined && Number.isFinite(parsedYTickCountRaw)
+        ? Math.min(20, Math.max(2, Math.round(parsedYTickCountRaw)))
+        : undefined;
     const parsedYDomainMin = yDomainMin.trim() ? Number(yDomainMin) : undefined;
     const parsedYDomainMax = yDomainMax.trim() ? Number(yDomainMax) : undefined;
 
@@ -849,7 +859,7 @@ export function WidgetEditorPanel({
             ...(fontFamily !== "default" ? { fontFamily } : {}),
             ...(!showXTicks ? { showXTicks: false } : {}),
             ...(!showYTicks ? { showYTicks: false } : {}),
-            ...(parsedYTickCount !== undefined && !Number.isNaN(parsedYTickCount) ? { yTickCount: parsedYTickCount } : {}),
+            ...(parsedYTickCount !== undefined ? { yTickCount: parsedYTickCount } : {}),
             ...(parsedYDomainMin !== undefined && !Number.isNaN(parsedYDomainMin) ? { yDomainMin: parsedYDomainMin } : {}),
             ...(parsedYDomainMax !== undefined && !Number.isNaN(parsedYDomainMax) ? { yDomainMax: parsedYDomainMax } : {}),
           }
@@ -988,6 +998,12 @@ export function WidgetEditorPanel({
           const body = await res.json();
           setPreview(body.result);
         } else {
+          // Logged rather than surfaced — the on-tile message stays a plain
+          // "couldn't load," but the actual reason (usually a field value
+          // the schema rejects, e.g. out of an allowed range) still shows up
+          // in the console for whoever's debugging it.
+          const body = await res.json().catch(() => null);
+          console.error("Widget preview request failed", res.status, body);
           setPreview({ error: "Couldn't load a preview for this configuration." });
         }
       } catch {
