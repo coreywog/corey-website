@@ -291,6 +291,10 @@ const chartConfigSchema = z.object({
   // line with many points (e.g. daily data over months) this gets crowded
   // fast, so it's an explicit opt-in rather than always-on.
   showDataLabels: z.boolean().optional(),
+  // Reference lines behind the chart, aligned to both axes' tick values —
+  // omitted/true = shown (the default, so existing widgets pick up the
+  // fuller grid automatically), false = no grid at all.
+  showGridLines: z.boolean().optional(),
 });
 
 // A free-text tile — no data behind it at all, just whatever the user

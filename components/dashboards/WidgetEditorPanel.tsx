@@ -615,6 +615,7 @@ export function WidgetEditorPanel({
   const [showXTicks, setShowXTicks] = useState(chartConfig?.axisLabels?.showXTicks ?? true);
   const [showYTicks, setShowYTicks] = useState(chartConfig?.axisLabels?.showYTicks ?? true);
   const [showDataLabels, setShowDataLabels] = useState(chartConfig?.showDataLabels ?? false);
+  const [showGridLines, setShowGridLines] = useState(chartConfig?.showGridLines ?? true);
 
   function handleAxisLabelOffsetChange(axis: "x" | "y", offset: { dx: number; dy: number }) {
     if (axis === "x") setXAxisOffset(offset);
@@ -669,12 +670,17 @@ export function WidgetEditorPanel({
   // number. Scatter excluded: one raw transaction per point means way too
   // many labels to be readable.
   const showDataLabelsOption = type === "line" || type === "area" || type === "bar" || isHistogram || isStackedBar;
+  // Grid lines behind the chart — anything with Cartesian axes for a line to
+  // align to. Excludes pie/stat/table/calendar/text, none of which have
+  // axis values at all.
+  const showGridLinesOption =
+    type === "line" || type === "area" || type === "bar" || isHistogram || isStackedBar || isScatter;
   // Whether Color/Colors and Style each have anything to show at all — used
   // to lay them out as two side-by-side columns when both apply (so
   // picking a color doesn't push the style options below the fold), or
   // just one full-width column when only one does.
   const hasColorSection = showColor || showMultiColor;
-  const hasStyleSection = showLineStyle || showFillPattern;
+  const hasStyleSection = showLineStyle || showFillPattern || showGridLinesOption;
   // Multiple independently-configured lines/bars in place of the single
   // Metric picker — only for the chart types that can actually plot more
   // than one series at once (see computeMultiSeries in lib/dashboardQuery.ts).
@@ -845,6 +851,9 @@ export function WidgetEditorPanel({
         : {}),
       ...(type === "pie" && pieLabelShow ? { pieLabels: { show: pieLabelShow, position: pieLabelPosition } } : {}),
       ...(showDataLabelsOption && showDataLabels ? { showDataLabels: true } : {}),
+      // Default is true (see chartConfigSchema) — only persist the
+      // non-default "turned off" case, same as every other on-by-default flag.
+      ...(showGridLinesOption && !showGridLines ? { showGridLines: false } : {}),
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
   }, [
@@ -882,6 +891,7 @@ export function WidgetEditorPanel({
     showXTicks,
     showYTicks,
     showDataLabels,
+    showGridLines,
     color,
     colorMode,
     pointColors,
@@ -2348,6 +2358,13 @@ export function WidgetEditorPanel({
                   <label className="flex items-center gap-2">
                     <input type="checkbox" checked={showDataLabels} onChange={(e) => setShowDataLabels(e.target.checked)} />
                     <span className="text-sm">Show values on each bar/point</span>
+                  </label>
+                )}
+
+                {showGridLinesOption && (
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={showGridLines} onChange={(e) => setShowGridLines(e.target.checked)} />
+                    <span className="text-sm">Grid lines (matching both axes&rsquo; values)</span>
                   </label>
                 )}
 

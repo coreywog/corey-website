@@ -118,6 +118,15 @@ function dataLabelList(show: boolean | undefined, valueFormat: ValueFormat | und
   );
 }
 
+/** The chart's background grid — reference lines aligned to both axes' tick
+ * values, not just the horizontal (Y-axis) ones every chart hardcoded
+ * before. Omitted/true shows it (the new default); false hides it
+ * entirely. */
+function chartGridLines(show: boolean | undefined) {
+  if (show === false) return null;
+  return <CartesianGrid strokeDasharray="3 3" opacity={0.15} />;
+}
+
 function EmptyState() {
   return (
     <div className="flex h-full items-center justify-center text-center text-sm text-zinc-500">
@@ -273,6 +282,7 @@ function LineWidget({
   lineStyle,
   onAxisDragStart,
   showDataLabels,
+  showGridLines,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
@@ -280,12 +290,13 @@ function LineWidget({
   lineStyle?: LineStyle;
   onAxisDragStart?: AxisDragHandler;
   showDataLabels?: boolean;
+  showGridLines?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        {chartGridLines(showGridLines)}
         <XAxis
           dataKey="label"
           tick={tickProp(axisLabels, "x")}
@@ -327,6 +338,7 @@ function AreaWidget({
   fillPattern,
   onAxisDragStart,
   showDataLabels,
+  showGridLines,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
@@ -335,6 +347,7 @@ function AreaWidget({
   fillPattern?: FillPattern;
   onAxisDragStart?: AxisDragHandler;
   showDataLabels?: boolean;
+  showGridLines?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   const fill = color ?? "#6366f1";
@@ -342,7 +355,7 @@ function AreaWidget({
     <ResponsiveContainer width="100%" height="100%">
       <AreaChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         <FillPatternDefs items={[{ pattern: fillPattern ?? "solid", color: fill }]} />
-        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        {chartGridLines(showGridLines)}
         <XAxis
           dataKey="label"
           tick={tickProp(axisLabels, "x")}
@@ -386,6 +399,7 @@ function BarWidget({
   selectedKeys,
   onAxisDragStart,
   showDataLabels,
+  showGridLines,
 }: {
   points: AggregatedPoint[];
   axisLabels?: AxisLabels;
@@ -395,6 +409,7 @@ function BarWidget({
   selectedKeys?: Set<string>;
   onAxisDragStart?: AxisDragHandler;
   showDataLabels?: boolean;
+  showGridLines?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   const patternFor = (key: string) => fillPatternOverrides?.[key] ?? fillPattern;
@@ -427,7 +442,7 @@ function BarWidget({
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: 16 + axisTitleMargin(axisLabels, "x") }}>
         <FillPatternDefs items={points.map((p) => ({ pattern: patternFor(p.key) ?? "solid", color: p.color }))} />
-        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        {chartGridLines(showGridLines)}
         <XAxis
           dataKey="label"
           tick={tickProp(axisLabels, "x")}
@@ -464,6 +479,7 @@ function StackedBarWidget({
   stacked = true,
   onAxisDragStart,
   showDataLabels,
+  showGridLines,
 }: {
   points: StackedPoint[];
   series: StackedSeries[];
@@ -475,6 +491,7 @@ function StackedBarWidget({
   // which is always stacked.
   stacked?: boolean;
   onAxisDragStart?: AxisDragHandler;
+  showGridLines?: boolean;
   showDataLabels?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
@@ -482,7 +499,7 @@ function StackedBarWidget({
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: 16 + axisTitleMargin(axisLabels, "x") }}>
         <FillPatternDefs items={series.map((s) => ({ pattern: fillPattern ?? "solid", color: s.color }))} />
-        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        {chartGridLines(showGridLines)}
         <XAxis
           dataKey="x"
           tick={tickProp(axisLabels, "x")}
@@ -527,18 +544,20 @@ function MultiLineWidget({
   axisLabels,
   onAxisDragStart,
   showDataLabels,
+  showGridLines,
 }: {
   points: StackedPoint[];
   series: StackedSeries[];
   axisLabels?: AxisLabels;
   onAxisDragStart?: AxisDragHandler;
   showDataLabels?: boolean;
+  showGridLines?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <LineChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        {chartGridLines(showGridLines)}
         <XAxis
           dataKey="label"
           tick={tickProp(axisLabels, "x")}
@@ -573,18 +592,20 @@ function MultiAreaWidget({
   axisLabels,
   onAxisDragStart,
   showDataLabels,
+  showGridLines,
 }: {
   points: StackedPoint[];
   series: StackedSeries[];
   axisLabels?: AxisLabels;
   onAxisDragStart?: AxisDragHandler;
   showDataLabels?: boolean;
+  showGridLines?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <AreaChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.15} vertical={false} />
+        {chartGridLines(showGridLines)}
         <XAxis
           dataKey="label"
           tick={tickProp(axisLabels, "x")}
@@ -730,16 +751,18 @@ function ScatterWidget({
   points,
   axisLabels,
   onAxisDragStart,
+  showGridLines,
 }: {
   points: ScatterPoint[];
   axisLabels?: AxisLabels;
   onAxisDragStart?: AxisDragHandler;
+  showGridLines?: boolean;
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height="100%">
       <ScatterChart margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+        {chartGridLines(showGridLines)}
         <XAxis
           dataKey="x"
           type="number"
@@ -992,7 +1015,7 @@ function DateRangeButtons({
 }: {
   buttons: DateButtonConfig[];
   activeKey: string | null;
-  onChange: (btn: DateButtonConfig) => void;
+  onChange: (btn: DateButtonConfig | null) => void;
 }) {
   const btnClasses = (isActive: boolean) =>
     "rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors " +
@@ -1005,8 +1028,18 @@ function DateRangeButtons({
     <div className="flex min-w-0 shrink flex-wrap items-center gap-1 overflow-hidden rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
       {buttons.map((b) => {
         const key = dateButtonKey(b);
+        const isActive = activeKey === key;
         return (
-          <button key={key} type="button" onClick={() => onChange(b)} className={btnClasses(activeKey === key)} title={b.kind === "custom" ? `${b.start} – ${b.end}` : undefined}>
+          <button
+            key={key}
+            type="button"
+            // Clicking the already-active button turns it back off — reverts
+            // to the widget's own configured date range — rather than only
+            // ever being able to switch to a *different* button.
+            onClick={() => onChange(isActive ? null : b)}
+            className={btnClasses(isActive)}
+            title={isActive ? "Click to go back to the widget's own date range" : b.kind === "custom" ? `${b.start} – ${b.end}` : undefined}
+          >
             {dateButtonLabel(b)}
           </button>
         );
@@ -1172,7 +1205,12 @@ export function Widget({
         ) : result.kind === "text" ? (
           <TextWidget text={result.text} />
         ) : result.kind === "scatter" ? (
-          <ScatterWidget points={result.points} axisLabels={effectiveAxisLabels} onAxisDragStart={axisDragHandler} />
+          <ScatterWidget
+            points={result.points}
+            axisLabels={effectiveAxisLabels}
+            onAxisDragStart={axisDragHandler}
+            showGridLines={chartConfig?.showGridLines}
+          />
         ) : result.kind === "stacked" ? (
           <StackedBarWidget
             points={result.points}
@@ -1181,6 +1219,7 @@ export function Widget({
             axisLabels={effectiveAxisLabels}
             onAxisDragStart={axisDragHandler}
             showDataLabels={chartConfig?.showDataLabels}
+            showGridLines={chartConfig?.showGridLines}
           />
         ) : result.kind === "multiSeries" ? (
           widget.type === "line" ? (
@@ -1190,6 +1229,7 @@ export function Widget({
               axisLabels={effectiveAxisLabels}
               onAxisDragStart={axisDragHandler}
               showDataLabels={chartConfig?.showDataLabels}
+              showGridLines={chartConfig?.showGridLines}
             />
           ) : widget.type === "area" ? (
             <MultiAreaWidget
@@ -1198,6 +1238,7 @@ export function Widget({
               axisLabels={effectiveAxisLabels}
               onAxisDragStart={axisDragHandler}
               showDataLabels={chartConfig?.showDataLabels}
+              showGridLines={chartConfig?.showGridLines}
             />
           ) : (
             // bar, histogram, and stackedBar all share the same wide-row
@@ -1211,6 +1252,7 @@ export function Widget({
               onAxisDragStart={axisDragHandler}
               stacked={widget.type === "stackedBar"}
               showDataLabels={chartConfig?.showDataLabels}
+              showGridLines={chartConfig?.showGridLines}
             />
           )
         ) : result.kind === "stat" ? (
@@ -1225,6 +1267,7 @@ export function Widget({
             selectedKeys={selectedKeys}
             onAxisDragStart={axisDragHandler}
             showDataLabels={chartConfig?.showDataLabels}
+            showGridLines={chartConfig?.showGridLines}
           />
         ) : widget.type === "pie" ? (
           <PieWidget
@@ -1248,6 +1291,7 @@ export function Widget({
             fillPattern={chartConfig?.fillPattern}
             onAxisDragStart={axisDragHandler}
             showDataLabels={chartConfig?.showDataLabels}
+            showGridLines={chartConfig?.showGridLines}
           />
         ) : (
           <LineWidget
@@ -1257,6 +1301,7 @@ export function Widget({
             lineStyle={chartConfig?.lineStyle}
             onAxisDragStart={axisDragHandler}
             showDataLabels={chartConfig?.showDataLabels}
+            showGridLines={chartConfig?.showGridLines}
           />
         )}
       </div>
