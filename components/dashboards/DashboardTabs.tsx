@@ -70,6 +70,19 @@ export function DashboardTabs({
   const [deleteNameInput, setDeleteNameInput] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Local copy of the dashboard's own name — kept in state (not just read
+  // straight off the dashboardName prop) so renaming it updates the header
+  // immediately, the same reason `published` above isn't just the raw
+  // initialPublished prop either.
+  const [name, setName] = useState(dashboardName);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(dashboardName);
+  const [renamingName, setRenamingName] = useState(false);
+  // Which tab (by id) is currently showing its rename input instead of its
+  // normal button — null means none.
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [tabNameDraft, setTabNameDraft] = useState("");
+  const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
 
   // A refresh (e.g. after adding a widget) re-renders with the same set of
   // tab ids, so activeTabId just carries over untouched. Only reset it when
@@ -107,9 +120,9 @@ export function DashboardTabs({
     }
   }
 
-  async function handleDeleteTab(tabId: string, name: string) {
+  async function handleDeleteTab(tabId: string, tabName: string) {
     if (tabs.length <= 1) return; // guarded server-side too, but no point round-tripping
-    if (!window.confirm(`Delete the "${name}" tab and all its widgets? This can't be undone.`)) return;
+    if (!window.confirm(`Delete the "${tabName}" tab and all its widgets? This can't be undone.`)) return;
     setDeletingId(tabId);
     try {
       const res = await fetch(`/api/dashboards/${dashboardId}/tabs/${tabId}`, { method: "DELETE" });
@@ -128,8 +141,70 @@ export function DashboardTabs({
     }
   }
 
+  async function handleRenameDashboard() {
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === name) {
+      setEditingName(false);
+      return;
+    }
+    setRenamingName(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/dashboards/${dashboardId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error ?? `Failed to rename dashboard (${res.status}).`);
+        setNameDraft(name); // revert the input to what's actually saved
+        return;
+      }
+      setName(trimmed);
+      // The sidebar's own dashboard list is a Server Component — it only
+      // picks up the new name once the page's data is refetched.
+      router.refresh();
+    } catch {
+      setError("Network error — try again.");
+      setNameDraft(name);
+    } finally {
+      setEditingName(false);
+      setRenamingName(false);
+    }
+  }
+
+  async function handleRenameTab(tabId: string) {
+    const tab = tabs.find((t) => t.id === tabId);
+    const trimmed = tabNameDraft.trim();
+    if (!tab || !trimmed || trimmed === tab.name) {
+      setEditingTabId(null);
+      return;
+    }
+    setRenamingTabId(tabId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/dashboards/${dashboardId}/tabs/${tabId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error ?? `Failed to rename tab (${res.status}).`);
+        return;
+      }
+      router.refresh();
+    } catch {
+      setError("Network error — try again.");
+    } finally {
+      setEditingTabId(null);
+      setRenamingTabId(null);
+    }
+  }
+
   async function handleDeleteDashboard() {
-    if (deleteNameInput !== dashboardName) return; // button is disabled for this too — just a safety net
+    if (deleteNameInput !== name) return; // button is disabled for this too — just a safety net
     setDeleting(true);
     setDeleteError(null);
     try {
@@ -168,28 +243,89 @@ export function DashboardTabs({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">{dashboardName}</h1>
+        {editingName ? (
+          <input
+            type="text"
+            autoFocus
+            value={nameDraft}
+            disabled={renamingName}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") {
+                setNameDraft(name);
+                setEditingName(false);
+              }
+            }}
+            onBlur={handleRenameDashboard}
+            className="rounded-md border border-black/[.15] bg-transparent px-1 text-2xl font-semibold tracking-tight outline-none focus:border-zinc-400 dark:border-white/[.2]"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setNameDraft(name);
+              setEditingName(true);
+            }}
+            className="group/name flex items-center gap-1.5"
+            title="Rename dashboard"
+          >
+            <h1 className="text-2xl font-semibold tracking-tight">{name}</h1>
+            <span className="text-sm text-zinc-400 opacity-0 transition-opacity group-hover/name:opacity-100">✎</span>
+          </button>
+        )}
         <span className="h-6 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15] creamsicle:bg-orange-300" />
 
         <div className="flex flex-wrap items-center gap-2">
-          {tabs.map((tab) => (
-            <div key={tab.id} className={tabButtonClasses(tab.id === activeTabId)}>
-              <button type="button" onClick={() => setActiveTabId(tab.id)}>
-                {tab.name}
-              </button>
-              {tabs.length > 1 && (
+          {tabs.map((tab) =>
+            editingTabId === tab.id ? (
+              <input
+                key={tab.id}
+                type="text"
+                autoFocus
+                value={tabNameDraft}
+                disabled={renamingTabId === tab.id}
+                onChange={(e) => setTabNameDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Escape") {
+                    setTabNameDraft(tab.name);
+                    setEditingTabId(null);
+                  }
+                }}
+                onBlur={() => handleRenameTab(tab.id)}
+                className={inputClasses + " w-28"}
+              />
+            ) : (
+              <div key={tab.id} className={tabButtonClasses(tab.id === activeTabId)}>
+                <button type="button" onClick={() => setActiveTabId(tab.id)}>
+                  {tab.name}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTabNameDraft(tab.name);
+                    setEditingTabId(tab.id);
+                  }}
+                  title={`Rename "${tab.name}"`}
+                  aria-label={`Rename "${tab.name}"`}
+                  className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-indigo-400"
+                >
+                  ✎
+                </button>
                 <button
                   type="button"
                   onClick={() => handleDeleteTab(tab.id, tab.name)}
-                  disabled={deletingId === tab.id}
-                  title={`Delete "${tab.name}"`}
-                  className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500 disabled:opacity-40"
+                  disabled={deletingId === tab.id || tabs.length <= 1}
+                  title={tabs.length <= 1 ? "Can't delete a dashboard's last tab" : `Delete "${tab.name}"`}
+                  aria-label={tabs.length <= 1 ? "Can't delete a dashboard's last tab" : `Delete "${tab.name}"`}
+                  className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {deletingId === tab.id ? "…" : "✕"}
                 </button>
-              )}
-            </div>
-          ))}
+              </div>
+            ),
+          )}
 
           {adding ? (
             <form onSubmit={handleCreateTab} className="flex items-center gap-1.5">
@@ -261,12 +397,12 @@ export function DashboardTabs({
             <div className="flex w-full max-w-sm flex-col gap-3 rounded-xl border border-black/[.1] bg-[var(--background)] p-5 shadow-xl dark:border-white/[.15]">
               <h2 className="text-lg font-semibold text-red-600 dark:text-red-400">Delete dashboard</h2>
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                This will permanently delete <span className="font-semibold">{dashboardName}</span> — every tab and
+                This will permanently delete <span className="font-semibold">{name}</span> — every tab and
                 every widget in it. This cannot be undone.
               </p>
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] text-zinc-500">
-                  Type <span className="font-mono font-semibold">{dashboardName}</span> to confirm
+                  Type <span className="font-mono font-semibold">{name}</span> to confirm
                 </span>
                 <input
                   type="text"
@@ -293,7 +429,7 @@ export function DashboardTabs({
                 <button
                   type="button"
                   onClick={handleDeleteDashboard}
-                  disabled={deleting || deleteNameInput !== dashboardName}
+                  disabled={deleting || deleteNameInput !== name}
                   className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-40 dark:bg-red-700 dark:hover:bg-red-600"
                 >
                   {deleting ? "Deleting…" : "Confirm delete"}
