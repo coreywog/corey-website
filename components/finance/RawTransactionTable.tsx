@@ -16,7 +16,10 @@ function formatDate(iso: string): string {
  * immediately" default. Deliberately not editable and not extended with
  * computed columns/type-changing the way Data Management's CSV datasets
  * are — Transaction already has fixed, purpose-built fields, so an
- * open-ended column system doesn't apply here the same way.
+ * open-ended column system doesn't apply here the same way. Collapsed by
+ * default — it's a "here if you want it" reference, not something that
+ * should push the actual review workflow below the fold every time this
+ * tab loads.
  */
 export function RawTransactionTable({ transactions }: { transactions: ReviewTxn[] }) {
   if (transactions.length === 0) {
@@ -24,7 +27,7 @@ export function RawTransactionTable({ transactions }: { transactions: ReviewTxn[
   }
 
   return (
-    <details open className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
+    <details className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1] creamsicle:border-orange-200">
       <summary className="cursor-pointer text-sm font-medium text-zinc-700 dark:text-zinc-300 creamsicle:text-orange-900">
         Raw data preview — {transactions.length} most recent transactions
       </summary>
