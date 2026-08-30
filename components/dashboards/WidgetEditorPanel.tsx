@@ -615,6 +615,12 @@ export function WidgetEditorPanel({
   const [fontFamily, setFontFamily] = useState<FontFamily>(chartConfig?.axisLabels?.fontFamily ?? "default");
   const [showXTicks, setShowXTicks] = useState(chartConfig?.axisLabels?.showXTicks ?? true);
   const [showYTicks, setShowYTicks] = useState(chartConfig?.axisLabels?.showYTicks ?? true);
+  // Y axis value range/tick count — blank inputs mean "auto" (recharts'
+  // own nice-round-numbers behavior), matching every widget saved before
+  // this was configurable.
+  const [yTickCount, setYTickCount] = useState(chartConfig?.axisLabels?.yTickCount ? String(chartConfig.axisLabels.yTickCount) : "");
+  const [yDomainMin, setYDomainMin] = useState(chartConfig?.axisLabels?.yDomainMin !== undefined ? String(chartConfig.axisLabels.yDomainMin) : "");
+  const [yDomainMax, setYDomainMax] = useState(chartConfig?.axisLabels?.yDomainMax !== undefined ? String(chartConfig.axisLabels.yDomainMax) : "");
   const [showDataLabels, setShowDataLabels] = useState(chartConfig?.showDataLabels ?? false);
   const [showGridLines, setShowGridLines] = useState(chartConfig?.showGridLines ?? true);
 
@@ -789,6 +795,9 @@ export function WidgetEditorPanel({
 
     const parsedAmountMin = amountMin.trim() ? Number(amountMin) : undefined;
     const parsedAmountMax = amountMax.trim() ? Number(amountMax) : undefined;
+    const parsedYTickCount = yTickCount.trim() ? Number(yTickCount) : undefined;
+    const parsedYDomainMin = yDomainMin.trim() ? Number(yDomainMin) : undefined;
+    const parsedYDomainMax = yDomainMax.trim() ? Number(yDomainMax) : undefined;
 
     // Every column can be filtered regardless of whether it's also the
     // current Group By/metric — "grouped by category, but only these three
@@ -808,7 +817,16 @@ export function WidgetEditorPanel({
     // can't be "only if a title was typed."
     const axisLabels: ChartWidgetConfig["axisLabels"] =
       showAxisLabels &&
-      (xAxisLabel.trim() || yAxisLabel.trim() || xTickFontSize !== 11 || yTickFontSize !== 12 || fontFamily !== "default" || !showXTicks || !showYTicks)
+      (xAxisLabel.trim() ||
+        yAxisLabel.trim() ||
+        xTickFontSize !== 11 ||
+        yTickFontSize !== 12 ||
+        fontFamily !== "default" ||
+        !showXTicks ||
+        !showYTicks ||
+        parsedYTickCount !== undefined ||
+        parsedYDomainMin !== undefined ||
+        parsedYDomainMax !== undefined)
         ? {
             ...(xAxisLabel.trim() ? { x: xAxisLabel.trim(), xOffset: xAxisOffset } : {}),
             ...(yAxisLabel.trim() ? { y: yAxisLabel.trim(), yOffset: yAxisOffset } : {}),
@@ -818,6 +836,9 @@ export function WidgetEditorPanel({
             ...(fontFamily !== "default" ? { fontFamily } : {}),
             ...(!showXTicks ? { showXTicks: false } : {}),
             ...(!showYTicks ? { showYTicks: false } : {}),
+            ...(parsedYTickCount !== undefined && !Number.isNaN(parsedYTickCount) ? { yTickCount: parsedYTickCount } : {}),
+            ...(parsedYDomainMin !== undefined && !Number.isNaN(parsedYDomainMin) ? { yDomainMin: parsedYDomainMin } : {}),
+            ...(parsedYDomainMax !== undefined && !Number.isNaN(parsedYDomainMax) ? { yDomainMax: parsedYDomainMax } : {}),
           }
         : undefined;
 
@@ -895,6 +916,9 @@ export function WidgetEditorPanel({
     fontFamily,
     showXTicks,
     showYTicks,
+    yTickCount,
+    yDomainMin,
+    yDomainMax,
     showDataLabels,
     showGridLines,
     color,
@@ -2173,6 +2197,45 @@ export function WidgetEditorPanel({
             </div>
             <p className="text-[11px] text-zinc-500">
               Shrink X/Y if bar/category names are squishing together, or uncheck one to remove it entirely.
+            </p>
+
+            <div className="flex flex-wrap gap-3">
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">Y ticks</span>
+                <input
+                  type="number"
+                  min={2}
+                  max={20}
+                  value={yTickCount}
+                  onChange={(e) => setYTickCount(e.target.value)}
+                  placeholder="Auto"
+                  className={selectClasses + " w-16"}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">Y min</span>
+                <input
+                  type="number"
+                  value={yDomainMin}
+                  onChange={(e) => setYDomainMin(e.target.value)}
+                  placeholder="Auto"
+                  className={selectClasses + " w-20"}
+                />
+              </label>
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] text-zinc-500">Y max</span>
+                <input
+                  type="number"
+                  value={yDomainMax}
+                  onChange={(e) => setYDomainMax(e.target.value)}
+                  placeholder="Auto"
+                  className={selectClasses + " w-20"}
+                />
+              </label>
+            </div>
+            <p className="text-[11px] text-zinc-500">
+              How many $ labels the Y axis shows, and the range they cover — leave blank for recharts&rsquo; own
+              nice-round-number default.
             </p>
           </div>
           )}

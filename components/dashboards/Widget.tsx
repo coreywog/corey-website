@@ -88,6 +88,21 @@ function tickProp(axisLabels: AxisLabels | undefined, axis: "x" | "y"): false | 
   };
 }
 
+/** Y axis tick count and value range — omitted (the historical default, and
+ * still the default for every existing widget) lets recharts pick its own
+ * "nice round numbers"; setting yDomainMin/yDomainMax overrides just that
+ * one end of the range, and yTickCount asks for roughly that many gridlines
+ * instead of recharts' usual ~5 (still rounded to values it finds "nice",
+ * not necessarily exact). */
+function yAxisProps(axisLabels: AxisLabels | undefined): { domain?: [number | string, number | string]; tickCount?: number } {
+  const { yDomainMin, yDomainMax, yTickCount } = axisLabels ?? {};
+  const hasDomain = yDomainMin !== undefined || yDomainMax !== undefined;
+  return {
+    ...(hasDomain ? { domain: [yDomainMin ?? "auto", yDomainMax ?? "auto"] as [number | string, number | string] } : {}),
+    ...(yTickCount !== undefined ? { tickCount: yTickCount } : {}),
+  };
+}
+
 /** Extra chart margin (beyond the tick labels' own space, which recharts
  * already reserves on its own) an axis title needs to render without being
  * clipped — it sits *outside* the plot area now (position "bottom"/"left",
@@ -307,6 +322,7 @@ function LineWidget({
         />
         <YAxis
           tick={tickProp(axisLabels, "y")}
+          {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -366,6 +382,7 @@ function AreaWidget({
         />
         <YAxis
           tick={tickProp(axisLabels, "y")}
+          {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -456,6 +473,7 @@ function BarWidget({
         />
         <YAxis
           tick={tickProp(axisLabels, "y")}
+          {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -513,6 +531,7 @@ function StackedBarWidget({
         />
         <YAxis
           tick={tickProp(axisLabels, "y")}
+          {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -568,6 +587,7 @@ function MultiLineWidget({
         />
         <YAxis
           tick={tickProp(axisLabels, "y")}
+          {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -616,6 +636,7 @@ function MultiAreaWidget({
         />
         <YAxis
           tick={tickProp(axisLabels, "y")}
+          {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
           width={56}
@@ -776,6 +797,7 @@ function ScatterWidget({
         <YAxis
           dataKey="y"
           tick={tickProp(axisLabels, "y")}
+          {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
           width={56}

@@ -115,6 +115,13 @@ const axisLabelsSchema = z
     // two different asks).
     showXTicks: z.boolean().optional(),
     showYTicks: z.boolean().optional(),
+    // How many labeled gridlines the Y axis draws, and the range they're
+    // spread across — omitted for both is recharts' own "nice round numbers"
+    // auto behavior (the old, only, default). Setting either min or max
+    // overrides just that end of the range; the other stays auto.
+    yTickCount: z.number().int().min(2).max(20).optional(),
+    yDomainMin: z.number().optional(),
+    yDomainMax: z.number().optional(),
   })
   .optional();
 
