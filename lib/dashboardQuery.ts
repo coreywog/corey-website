@@ -276,6 +276,38 @@ function filterByAmount(
 }
 
 /**
+ * The running total a cumulative line/series starts from when its basis is
+ * "lifetime" — every matching transaction strictly before the widget's own
+ * window, summed the same way a normal bucket would be. "range" basis skips
+ * this entirely and just starts at 0 (see the `cumulative`/`cumulativeBasis`
+ * handling in computeMultiSeries and computeWidgetData below).
+ * Re-runs buildWhere/fetchRows with an effectively unbounded start rather
+ * than folding it into the main window's query — one extra query per
+ * cumulative-lifetime series/widget, same tradeoff computeMultiSeries
+ * already makes per series.
+ */
+async function computeCumulativeOffset(config: ChartWidgetConfig, before: string, customMetric: CustomMetric | null): Promise<number> {
+  // Earlier than any real transaction could be — stands in for "everything
+  // up to `before`" without needing a separate unbounded query shape.
+  const EPOCH = "1900-01-01";
+  const where = buildWhere(config, EPOCH, before);
+  const needsDescription = Boolean(config.filters?.merchants?.length);
+  const rows = filterByAmount(
+    filterByMerchant(await fetchRows(where, needsDescription), config.filters?.merchants),
+    config.metric,
+    config.filters?.amountMin,
+    config.filters?.amountMax,
+    customMetric,
+  );
+  let sum = 0;
+  for (const r of rows) {
+    const c = customMetric ? customMetricRowValue(r, customMetric) : metricContribution(r, config.metric);
+    if (c !== null) sum += c;
+  }
+  return sum;
+}
+
+/**
  * A widget's manually-configured series (config.series — the editor's Line
  * 1/Line 2 rows) — each one is otherwise a full independent query sharing
  * only date range/accounts/groupBy with the widget as a whole, so this runs
@@ -318,7 +350,7 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
         config.filters?.amountMax,
         customMetric,
       );
-      return { entry, rows, customMetric };
+      return { entry, rows, customMetric, seriesConfig };
     }),
   );
 
@@ -384,6 +416,25 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
     for (const [seriesId, value] of cell.entries()) point[seriesId] = round2(value);
     return point;
   });
+
+  // Cumulative series (config.series[].cumulative) turn their column into a
+  // running total, in the same chronological order `points` is already
+  // sorted in — only meaningful for a day/month groupBy, same restriction
+  // the editor enforces on the checkbox. A bucket the series had no rows in
+  // stays part of the running total (defaults to 0 contribution) rather than
+  // leaving a gap, unlike the raw per-bucket values above.
+  if (isTimeSeries) {
+    for (const { entry, seriesConfig, customMetric } of resolved) {
+      if (!entry.cumulative) continue;
+      let running = entry.cumulativeBasis === "lifetime" ? await computeCumulativeOffset(seriesConfig, start, customMetric) : 0;
+      for (const point of points) {
+        const bucketValue = typeof point[entry.id] === "number" ? (point[entry.id] as number) : 0;
+        running += bucketValue;
+        point[entry.id] = round2(running);
+      }
+    }
+  }
+
   return { kind: "multiSeries", points, series: seriesInfo };
 }
 
@@ -637,6 +688,18 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   const isTimeSeries = groupBy === "day" || groupBy === "month";
   if (isTimeSeries) {
     points.sort((a, b) => a.key.localeCompare(b.key));
+
+    // Running total instead of one value per bucket (config.cumulative) —
+    // same behavior and "day/month groupBy only" restriction as
+    // computeMultiSeries' per-series version above, just for a widget not
+    // using config.series at all.
+    if (config.cumulative) {
+      let running = config.cumulativeBasis === "lifetime" ? await computeCumulativeOffset(config, start, customMetric) : 0;
+      points = points.map((p) => {
+        running += p.value;
+        return { ...p, value: round2(running) };
+      });
+    }
   } else {
     switch (config.sort ?? "totalDesc") {
       case "totalAsc":

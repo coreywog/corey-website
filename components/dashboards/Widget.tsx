@@ -1071,6 +1071,49 @@ function DateRangeButtons({
 }
 
 /**
+ * A toggle-pill row for a multi-series widget (config.showSeriesToggles) —
+ * one pill per line/area/bar, colored to match, that hides/shows just that
+ * series client-side. Same per-viewer-only, never-touches-saved-config
+ * spirit as DateRangeButtons above, but there's nothing to re-fetch: the
+ * underlying data is already loaded, so this just filters what's passed to
+ * the chart (see hiddenSeriesKeys in Widget).
+ */
+function SeriesToggleButtons({
+  series,
+  hiddenKeys,
+  onToggle,
+}: {
+  series: StackedSeries[];
+  hiddenKeys: Set<string>;
+  onToggle: (key: string) => void;
+}) {
+  return (
+    <div className="flex min-w-0 shrink flex-wrap items-center gap-1 overflow-hidden rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
+      {series.map((s) => {
+        const isHidden = hiddenKeys.has(s.key);
+        return (
+          <button
+            key={s.key}
+            type="button"
+            onClick={() => onToggle(s.key)}
+            title={isHidden ? `Show ${s.label}` : `Hide ${s.label}`}
+            className={
+              "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium transition-colors " +
+              (isHidden
+                ? "text-zinc-400 opacity-50 hover:opacity-80 dark:text-zinc-500"
+                : "text-zinc-600 hover:bg-black/[.06] dark:text-zinc-300 dark:hover:bg-white/[.1]")
+            }
+          >
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: isHidden ? "transparent" : s.color, border: `1px solid ${s.color}` }} />
+            {s.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * One dashboard tile. The drag handle is scoped to just the title bar
  * (`.widget-drag-handle`, matched by DashboardGrid's dragConfig) so
  * interactive content underneath (a future table's scroll, tooltips) isn't
@@ -1110,6 +1153,20 @@ export function Widget({
 
   const [activeButton, setActiveButton] = useState<DateButtonConfig | null>(null);
   const [overrideResult, setOverrideResult] = useState<WidgetResult | { error: string } | null>(null);
+
+  // Which series (by key) a viewer has clicked off — client-side only, like
+  // activeButton above: never touches the saved config, resets on reload.
+  // Keyed by StackedSeries.key rather than index so it survives a re-fetch
+  // reordering series (it never does today, but nothing guarantees it won't).
+  const [hiddenSeriesKeys, setHiddenSeriesKeys] = useState<Set<string>>(new Set());
+  function toggleSeriesKey(key: string) {
+    setHiddenSeriesKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   // Axis-title drag tracking. dragRef (not state) holds the in-progress
   // drag itself since mousemove fires far more often than React should
@@ -1194,6 +1251,17 @@ export function Widget({
   }, [activeButton, widget.type, widget.id]);
 
   const result = activeButton !== null && overrideResult ? overrideResult : widget.result;
+  // Series toggles read off the *live* series list (result.series), not the
+  // saved config's series entries — same key, but this is what's actually
+  // on the chart right now, colors and all, including under a dateButtons
+  // override above.
+  const toggleableSeries =
+    chartConfig?.showSeriesToggles && !("error" in result) && result.kind === "multiSeries" ? result.series : [];
+  // What actually reaches the chart — same list, minus whatever's been
+  // clicked off above. Recomputed from result.series (not stored) so a
+  // dateButtons-driven re-fetch keeps respecting whatever's currently hidden.
+  const visibleMultiSeries =
+    !("error" in result) && result.kind === "multiSeries" ? result.series.filter((s) => !hiddenSeriesKeys.has(s.key)) : [];
 
   return (
     <div className="flex h-full flex-col overflow-hidden rounded-xl border border-black/[.08] bg-[var(--background)] dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/40">
@@ -1216,6 +1284,12 @@ export function Widget({
               activeKey={activeButton ? dateButtonKey(activeButton) : null}
               onChange={setActiveButton}
             />
+          </>
+        )}
+        {toggleableSeries.length > 1 && (
+          <>
+            <span aria-hidden className="h-4 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15] creamsicle:bg-orange-300" />
+            <SeriesToggleButtons series={toggleableSeries} hiddenKeys={hiddenSeriesKeys} onToggle={toggleSeriesKey} />
           </>
         )}
       </div>
@@ -1247,7 +1321,7 @@ export function Widget({
           widget.type === "line" ? (
             <MultiLineWidget
               points={result.points}
-              series={result.series}
+              series={visibleMultiSeries}
               axisLabels={effectiveAxisLabels}
               onAxisDragStart={axisDragHandler}
               showDataLabels={chartConfig?.showDataLabels}
@@ -1256,7 +1330,7 @@ export function Widget({
           ) : widget.type === "area" ? (
             <MultiAreaWidget
               points={result.points}
-              series={result.series}
+              series={visibleMultiSeries}
               axisLabels={effectiveAxisLabels}
               onAxisDragStart={axisDragHandler}
               showDataLabels={chartConfig?.showDataLabels}
@@ -1268,7 +1342,7 @@ export function Widget({
             // specifically "stackedBar", which stacks them instead.
             <StackedBarWidget
               points={result.points}
-              series={result.series}
+              series={visibleMultiSeries}
               fillPattern={chartConfig?.fillPattern}
               axisLabels={effectiveAxisLabels}
               onAxisDragStart={axisDragHandler}

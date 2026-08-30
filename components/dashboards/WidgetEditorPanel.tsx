@@ -40,6 +40,7 @@ import type {
   LineStyle,
   FillPattern,
   FontFamily,
+  CumulativeBasis,
 } from "@/lib/dashboardConfig";
 import { WIDGET_COLORS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS, LINE_STYLES, FILL_PATTERNS, FONT_FAMILIES } from "@/lib/dashboardConfig";
 
@@ -121,12 +122,14 @@ type SeriesDraft = {
   customMetricId?: string;
   merchantCategories: string[];
   color?: string;
+  cumulative: boolean;
+  cumulativeBasis: CumulativeBasis;
 };
 
 function makeDefaultSeries(): SeriesDraft[] {
   return [
-    { id: `series-${Date.now()}-1`, label: "", metric: "spendingTotal", merchantCategories: [] },
-    { id: `series-${Date.now()}-2`, label: "", metric: "incomeTotal", merchantCategories: [] },
+    { id: `series-${Date.now()}-1`, label: "", metric: "spendingTotal", merchantCategories: [], cumulative: false, cumulativeBasis: "range" },
+    { id: `series-${Date.now()}-2`, label: "", metric: "incomeTotal", merchantCategories: [], cumulative: false, cumulativeBasis: "range" },
   ];
 }
 
@@ -439,6 +442,8 @@ export function WidgetEditorPanel({
   }
   const [metric, setMetric] = useState<Metric>(chartConfig?.metric ?? "spendingTotal");
   const [customMetricId, setCustomMetricId] = useState<string | undefined>(chartConfig?.customMetricId);
+  const [cumulative, setCumulative] = useState(chartConfig?.cumulative ?? false);
+  const [cumulativeBasis, setCumulativeBasis] = useState<CumulativeBasis>(chartConfig?.cumulativeBasis ?? "range");
 
   // Multiple independent lines/bars on one chart (line/area/bar/stackedBar/
   // histogram only — see showMultiSeries below), each with its own metric +
@@ -456,6 +461,8 @@ export function WidgetEditorPanel({
           customMetricId: s.customMetricId,
           merchantCategories: s.merchantCategories ?? [],
           color: s.color,
+          cumulative: s.cumulative ?? false,
+          cumulativeBasis: s.cumulativeBasis ?? "range",
         }))
       : makeDefaultSeries(),
   );
@@ -463,7 +470,12 @@ export function WidgetEditorPanel({
 
   function addSeriesLine() {
     setSeriesList((prev) =>
-      prev.length >= 6 ? prev : [...prev, { id: `series-${Date.now()}`, label: "", metric: "spendingTotal", merchantCategories: [] }],
+      prev.length >= 6
+        ? prev
+        : [
+            ...prev,
+            { id: `series-${Date.now()}`, label: "", metric: "spendingTotal", merchantCategories: [], cumulative: false, cumulativeBasis: "range" },
+          ],
     );
   }
 
@@ -629,6 +641,7 @@ export function WidgetEditorPanel({
     else setYAxisOffset(offset);
   }
   const [dateButtons, setDateButtons] = useState<DateButtonConfig[]>(chartConfig?.dateButtons ?? []);
+  const [showSeriesToggles, setShowSeriesToggles] = useState(chartConfig?.showSeriesToggles ?? false);
   const [addingCustomButton, setAddingCustomButton] = useState(false);
   const [customButtonLabel, setCustomButtonLabel] = useState("");
   const [customButtonStart, setCustomButtonStart] = useState("");
@@ -854,6 +867,9 @@ export function WidgetEditorPanel({
       // "don't save the default" convention as every other opt-in field.
       ...(isHistogram && Number(histogramBins) !== 12 ? { histogramBins: Number(histogramBins) } : {}),
       ...(type === "stat" ? { compareToPrevious } : {}),
+      ...(!multiSeries && isTimeSeries && cumulative
+        ? { cumulative: true, ...(cumulativeBasis !== "range" ? { cumulativeBasis } : {}) }
+        : {}),
       ...(axisLabels ? { axisLabels } : {}),
       ...(showColor && color ? { color } : {}),
       ...(showMultiColor && colorMode === "gradient" ? { gradient: { from: gradientFrom, to: gradientTo } } : {}),
@@ -871,9 +887,13 @@ export function WidgetEditorPanel({
               ...(s.customMetricId ? { customMetricId: s.customMetricId } : {}),
               ...(s.merchantCategories.length ? { merchantCategories: s.merchantCategories } : {}),
               ...(s.color ? { color: s.color } : {}),
+              ...(isTimeSeries && s.cumulative
+                ? { cumulative: true, ...(s.cumulativeBasis !== "range" ? { cumulativeBasis: s.cumulativeBasis } : {}) }
+                : {}),
             })),
           }
         : {}),
+      ...(multiSeries && showMultiSeries && seriesList.length >= 2 && showSeriesToggles ? { showSeriesToggles: true } : {}),
       ...(type === "pie" && pieLabelShow ? { pieLabels: { show: pieLabelShow, position: pieLabelPosition } } : {}),
       ...(showDataLabelsOption && showDataLabels ? { showDataLabels: true } : {}),
       // Default is true (see chartConfigSchema) — only persist the
@@ -887,6 +907,8 @@ export function WidgetEditorPanel({
     type,
     metric,
     customMetricId,
+    cumulative,
+    cumulativeBasis,
     groupBy,
     dateMode,
     relativeMonths,
@@ -930,6 +952,7 @@ export function WidgetEditorPanel({
     fillPattern,
     fillPatternOverrides,
     dateButtons,
+    showSeriesToggles,
     multiSeries,
     seriesList,
     pieLabelShow,
@@ -1661,6 +1684,34 @@ export function WidgetEditorPanel({
                                   </optgroup>
                                 )}
                               </select>
+                              {/* Quick whole-widget measures — none of the actual
+                                  merchant categories below represent income (income
+                                  transactions aren't assigned a spending category),
+                                  so this is the only way to plot an income or net
+                                  line. Picking one clears any categories already
+                                  added, since "all of X" and "just these categories"
+                                  are mutually exclusive scopes for the same line. */}
+                              <div className="flex flex-wrap gap-1">
+                                {(
+                                  [
+                                    ["spendingTotal", "All spending"],
+                                    ["incomeTotal", "All income"],
+                                    ["net", "Net"],
+                                  ] as const
+                                ).map(([m, label]) => {
+                                  const isActive = !s.customMetricId && s.metric === m && s.merchantCategories.length === 0;
+                                  return (
+                                    <button
+                                      key={m}
+                                      type="button"
+                                      onClick={() => updateSeriesLine(s.id, { metric: m, customMetricId: undefined, merchantCategories: [] })}
+                                      className={pillClasses(isActive)}
+                                    >
+                                      {label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
                               <SearchableSelect
                                 value=""
                                 onChange={(v) =>
@@ -1671,7 +1722,7 @@ export function WidgetEditorPanel({
                                 options={categories
                                   .filter((c) => !s.merchantCategories.includes(c))
                                   .map((c) => ({ value: c, label: formatCategoryLabel(c) }))}
-                                placeholder="Add category (optional)…"
+                                placeholder="…or narrow to specific categories"
                               />
                               {s.merchantCategories.length > 0 && (
                                 <div className="flex flex-wrap gap-1">
@@ -1687,6 +1738,37 @@ export function WidgetEditorPanel({
                                       {formatCategoryLabel(c)} ✕
                                     </button>
                                   ))}
+                                </div>
+                              )}
+                              {isTimeSeries && (
+                                <div className="flex flex-col gap-1.5">
+                                  <label className="flex items-center gap-2">
+                                    <input
+                                      type="checkbox"
+                                      checked={s.cumulative}
+                                      onChange={(e) => updateSeriesLine(s.id, { cumulative: e.target.checked })}
+                                    />
+                                    <span className="text-sm">Running total instead of per-{groupBy}</span>
+                                  </label>
+                                  {s.cumulative && (
+                                    <div className="flex flex-wrap gap-1 pl-6">
+                                      {(
+                                        [
+                                          ["range", "Start at 0 for this range"],
+                                          ["lifetime", "Continue from before this range"],
+                                        ] as const
+                                      ).map(([basis, label]) => (
+                                        <button
+                                          key={basis}
+                                          type="button"
+                                          onClick={() => updateSeriesLine(s.id, { cumulativeBasis: basis })}
+                                          className={pillClasses(s.cumulativeBasis === basis)}
+                                        >
+                                          {label}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                               <label className="flex items-center gap-2">
@@ -1759,6 +1841,34 @@ export function WidgetEditorPanel({
                         )}
                       </select>
                     </label>
+
+                    {isTimeSeries && (
+                      <div className="flex flex-col gap-1.5">
+                        <label className="flex items-center gap-2">
+                          <input type="checkbox" checked={cumulative} onChange={(e) => setCumulative(e.target.checked)} />
+                          <span className="text-sm">Running total instead of per-{groupBy}</span>
+                        </label>
+                        {cumulative && (
+                          <div className="flex flex-wrap gap-1 pl-6">
+                            {(
+                              [
+                                ["range", "Start at 0 for this range"],
+                                ["lifetime", "Continue from before this range"],
+                              ] as const
+                            ).map(([basis, label]) => (
+                              <button
+                                key={basis}
+                                type="button"
+                                onClick={() => setCumulativeBasis(basis)}
+                                className={pillClasses(cumulativeBasis === basis)}
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
 
@@ -1949,8 +2059,10 @@ export function WidgetEditorPanel({
 
         {typeChosen && !isText && (
           <div className={showAxisLabels ? "grid grid-cols-2 gap-3" : "flex flex-col gap-3"}>
-          <div className="flex flex-col gap-1.5 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
-            <span className={labelClasses}>Date focus buttons</span>
+          <div className="flex flex-col gap-2.5 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+            <span className={labelClasses}>Buttons</span>
+
+            <span className="text-[11px] text-zinc-500">Date focus</span>
 
             {dateButtons.length > 0 && (
               <div className="flex flex-wrap gap-1">
@@ -2104,6 +2216,16 @@ export function WidgetEditorPanel({
                   )}
                 </div>
               </div>
+            )}
+
+            {multiSeries && showMultiSeries && seriesList.length >= 2 && (
+              <>
+                <span className="text-[11px] text-zinc-500">Series</span>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={showSeriesToggles} onChange={(e) => setShowSeriesToggles(e.target.checked)} />
+                  <span className="text-sm">Let viewers turn individual {seriesNoun.toLowerCase()}s on/off on the tile</span>
+                </label>
+              </>
             )}
           </div>
 

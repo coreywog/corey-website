@@ -217,6 +217,15 @@ export type LineStyle = (typeof LINE_STYLES)[number];
 export const FILL_PATTERNS = ["solid", "dots", "diagonalLinesRight", "diagonalLinesLeft", "crossHatch", "horizontalLines", "verticalLines"] as const;
 export type FillPattern = (typeof FILL_PATTERNS)[number];
 
+// Where a cumulative line's running total starts (see `cumulative` below,
+// on both seriesEntrySchema and chartConfigSchema) — "range" resets to 0 at
+// the first bucket the widget/series actually displays (a clean "just this
+// year" climb), "lifetime" carries in the running total accumulated from
+// every matching transaction before that point, so a widget narrowed to
+// 2026 still shows 2026 sitting on top of everything that came before it.
+export const CUMULATIVE_BASES = ["range", "lifetime"] as const;
+export type CumulativeBasis = (typeof CUMULATIVE_BASES)[number];
+
 // One independently-configured line/bar/histogram within a multi-series
 // widget — the editor's collapsible "Line 1"/"Line 2" rows. Deliberately
 // narrow: just metric + category, sharing everything else (date range,
@@ -232,6 +241,15 @@ const seriesEntrySchema = z.object({
   customMetricId: z.string().optional(),
   merchantCategories: z.array(z.string().min(1)).optional(),
   color: z.string().regex(HEX).optional(),
+  // Running total instead of one value per bucket — e.g. "net" as a
+  // steadily climbing/falling YTD line instead of an oscillating
+  // month-by-month one. Only meaningful for a day/month groupBy (see
+  // showCumulativeOption in the editor); ignored otherwise. See
+  // lib/dashboardQuery.ts's computeMultiSeries.
+  cumulative: z.boolean().optional(),
+  // Defaults to "range" when cumulative is set but this is omitted — same
+  // omit-the-default convention as everything else in this schema.
+  cumulativeBasis: z.enum(CUMULATIVE_BASES).optional(),
 });
 export type SeriesEntryConfig = z.infer<typeof seriesEntrySchema>;
 
@@ -252,6 +270,11 @@ const chartConfigSchema = z.object({
   limit: z.number().int().positive().max(1000).optional(),
   sort: z.enum(["totalDesc", "totalAsc", "labelAsc"]).optional(), // ignored when groupBy is day/month — see lib/dashboardQuery.ts
   compareToPrevious: z.boolean().optional(), // stat tiles only
+  // Single-series version of seriesEntrySchema's `cumulative` above — same
+  // running-total behavior, same day/month-groupBy-only restriction, for a
+  // widget that isn't using config.series at all.
+  cumulative: z.boolean().optional(),
+  cumulativeBasis: z.enum(CUMULATIVE_BASES).optional(),
   axisLabels: axisLabelsSchema, // line/area/bar/scatter/histogram only — read directly off config by components/dashboards/Widget.tsx
   color: z.string().regex(HEX).optional(), // line/area/stat only, see above — any hex, not just the presets
   // Per-point color choices for bar/histogram/pie/table (see
@@ -285,6 +308,12 @@ const chartConfigSchema = z.object({
   // top-level metric/customMetricId above stay populated regardless, as
   // the fallback if series is ever cleared back to a single measure.
   series: z.array(seriesEntrySchema).min(2).max(6).optional(),
+  // Renders a toggle-pill row on the tile itself, one per `series` entry —
+  // same spirit as dateButtons above (live dashboard, per-viewer only,
+  // never touches the saved config), but hides/shows a line/area/bar
+  // client-side instead of re-fetching a different date range. Only
+  // meaningful alongside `series`; ignored otherwise. See Widget.tsx.
+  showSeriesToggles: z.boolean().optional(),
   // Pie-only: where each slice's number is drawn. Independent of color/
   // style above.
   pieLabels: z
