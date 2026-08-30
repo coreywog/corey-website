@@ -1000,8 +1000,8 @@ function DateRangeButtons({
       ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900 creamsicle:bg-orange-600 creamsicle:text-white"
       : "text-zinc-500 hover:bg-black/[.06] dark:text-zinc-400 dark:hover:bg-white/[.1] creamsicle:text-orange-700 creamsicle:hover:bg-orange-100");
   return (
-    // Same pill-group-next-to-heading treatment as the original Finance
-    // tab's RangeSelector (components/finance/RangeSelector.tsx).
+    // Same pill-group-next-to-heading treatment as the original hand-built
+    // Finance pages used (since removed) for their own date-range picker.
     <div className="flex min-w-0 shrink flex-wrap items-center gap-1 overflow-hidden rounded-full border border-black/[.08] p-0.5 dark:border-white/[.1] creamsicle:border-orange-200">
       {buttons.map((b) => {
         const key = dateButtonKey(b);
@@ -1147,9 +1147,9 @@ export function Widget({
             row — so clicking a date button never risks starting a drag
             (see DashboardGrid's dragConfig, which matches this exact
             class). Buttons sit immediately right of the title, divided by
-            a rule, both hugging the left edge — same as the original
-            Finance tab's RangeSelector-next-to-heading pattern
-            (DailyCashFlowChart), not spread to the tile's far corners. */}
+            a rule, both hugging the left edge — same range-picker-next-to-
+            heading pattern the original hand-built Finance pages used
+            (since removed), not spread to the tile's far corners. */}
         <span className="widget-drag-handle shrink truncate cursor-move text-sm font-medium text-zinc-500 select-none dark:text-zinc-500 creamsicle:text-orange-700">
           {title}
         </span>

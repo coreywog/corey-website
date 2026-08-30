@@ -108,10 +108,10 @@ export function listAvailableMonthsFromStrings(dates: string[]): string[] {
 /**
  * A chart's time-window choice — either a rolling window ("last N months",
  * anchored to today), one specific calendar month picked from a dropdown, or
- * everything ("allTime"). Shared by DailyCashFlowChart and SpendingExplorer's
- * RangeSelector (both only ever construct 1|3|6 today) and, as of the
- * dashboard builder, arbitrary widget configs — hence 12 and "allTime" being
- * added here rather than as a separate parallel type.
+ * everything ("allTime"). Originally shared by the hand-built Finance pages
+ * (since removed) and, as of the dashboard builder, arbitrary widget
+ * configs — hence 12 and "allTime" being added here rather than as a
+ * separate parallel type.
  */
 export type DateRangeSelection =
   | { mode: "relative"; months: 1 | 3 | 6 | 12 }

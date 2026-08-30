@@ -185,10 +185,10 @@ function buildWhere(config: ChartWidgetConfig, start: string, end: string) {
         // these accounts — respect it even if one of them is normally
         // excluded (e.g. deliberately looking at PayPal on its own).
         { accountId: { in: config.filters.accountIds } }
-      : // No explicit accounts picked: same default every other page in
-        // the app uses (see app/(site)/finance/page.tsx) — leave out
-        // accounts like PayPal that duplicate another account's charges,
-        // so aggregate totals aren't doubled.
+      : // No explicit accounts picked: same default every other cash-flow
+        // query in the app uses — leave out accounts like PayPal that
+        // duplicate another account's charges, so aggregate totals aren't
+        // doubled.
         { account: { excludeFromCashFlow: false } }),
     ...(config.filters?.merchantCategories?.length
       ? { merchantCategory: { in: config.filters.merchantCategories } }

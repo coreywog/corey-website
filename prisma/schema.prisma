@@ -147,7 +147,8 @@ model PlaidItem {
   accounts FinanceAccount[]
 }
 
-// A learned correction from the Review tab (app/(site)/finance/review):
+// A learned correction from the Finance tab in Data Management (see
+// app/(site)/data-hub/page.tsx, CategoryReviewView.tsx):
 // "any transaction whose description contains `pattern` belongs to
 // merchantCategory/merchantSubcategory." Applied immediately to every
 // existing matching transaction, and checked ahead of the static

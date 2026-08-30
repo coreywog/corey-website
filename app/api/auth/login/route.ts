@@ -41,7 +41,7 @@ export async function POST(request: NextRequest) {
   }
 
   const token = await createSessionToken();
-  const response = NextResponse.redirect(new URL("/finance", request.url), {
+  const response = NextResponse.redirect(new URL("/dashboards", request.url), {
     status: 303,
   });
   response.cookies.set(SESSION_COOKIE_NAME, token, {

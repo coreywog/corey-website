@@ -11,8 +11,8 @@ import { usePathname } from "next/navigation";
  */
 export function DashboardNavLink({ href, children }: { href: string; children: React.ReactNode }) {
   const pathname = usePathname();
-  // Prefix match, not just equality — so "Finances" stays highlighted on
-  // /finance/daily and /finance/review too, not just the bare /finance root.
+  // Prefix match, not just equality — so a dashboard stays highlighted on
+  // its sub-routes too, not just its own bare root.
   const active = pathname === href || pathname.startsWith(href + "/");
   return (
     <Link
