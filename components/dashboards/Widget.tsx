@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Component, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   CartesianGrid,
   Line,
@@ -1114,6 +1114,37 @@ function SeriesToggleButtons({
 }
 
 /**
+ * Catches a render-time exception thrown by the actual chart body (recharts
+ * occasionally throws outright — e.g. its "nice tick" math can misbehave at
+ * certain tickCount/domain combinations — rather than degrading visually)
+ * so one misconfigured tile shows its own inline error instead of taking
+ * down the whole dashboard. Must be a class component; React only supports
+ * error boundaries that way. Keyed by the caller on whatever config could
+ * plausibly cause a fresh crash (see ChartErrorBoundary's usage below), so
+ * fixing that setting actually retries the render instead of staying stuck
+ * on a stale error.
+ */
+class ChartErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  componentDidCatch(error: unknown) {
+    console.error("Widget chart failed to render", error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-full items-center justify-center text-center text-sm text-red-600 dark:text-red-400">
+          Couldn&rsquo;t render this chart with its current settings.
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/**
  * One dashboard tile. The drag handle is scoped to just the title bar
  * (`.widget-drag-handle`, matched by DashboardGrid's dragConfig) so
  * interactive content underneath (a future table's scroll, tooltips) isn't
@@ -1294,6 +1325,11 @@ export function Widget({
         )}
       </div>
       <div className="min-h-0 flex-1 p-3">
+        {/* Keyed on everything that could plausibly change what recharts
+            renders — a fresh key remounts the boundary, giving a changed
+            setting a real retry instead of staying stuck on a stale crash
+            from a previous config. */}
+        <ChartErrorBoundary key={`${widget.id}:${activeButton ? dateButtonKey(activeButton) : ""}:${JSON.stringify(chartConfig)}`}>
         {"error" in result ? (
           <div className="flex h-full items-center justify-center text-center text-sm text-red-600 dark:text-red-400">
             {result.error}
@@ -1400,6 +1436,7 @@ export function Widget({
             showGridLines={chartConfig?.showGridLines}
           />
         )}
+        </ChartErrorBoundary>
       </div>
     </div>
   );
