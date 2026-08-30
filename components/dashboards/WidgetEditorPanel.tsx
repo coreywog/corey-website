@@ -1570,16 +1570,16 @@ export function WidgetEditorPanel({
                               <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: s.color ?? colorForKey(s.id) }} />
                               {displayName}
                             </button>
-                            {seriesList.length > 2 && (
-                              <button
-                                type="button"
-                                onClick={() => removeSeriesLine(s.id)}
-                                className="text-zinc-400 hover:text-red-600 dark:hover:text-red-400"
-                                aria-label={`Remove ${displayName}`}
-                              >
-                                ✕
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => removeSeriesLine(s.id)}
+                              disabled={seriesList.length <= 2}
+                              title={seriesList.length <= 2 ? "Uncheck “Multiple series” to go back to a single series" : `Remove ${displayName}`}
+                              aria-label={`Remove ${displayName}`}
+                              className="text-zinc-400 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30 dark:hover:text-red-400"
+                            >
+                              ✕
+                            </button>
                           </div>
 
                           {isExpanded && (
