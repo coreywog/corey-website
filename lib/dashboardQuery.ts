@@ -341,7 +341,7 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
     if (combined.length === 0) return { kind: "multiSeries", points: [], series: [] };
     const min = Math.min(...combined);
     const max = Math.max(...combined);
-    const BIN_COUNT = 12;
+    const BIN_COUNT = config.histogramBins ?? 12;
     const binSize = (max - min) / BIN_COUNT || 1;
     const money = (n: number) => `$${Math.round(n).toLocaleString()}`;
     const points: StackedPoint[] = Array.from({ length: BIN_COUNT }, (_, i) => {
@@ -475,7 +475,7 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     if (values.length === 0) return { kind: "series", points: [] };
     const min = Math.min(...values);
     const max = Math.max(...values);
-    const BIN_COUNT = 12;
+    const BIN_COUNT = config.histogramBins ?? 12;
     const binSize = (max - min) / BIN_COUNT || 1; // ||1 guards every value being identical (max === min)
     const counts = new Array<number>(BIN_COUNT).fill(0);
     for (const v of values) {

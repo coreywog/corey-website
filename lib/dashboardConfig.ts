@@ -295,6 +295,10 @@ const chartConfigSchema = z.object({
   // omitted/true = shown (the default, so existing widgets pick up the
   // fuller grid automatically), false = no grid at all.
   showGridLines: z.boolean().optional(),
+  // Histogram only — how many equal-width buckets transaction amounts get
+  // binned into. Omitted = 12 (the old hardcoded value), matching every
+  // widget saved before this was configurable.
+  histogramBins: z.number().int().min(4).max(30).optional(),
 });
 
 // A free-text tile — no data behind it at all, just whatever the user

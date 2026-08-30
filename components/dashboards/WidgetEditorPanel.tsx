@@ -596,6 +596,7 @@ export function WidgetEditorPanel({
   // default, same reasoning as openColumnFilter above.
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [limit, setLimit] = useState(chartConfig?.limit ? String(chartConfig.limit) : "");
+  const [histogramBins, setHistogramBins] = useState(String(chartConfig?.histogramBins ?? 12));
   const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
   const [xAxisLabel, setXAxisLabel] = useState(chartConfig?.axisLabels?.x ?? "");
   const [yAxisLabel, setYAxisLabel] = useState(chartConfig?.axisLabels?.y ?? "");
@@ -828,6 +829,9 @@ export function WidgetEditorPanel({
       dateRange,
       ...(Object.keys(filters).length ? { filters } : {}),
       ...((showLimit || isScatter) && limit ? { limit: Number(limit) } : {}),
+      // Only persist when it differs from the schema default (12) — same
+      // "don't save the default" convention as every other opt-in field.
+      ...(isHistogram && Number(histogramBins) !== 12 ? { histogramBins: Number(histogramBins) } : {}),
       ...(type === "stat" ? { compareToPrevious } : {}),
       ...(axisLabels ? { axisLabels } : {}),
       ...(showColor && color ? { color } : {}),
@@ -879,6 +883,7 @@ export function WidgetEditorPanel({
     amountMin,
     amountMax,
     limit,
+    histogramBins,
     compareToPrevious,
     xAxisLabel,
     yAxisLabel,
@@ -912,6 +917,14 @@ export function WidgetEditorPanel({
   // text tile has no data behind it — it's a pure, synchronous derivation of
   // `text` (see the onDraftChange effect below), so it never touches this
   // effect or `preview` state at all.
+  //
+  // Depends on `config` itself (already the fully-computed, correctly-
+  // memoized object above) rather than re-listing every field it's built
+  // from a second time — that hand-maintained list drifted out of sync
+  // repeatedly as fields were added (axis titles/fonts, showDataLabels,
+  // showGridLines, pie labels, and now histogramBins all went in below
+  // without ever reaching this effect), silently leaving the live preview
+  // stale for exactly the field someone had just added a control for.
   useEffect(() => {
     if (!config || config.dataSource === "text") return;
     let cancelled = false;
@@ -940,8 +953,7 @@ export function WidgetEditorPanel({
       cancelled = true;
       clearTimeout(timeout);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `config` is rebuilt every render from the fields below; those are the real deps.
-  }, [isText, text, type, metric, customMetricId, groupBy, dateMode, relativeMonths, relativeDaysAgo, monthsWindowCount, relativeMonthsAgo, specificMonth, customStart, customEnd, openEnded, accountIds, merchantCategories, merchantSubcategories, merchants, amountMin, amountMax, limit, compareToPrevious, color, colorMode, pointColors, gradientFrom, gradientTo, lineStyle, fillPattern, fillPatternOverrides, dateButtons, multiSeries, seriesList]);
+  }, [type, config]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
   // form, since the actual grid tile can be scrolled away or hard to spot)
@@ -1821,6 +1833,20 @@ export function WidgetEditorPanel({
                       value={limit}
                       onChange={(e) => setLimit(e.target.value)}
                       placeholder="No limit"
+                      className={selectClasses}
+                    />
+                  </label>
+                )}
+
+                {isHistogram && (
+                  <label className="flex flex-col gap-1">
+                    <span className={labelClasses}>Buckets (was fixed at 12)</span>
+                    <input
+                      type="number"
+                      min={4}
+                      max={30}
+                      value={histogramBins}
+                      onChange={(e) => setHistogramBins(e.target.value)}
                       className={selectClasses}
                     />
                   </label>
