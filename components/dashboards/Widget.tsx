@@ -111,6 +111,24 @@ function yAxisProps(axisLabels: AxisLabels | undefined): { domain?: [number | st
  * few pixels. One line of text at that font size, plus Label's own default
  * 5px offset from the axis, plus a little breathing room. Returns 0 when
  * that axis has no title at all. */
+// Every chart's margins + its X axis's own reserved height (rotated tick
+// labels need real vertical room — see the `height={40}` on each XAxis
+// below) add up to somewhere around 55-65px of fixed vertical overhead
+// before a single pixel of actual plot area is drawn, regardless of how
+// small the tile gets. Below this floor, ResponsiveContainer hands recharts
+// a box where that overhead alone exceeds the total height, and the
+// computed plot area collapses to zero (visible in the DOM as the chart's
+// clipPath rect getting height="0") — everything inside it (bars, grid
+// lines, the Y axis) just vanishes, leaving nothing but a stray X axis
+// label floating in an otherwise blank tile. Below the floor, recharts still
+// renders at this fixed size instead of the container's true (smaller) one
+// — the tile's own overflow-hidden (see Widget's root className) crops the
+// excess, which reads as "a legible but cropped chart" instead of "no chart
+// at all." Width has the same issue on a narrow axis (the Y axis's own
+// fixed width plus tick labels).
+const CHART_MIN_WIDTH = 120;
+const CHART_MIN_HEIGHT = 110;
+
 function axisTitleMargin(axisLabels: AxisLabels | undefined, axis: "x" | "y"): number {
   const hasTitle = Boolean(axis === "x" ? axisLabels?.x : axisLabels?.y);
   if (!hasTitle) return 0;
@@ -313,7 +331,7 @@ function LineWidget({
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={CHART_MIN_WIDTH} minHeight={CHART_MIN_HEIGHT}>
       <LineChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         {chartGridLines(showGridLines)}
         <XAxis
@@ -372,7 +390,7 @@ function AreaWidget({
   if (points.length === 0) return <EmptyState />;
   const fill = color ?? "#6366f1";
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={CHART_MIN_WIDTH} minHeight={CHART_MIN_HEIGHT}>
       <AreaChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         <FillPatternDefs items={[{ pattern: fillPattern ?? "solid", color: fill }]} />
         {chartGridLines(showGridLines)}
@@ -460,7 +478,7 @@ function BarWidget({
     );
   };
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={CHART_MIN_WIDTH} minHeight={CHART_MIN_HEIGHT}>
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: 16 + axisTitleMargin(axisLabels, "x") }}>
         <FillPatternDefs items={points.map((p) => ({ pattern: patternFor(p.key) ?? "solid", color: p.color }))} />
         {chartGridLines(showGridLines)}
@@ -518,7 +536,7 @@ function StackedBarWidget({
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={CHART_MIN_WIDTH} minHeight={CHART_MIN_HEIGHT}>
       <BarChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: 16 + axisTitleMargin(axisLabels, "x") }}>
         <FillPatternDefs items={series.map((s) => ({ pattern: fillPattern ?? "solid", color: s.color }))} />
         {chartGridLines(showGridLines)}
@@ -578,7 +596,7 @@ function MultiLineWidget({
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={CHART_MIN_WIDTH} minHeight={CHART_MIN_HEIGHT}>
       <LineChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         {chartGridLines(showGridLines)}
         <XAxis
@@ -627,7 +645,7 @@ function MultiAreaWidget({
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={CHART_MIN_WIDTH} minHeight={CHART_MIN_HEIGHT}>
       <AreaChart data={points} margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         {chartGridLines(showGridLines)}
         <XAxis
@@ -748,7 +766,7 @@ function PieWidget({
     );
   };
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={CHART_MIN_WIDTH} minHeight={CHART_MIN_HEIGHT}>
       <PieChart>
         <FillPatternDefs items={points.map((p) => ({ pattern: patternFor(p.key) ?? "solid", color: p.color }))} />
         <Tooltip formatter={(v) => currencyFormatter.format(Number(v))} />
@@ -785,7 +803,7 @@ function ScatterWidget({
 }) {
   if (points.length === 0) return <EmptyState />;
   return (
-    <ResponsiveContainer width="100%" height="100%">
+    <ResponsiveContainer width="100%" height="100%" minWidth={CHART_MIN_WIDTH} minHeight={CHART_MIN_HEIGHT}>
       <ScatterChart margin={{ top: 8, right: 8, left: 8 + axisTitleMargin(axisLabels, "y"), bottom: axisTitleMargin(axisLabels, "x") }}>
         {chartGridLines(showGridLines)}
         <XAxis
