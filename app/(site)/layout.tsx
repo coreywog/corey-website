@@ -47,6 +47,15 @@ export default function SiteLayout({
           </form>
         </div>
       </aside>
+      {/* Portal target for the expanded dashboard's tab panel (see
+          DashboardNavItem) — a second column that pops out to the right of
+          the primary sidebar when a dashboard is selected, rather than
+          nesting under it. `display: contents` so this wrapper itself
+          takes up no layout space and doesn't count as a flex item — only
+          whatever gets portaled into it (a real <aside>-shaped column with
+          its own width) does. Empty (and so invisible) whenever no
+          dashboard's panel is expanded. */}
+      <div id="dashboard-panel-slot" className="contents" />
       <main className="flex flex-1 flex-col">{children}</main>
     </div>
   );

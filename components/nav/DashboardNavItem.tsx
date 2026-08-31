@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 
@@ -13,17 +14,27 @@ const inputClasses =
 const navLinkClasses =
   "rounded-md px-2 py-1.5 text-sm font-medium transition-colors hover:bg-black/[.03] dark:hover:bg-white/[.05] creamsicle:hover:bg-orange-100";
 
+const iconButtonClasses =
+  "rounded-md p-1 text-zinc-500 transition-colors hover:bg-black/[.06] hover:text-zinc-900 disabled:opacity-40 dark:text-zinc-400 dark:hover:bg-white/[.08] dark:hover:text-zinc-100";
+
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 4h11M6 4V2.5h4V4M5 4l.5 9.5a1 1 0 0 0 1 .95h3a1 1 0 0 0 1-.95L11 4M6.5 7v4M9.5 7v4" />
+    </svg>
+  );
+}
+
 /**
  * One dashboard's row in the sidebar (see DashboardNavList, its Server
- * Component parent) — the dashboard link itself, and, only while that
- * dashboard is the one currently open, its tabs "popped out" underneath:
- * a tab list (switching tabs is a real navigation via `?tab=`, not local
- * state — see app/(site)/dashboards/[id]/page.tsx), an "+ Tab" row at the
- * same level/style as the sidebar's own "Create Dashboard" link above it,
- * and the publish toggle + delete dashboard controls that used to live in
- * DashboardTabs' header row (removed — everything about a dashboard's
- * identity and structure lives here now, next to its own name in the nav,
- * rather than repeated at the top of the page every time it's open).
+ * Component parent) — the link itself, plus (only while that dashboard is
+ * the one currently open) its tab panel portaled into the second column
+ * that pops out to the right of the whole sidebar (see the
+ * `#dashboard-panel-slot` div in app/(site)/layout.tsx) rather than nesting
+ * underneath the link. Clicking the name while it's already the active
+ * dashboard toggles that panel closed/open again instead of navigating
+ * (there's nowhere else to navigate to); clicking a *different* dashboard
+ * always opens its panel fresh.
  */
 export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
   const pathname = usePathname();
@@ -34,6 +45,31 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
   const active = pathname === href;
   const tabs = dashboard.tabs;
   const activeTabId = active ? (searchParams.get("tab") ?? tabs[0]?.id ?? null) : null;
+
+  // Manually toggled closed while still on this dashboard's own page —
+  // separate from `active`, which just tracks whether this is the
+  // dashboard the URL currently points at. Reset open again whenever
+  // navigation *into* this dashboard happens (active flips false -> true),
+  // so leaving and coming back always shows the panel fresh rather than
+  // staying collapsed from an earlier visit. Adjusted during render (React's
+  // own documented pattern for "reset state when a value changes") rather
+  // than in an effect, which would set state after an extra, avoidable
+  // render.
+  const [collapsed, setCollapsed] = useState(false);
+  const [wasActive, setWasActive] = useState(active);
+  if (active !== wasActive) {
+    setWasActive(active);
+    if (active) setCollapsed(false);
+  }
+
+  // The portal target lives in the server-rendered HTML from
+  // app/(site)/layout.tsx, so it already exists by the time this first
+  // renders on the client — no need to wait for a mount effect. Recomputed
+  // each render rather than cached in state, since caching a DOM node in
+  // state is exactly what useEffect's "synchronizing with an external
+  // system" warning is about; a plain lookup here is cheap enough not to
+  // need it.
+  const panelSlot = typeof document !== "undefined" ? document.getElementById("dashboard-panel-slot") : null;
 
   const [published, setPublished] = useState(dashboard.published);
   const [togglingPublish, setTogglingPublish] = useState(false);
@@ -211,10 +247,174 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
     }
   }
 
+  const expanded = active && !collapsed;
+
+  const panel = (
+    <aside className="sticky top-0 flex h-dvh w-56 shrink-0 flex-col gap-3 border-r border-black/[.08] px-4 py-6 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/60">
+      <div className="flex items-center justify-between gap-1">
+        <h2 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">{dashboard.name}</h2>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <button
+            type="button"
+            onClick={togglePublished}
+            disabled={togglingPublish}
+            title={published ? "Switch to editing" : "Publish"}
+            aria-label={published ? "Switch to editing" : "Publish"}
+            className={iconButtonClasses}
+          >
+            {published ? "✎" : "✓"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setDeleteModalOpen(true)}
+            title="Delete dashboard"
+            aria-label="Delete dashboard"
+            className={iconButtonClasses + " hover:text-red-600 dark:hover:text-red-400"}
+          >
+            <TrashIcon />
+          </button>
+        </div>
+      </div>
+      <span
+        className={
+          "self-start rounded-full px-2 py-0.5 text-[10px] font-medium " +
+          (published
+            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+            : "bg-amber-500/10 text-amber-700 dark:text-amber-400")
+        }
+      >
+        {published ? "Published — view only" : "Editing"}
+      </span>
+
+      <div className="flex flex-col gap-0.5">
+        {tabs.map((tab, i) =>
+          editingTabId === tab.id ? (
+            <input
+              key={tab.id}
+              type="text"
+              autoFocus
+              value={tabNameDraft}
+              disabled={renamingTabId === tab.id}
+              onChange={(e) => setTabNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+                if (e.key === "Escape") {
+                  setTabNameDraft(tab.name);
+                  setEditingTabId(null);
+                }
+              }}
+              onBlur={() => handleRenameTab(tab.id)}
+              className={inputClasses}
+            />
+          ) : (
+            <div
+              key={tab.id}
+              className={
+                "group flex items-center gap-0.5 rounded-md py-1.5 pr-1 pl-2 text-sm font-medium transition-colors " +
+                (tab.id === activeTabId
+                  ? "bg-black/[.05] text-zinc-950 dark:bg-white/[.08] dark:text-zinc-50 creamsicle:bg-orange-100 creamsicle:text-orange-950"
+                  : "text-zinc-600 hover:bg-black/[.03] hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[.05] dark:hover:text-zinc-50 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50")
+              }
+            >
+              <Link href={`${href}?tab=${tab.id}`} className="min-w-0 flex-1 truncate">
+                {tab.name}
+              </Link>
+              <button
+                type="button"
+                onClick={() => moveTab(tab.id, -1)}
+                disabled={i === 0 || movingTabId !== null}
+                title="Move up"
+                aria-label={`Move "${tab.name}" up`}
+                className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-indigo-400 disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                onClick={() => moveTab(tab.id, 1)}
+                disabled={i === tabs.length - 1 || movingTabId !== null}
+                title="Move down"
+                aria-label={`Move "${tab.name}" down`}
+                className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-indigo-400 disabled:cursor-not-allowed disabled:opacity-30"
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTabNameDraft(tab.name);
+                  setEditingTabId(tab.id);
+                }}
+                title={`Rename "${tab.name}"`}
+                aria-label={`Rename "${tab.name}"`}
+                className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-indigo-400"
+              >
+                ✎
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDeleteTab(tab.id, tab.name)}
+                disabled={deletingTabId === tab.id || tabs.length <= 1}
+                title={tabs.length <= 1 ? "Can't delete a dashboard's last tab" : `Delete "${tab.name}"`}
+                aria-label={tabs.length <= 1 ? "Can't delete a dashboard's last tab" : `Delete "${tab.name}"`}
+                className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {deletingTabId === tab.id ? "…" : "✕"}
+              </button>
+            </div>
+          ),
+        )}
+
+        {addingTab ? (
+          <form onSubmit={handleCreateTab} className="flex flex-col gap-1 py-0.5">
+            <input
+              type="text"
+              autoFocus
+              value={newTabName}
+              onChange={(e) => setNewTabName(e.target.value)}
+              onBlur={() => {
+                if (!newTabName.trim()) setAddingTab(false);
+              }}
+              placeholder="Tab name"
+              className={inputClasses}
+            />
+            <button
+              type="submit"
+              disabled={creatingTab || !newTabName.trim()}
+              className="self-start rounded-md bg-zinc-900 px-2 py-0.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 creamsicle:bg-orange-600"
+            >
+              {creatingTab ? "…" : "Add"}
+            </button>
+          </form>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setAddingTab(true)}
+            className={navLinkClasses + " flex items-center justify-between text-sm text-zinc-500 dark:text-zinc-400"}
+          >
+            Add tab
+            <span aria-hidden="true">+</span>
+          </button>
+        )}
+      </div>
+
+      {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
+    </aside>
+  );
+
   return (
     <div className="flex flex-col">
       <Link
         href={href}
+        onClick={(e) => {
+          // Already here — nowhere to navigate to, so this click just
+          // means "toggle the panel," not "go to this page."
+          if (active) {
+            e.preventDefault();
+            setCollapsed((c) => !c);
+          }
+        }}
+        title={active ? (collapsed ? "Show tabs" : "Hide tabs") : undefined}
         className={
           navLinkClasses +
           " " +
@@ -226,149 +426,7 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
         {dashboard.name}
       </Link>
 
-      {active && (
-        <div className="mt-0.5 mb-1 ml-2 flex flex-col gap-0.5 border-l border-black/[.08] pl-2 dark:border-white/[.1] creamsicle:border-orange-200">
-          {tabs.map((tab, i) =>
-            editingTabId === tab.id ? (
-              <input
-                key={tab.id}
-                type="text"
-                autoFocus
-                value={tabNameDraft}
-                disabled={renamingTabId === tab.id}
-                onChange={(e) => setTabNameDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") e.currentTarget.blur();
-                  if (e.key === "Escape") {
-                    setTabNameDraft(tab.name);
-                    setEditingTabId(null);
-                  }
-                }}
-                onBlur={() => handleRenameTab(tab.id)}
-                className={inputClasses}
-              />
-            ) : (
-              <div
-                key={tab.id}
-                className={
-                  "group flex items-center gap-0.5 rounded-md pl-2 pr-1 py-1 text-xs font-medium transition-colors " +
-                  (tab.id === activeTabId
-                    ? "bg-black/[.05] text-zinc-950 dark:bg-white/[.08] dark:text-zinc-50 creamsicle:bg-orange-100 creamsicle:text-orange-950"
-                    : "text-zinc-500 hover:bg-black/[.03] hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-white/[.05] dark:hover:text-zinc-100 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50")
-                }
-              >
-                <Link href={`${href}?tab=${tab.id}`} className="min-w-0 flex-1 truncate">
-                  {tab.name}
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => moveTab(tab.id, -1)}
-                  disabled={i === 0 || movingTabId !== null}
-                  title="Move up"
-                  aria-label={`Move "${tab.name}" up`}
-                  className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-indigo-400 disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  onClick={() => moveTab(tab.id, 1)}
-                  disabled={i === tabs.length - 1 || movingTabId !== null}
-                  title="Move down"
-                  aria-label={`Move "${tab.name}" down`}
-                  className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-indigo-400 disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTabNameDraft(tab.name);
-                    setEditingTabId(tab.id);
-                  }}
-                  title={`Rename "${tab.name}"`}
-                  aria-label={`Rename "${tab.name}"`}
-                  className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-indigo-400"
-                >
-                  ✎
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleDeleteTab(tab.id, tab.name)}
-                  disabled={deletingTabId === tab.id || tabs.length <= 1}
-                  title={tabs.length <= 1 ? "Can't delete a dashboard's last tab" : `Delete "${tab.name}"`}
-                  aria-label={tabs.length <= 1 ? "Can't delete a dashboard's last tab" : `Delete "${tab.name}"`}
-                  className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {deletingTabId === tab.id ? "…" : "✕"}
-                </button>
-              </div>
-            ),
-          )}
-
-          {addingTab ? (
-            <form onSubmit={handleCreateTab} className="flex flex-col gap-1 py-0.5">
-              <input
-                type="text"
-                autoFocus
-                value={newTabName}
-                onChange={(e) => setNewTabName(e.target.value)}
-                onBlur={() => {
-                  if (!newTabName.trim()) setAddingTab(false);
-                }}
-                placeholder="Tab name"
-                className={inputClasses}
-              />
-              <button
-                type="submit"
-                disabled={creatingTab || !newTabName.trim()}
-                className="self-start rounded-md bg-zinc-900 px-2 py-0.5 text-xs font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900 creamsicle:bg-orange-600"
-              >
-                {creatingTab ? "…" : "Add"}
-              </button>
-            </form>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setAddingTab(true)}
-              className="flex items-center justify-between rounded-md px-2 py-1 text-xs font-medium text-zinc-400 transition-colors hover:bg-black/[.03] hover:text-zinc-600 dark:text-zinc-500 dark:hover:bg-white/[.05] dark:hover:text-zinc-300 creamsicle:text-orange-400 creamsicle:hover:bg-orange-50 creamsicle:hover:text-orange-700"
-            >
-              Add tab
-              <span aria-hidden="true">+</span>
-            </button>
-          )}
-
-          <div className="mt-1 flex flex-col gap-1 border-t border-black/[.06] pt-1.5 dark:border-white/[.08] creamsicle:border-orange-200">
-            <div className="flex items-center justify-between px-2">
-              <span
-                className={
-                  "text-[10px] font-medium tracking-wide uppercase " +
-                  (published ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")
-                }
-              >
-                {published ? "Published" : "Editing"}
-              </span>
-              <button
-                type="button"
-                onClick={togglePublished}
-                disabled={togglingPublish}
-                className="text-xs font-medium text-zinc-600 underline hover:text-zinc-950 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-50 creamsicle:text-orange-700 creamsicle:hover:text-orange-950"
-              >
-                {published ? "Switch to editing" : "Publish"}
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={() => setDeleteModalOpen(true)}
-              className="rounded-md px-2 py-1 text-left text-xs font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
-            >
-              Delete dashboard
-            </button>
-          </div>
-
-          {error && <p className="px-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
-        </div>
-      )}
+      {expanded && panelSlot && createPortal(panel, panelSlot)}
 
       {deleteModalOpen && (
         <>
