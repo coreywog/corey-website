@@ -1,8 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
-import { decryptText } from "@/lib/crypto";
-import { normalizeMerchantName } from "@/lib/finance";
 import { WidgetConfigSchema, type WidgetType } from "@/lib/dashboardConfig";
 import { computeWidgetData } from "@/lib/dashboardQuery";
 import { DashboardGrid } from "@/components/dashboards/DashboardGrid";
@@ -77,32 +75,16 @@ export default async function DashboardPage({
       )
     : [];
 
-  // Options for the widget editor's filter/category pickers — same source
-  // as the Review tab's category picker (Data Management's Finance tab,
-  // app/(site)/data-hub/page.tsx).
-  const [accounts, categorized, spendingDescriptions, calculatedMetrics] = await Promise.all([
-    prisma.financeAccount.findMany({ where: { archived: false }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
-    prisma.transaction.findMany({
-      where: { category: "spending", merchantCategory: { not: null, notIn: ["other"] }, merchantSubcategory: { not: null } },
-      select: { merchantCategory: true, merchantSubcategory: true },
-      distinct: ["merchantCategory", "merchantSubcategory"],
-    }),
-    // Merchant name isn't a plain column — it's derived from the encrypted
-    // description (see lib/finance.ts's normalizeMerchantName) — so getting
-    // the distinct list for the picker means decrypting every one, same
-    // cost class as the Transaction Detail tab's own full sweep.
-    prisma.transaction.findMany({
-      where: { category: "spending", description: { not: null } },
-      select: { description: true },
-    }),
-    prisma.calculatedMetric.findMany({ orderBy: [{ order: "asc" }, { createdAt: "asc" }] }),
-  ]);
-  const categoryOptions = categorized
-    .map((c) => ({ category: c.merchantCategory as string, subcategory: c.merchantSubcategory as string }))
-    .sort((a, b) => a.category.localeCompare(b.category) || a.subcategory.localeCompare(b.subcategory));
-  const merchantOptions = [
-    ...new Set(spendingDescriptions.map((t) => normalizeMerchantName(decryptText(t.description as string)))),
-  ].sort();
+  // The widget editor's filter/category picker options (accounts,
+  // category/subcategory combos, merchant names, saved calculated metrics)
+  // used to be fetched right here on every single render of this page —
+  // meaning every tab click re-ran them too, even though they're the same
+  // regardless of which tab is open, and even on a *published* dashboard
+  // where the editor can't even be opened at all. The merchant list alone
+  // decrypts every spending transaction's description, real cost that has
+  // nothing to do with just looking at a tab. Moved to
+  // /api/dashboards/[id]/editor-context, fetched by DashboardGrid on demand
+  // the first time the editor actually opens.
 
   return (
     // The dashboard's name/rename, tabs, publish toggle, and delete all
@@ -118,10 +100,6 @@ export default async function DashboardPage({
           dashboardId={dashboard.id}
           tabId={activeTabId}
           widgets={widgets}
-          accounts={accounts}
-          categoryOptions={categoryOptions}
-          merchantOptions={merchantOptions}
-          calculatedMetrics={calculatedMetrics}
           published={dashboard.published}
         />
       )}

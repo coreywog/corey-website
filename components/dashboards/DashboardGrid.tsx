@@ -48,6 +48,44 @@ const GRID_CONSTRAINTS = [gridBounds, minMaxSize, minSize(MIN_TILE_W, MIN_TILE_H
 
 type Account = { id: string; name: string };
 type CategoryOption = { category: string; subcategory: string };
+type EditorContext = {
+  accounts: Account[];
+  categoryOptions: CategoryOption[];
+  merchantOptions: string[];
+  calculatedMetrics: CalculatedMetricOption[];
+};
+
+// Module-scoped, not component state: the data itself (accounts/categories/
+// merchants/saved metrics) is global, not per-dashboard, and DashboardGrid
+// remounts on every tab switch (see its `key` in page.tsx) — a cache living
+// in component state would refetch on the first editor-open after every
+// single tab click. This survives client-side navigation for as long as the
+// page stays loaded, which is exactly the lifetime the "how often does this
+// actually change" tradeoff calls for (nothing here changes from switching
+// tabs or dashboards; only creating/editing accounts, categories, or saved
+// metrics elsewhere does, and a hard refresh picks that up same as before).
+let cachedEditorContext: EditorContext | null = null;
+let editorContextRequest: Promise<EditorContext> | null = null;
+
+async function fetchEditorContext(dashboardId: string): Promise<EditorContext> {
+  if (cachedEditorContext) return cachedEditorContext;
+  if (!editorContextRequest) {
+    editorContextRequest = fetch(`/api/dashboards/${dashboardId}/editor-context`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`Failed to load editor options (${res.status}).`);
+        return res.json();
+      })
+      .then((body: EditorContext) => {
+        cachedEditorContext = body;
+        return body;
+      })
+      .catch((err) => {
+        editorContextRequest = null; // let the next attempt actually retry instead of reusing a failed promise
+        throw err;
+      });
+  }
+  return editorContextRequest;
+}
 
 function layoutFromWidgets(list: WidgetWithData[]): Layout {
   // The MIN_TILE_W/H constraint only guards future drags/resizes — it can't
@@ -70,19 +108,11 @@ export function DashboardGrid({
   dashboardId,
   tabId,
   widgets,
-  accounts,
-  categoryOptions,
-  merchantOptions,
-  calculatedMetrics,
   published,
 }: {
   dashboardId: string;
   tabId: string;
   widgets: WidgetWithData[];
-  accounts: Account[];
-  categoryOptions: CategoryOption[];
-  merchantOptions: string[];
-  calculatedMetrics: CalculatedMetricOption[];
   // Dashboard-level, not per-tab (the sidebar's DashboardNavItem owns the
   // publish toggle — see components/nav/) — read fresh off the dashboard
   // page's own server-side fetch and passed straight through here to gate
@@ -117,6 +147,31 @@ export function DashboardGrid({
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const isAdding = editorState?.mode === "add";
 
+  // Fetched on demand — see fetchEditorContext above — rather than passed
+  // down as a prop from the server render, so switching tabs (which
+  // remounts this component) never pays for it unless the editor actually
+  // opens. Seeded from the module cache so a second dashboard/tab visited
+  // in the same session opens its editor instantly too.
+  const [editorContext, setEditorContext] = useState<EditorContext | null>(cachedEditorContext);
+  const [loadingEditorContext, setLoadingEditorContext] = useState(false);
+  const [editorContextError, setEditorContextError] = useState<string | null>(null);
+
+  async function ensureEditorContext(): Promise<EditorContext | null> {
+    if (editorContext) return editorContext;
+    setLoadingEditorContext(true);
+    setEditorContextError(null);
+    try {
+      const ctx = await fetchEditorContext(dashboardId);
+      setEditorContext(ctx);
+      return ctx;
+    } catch {
+      setEditorContextError("Couldn't load the editor's filter options — try again.");
+      return null;
+    } finally {
+      setLoadingEditorContext(false);
+    }
+  }
+
   const persistLayout = useCallback(
     (next: Layout) => {
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
@@ -146,10 +201,16 @@ export function DashboardGrid({
     if (!isAdding) persistLayout(next);
   }
 
-  function openAdd() {
+  async function openAdd() {
+    if (!(await ensureEditorContext())) return;
     const bottom = widgets.reduce((max, w) => Math.max(max, w.y + w.h), 0);
     setLayout((prev) => [...prev, { i: NEW_WIDGET_ID, x: 0, y: bottom, w: DEFAULT_WIDTH, h: DEFAULT_HEIGHT }]);
     setEditorState({ mode: "add" });
+  }
+
+  async function openEdit(widget: ExistingWidget) {
+    if (!(await ensureEditorContext())) return;
+    setEditorState({ mode: "edit", widget });
   }
 
   function closeEditor() {
@@ -215,17 +276,15 @@ export function DashboardGrid({
                       <button
                         type="button"
                         onClick={() =>
-                          setEditorState({
-                            mode: "edit",
-                            widget: {
-                              id: widget.id,
-                              type: widget.type as ExistingWidget["type"],
-                              title: widget.title,
-                              config: widget.config!,
-                            },
+                          openEdit({
+                            id: widget.id,
+                            type: widget.type as ExistingWidget["type"],
+                            title: widget.title,
+                            config: widget.config!,
                           })
                         }
-                        className="rounded-md bg-black/[.06] px-1.5 py-0.5 text-xs hover:bg-black/[.12] dark:bg-white/[.1] dark:hover:bg-white/[.18]"
+                        disabled={loadingEditorContext}
+                        className="rounded-md bg-black/[.06] px-1.5 py-0.5 text-xs hover:bg-black/[.12] disabled:opacity-40 dark:bg-white/[.1] dark:hover:bg-white/[.18]"
                         title="Edit"
                       >
                         ✎
@@ -251,24 +310,28 @@ export function DashboardGrid({
       </div>
 
       {!published && !editorState && (
-        <button
-          type="button"
-          onClick={openAdd}
-          className="mt-3 flex h-24 w-full items-center justify-center rounded-xl border-2 border-dashed border-black/[.15] text-2xl leading-none text-zinc-400 transition-colors hover:border-zinc-400 hover:text-zinc-600 dark:border-white/[.15] dark:hover:border-white/[.35] dark:hover:text-zinc-300 creamsicle:border-orange-300 creamsicle:hover:border-orange-500"
-          aria-label="Add widget"
-        >
-          +
-        </button>
+        <>
+          <button
+            type="button"
+            onClick={openAdd}
+            disabled={loadingEditorContext}
+            className="mt-3 flex h-24 w-full items-center justify-center rounded-xl border-2 border-dashed border-black/[.15] text-2xl leading-none text-zinc-400 transition-colors hover:border-zinc-400 hover:text-zinc-600 disabled:opacity-50 dark:border-white/[.15] dark:hover:border-white/[.35] dark:hover:text-zinc-300 creamsicle:border-orange-300 creamsicle:hover:border-orange-500"
+            aria-label="Add widget"
+          >
+            {loadingEditorContext ? "…" : "+"}
+          </button>
+          {editorContextError && <p className="text-sm text-red-600 dark:text-red-400">{editorContextError}</p>}
+        </>
       )}
 
-      {!published && editorState && (
+      {!published && editorState && editorContext && (
         <WidgetEditorPanel
           dashboardId={dashboardId}
           tabId={tabId}
-          accounts={accounts}
-          categoryOptions={categoryOptions}
-          merchantOptions={merchantOptions}
-          calculatedMetrics={calculatedMetrics}
+          accounts={editorContext.accounts}
+          categoryOptions={editorContext.categoryOptions}
+          merchantOptions={editorContext.merchantOptions}
+          calculatedMetrics={editorContext.calculatedMetrics}
           existing={editorState.mode === "edit" ? editorState.widget : undefined}
           ghostLayout={
             isAdding && ghostLayoutItem
