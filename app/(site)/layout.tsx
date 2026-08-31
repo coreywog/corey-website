@@ -17,7 +17,7 @@ export default function SiteLayout({
 }) {
   return (
     <div className="flex min-h-full bg-[var(--background)] text-[var(--foreground)]">
-      <aside className="sticky top-0 flex h-dvh w-48 shrink-0 flex-col justify-between border-r border-black/[.08] px-4 py-6 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/60">
+      <aside className="sticky top-0 flex h-dvh w-64 shrink-0 flex-col justify-between overflow-y-auto border-r border-black/[.08] px-4 py-6 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/60">
         <nav className="flex flex-col gap-1">
           <Link
             href="/dashboards"
@@ -47,15 +47,6 @@ export default function SiteLayout({
           </form>
         </div>
       </aside>
-      {/* Portal target for the expanded dashboard's tab panel (see
-          DashboardNavItem) — a second column that pops out to the right of
-          the primary sidebar when a dashboard is selected, rather than
-          nesting under it. `display: contents` so this wrapper itself
-          takes up no layout space and doesn't count as a flex item — only
-          whatever gets portaled into it (a real <aside>-shaped column with
-          its own width) does. Empty (and so invisible) whenever no
-          dashboard's panel is expanded. */}
-      <div id="dashboard-panel-slot" className="contents" />
       <main className="flex flex-1 flex-col">{children}</main>
     </div>
   );

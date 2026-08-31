@@ -6,7 +6,6 @@ import { normalizeMerchantName } from "@/lib/finance";
 import { WidgetConfigSchema, type WidgetType } from "@/lib/dashboardConfig";
 import { computeWidgetData } from "@/lib/dashboardQuery";
 import { DashboardGrid } from "@/components/dashboards/DashboardGrid";
-import { DashboardNameHeading } from "@/components/dashboards/DashboardNameHeading";
 import type { WidgetWithData } from "@/components/dashboards/Widget";
 
 export default async function DashboardPage({
@@ -33,7 +32,6 @@ export default async function DashboardPage({
     where: { id },
     select: {
       id: true,
-      name: true,
       published: true,
       // Just enough to pick the active tab and know it's a real one — the
       // sidebar (DashboardNavList) is what actually renders the tab list,
@@ -107,8 +105,11 @@ export default async function DashboardPage({
   ].sort();
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-16">
-      <DashboardNameHeading dashboardId={dashboard.id} name={dashboard.name} />
+    // The dashboard's name/rename, tabs, publish toggle, and delete all
+    // live in the sidebar now (DashboardNavItem) — nothing above the grid
+    // here needs to repeat any of it, so this starts right at the top
+    // rather than the py-16 every other page on the site uses.
+    <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 pt-6 pb-16">
       {activeTabId && (
         <DashboardGrid
           // Remounts on tab switch (a real navigation now) so drag/resize

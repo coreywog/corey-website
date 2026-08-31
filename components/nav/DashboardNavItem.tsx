@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 
@@ -28,13 +27,12 @@ function TrashIcon() {
 /**
  * One dashboard's row in the sidebar (see DashboardNavList, its Server
  * Component parent) — the link itself, plus (only while that dashboard is
- * the one currently open) its tab panel portaled into the second column
- * that pops out to the right of the whole sidebar (see the
- * `#dashboard-panel-slot` div in app/(site)/layout.tsx) rather than nesting
- * underneath the link. Clicking the name while it's already the active
- * dashboard toggles that panel closed/open again instead of navigating
- * (there's nowhere else to navigate to); clicking a *different* dashboard
- * always opens its panel fresh.
+ * the one currently open) its name/tabs/publish/delete controls nested
+ * directly underneath — the sidebar is wide enough (see app/(site)/
+ * layout.tsx) that this doesn't need its own separate column. Clicking the
+ * name while it's already the active dashboard toggles that panel closed/
+ * open again instead of navigating (there's nowhere else to navigate to);
+ * clicking a *different* dashboard always opens its panel fresh.
  */
 export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
   const pathname = usePathname();
@@ -62,15 +60,10 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
     if (active) setCollapsed(false);
   }
 
-  // The portal target lives in the server-rendered HTML from
-  // app/(site)/layout.tsx, so it already exists by the time this first
-  // renders on the client — no need to wait for a mount effect. Recomputed
-  // each render rather than cached in state, since caching a DOM node in
-  // state is exactly what useEffect's "synchronizing with an external
-  // system" warning is about; a plain lookup here is cheap enough not to
-  // need it.
-  const panelSlot = typeof document !== "undefined" ? document.getElementById("dashboard-panel-slot") : null;
-
+  const [name, setName] = useState(dashboard.name);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(dashboard.name);
+  const [renamingName, setRenamingName] = useState(false);
   const [published, setPublished] = useState(dashboard.published);
   const [togglingPublish, setTogglingPublish] = useState(false);
   const [addingTab, setAddingTab] = useState(false);
@@ -81,6 +74,8 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
   const [renamingTabId, setRenamingTabId] = useState<string | null>(null);
   const [deletingTabId, setDeletingTabId] = useState<string | null>(null);
   const [movingTabId, setMovingTabId] = useState<string | null>(null);
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteNameInput, setDeleteNameInput] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -105,6 +100,37 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
       setPublished(!next);
     } finally {
       setTogglingPublish(false);
+    }
+  }
+
+  async function handleRenameDashboard() {
+    const trimmed = nameDraft.trim();
+    if (!trimmed || trimmed === name) {
+      setEditingName(false);
+      return;
+    }
+    setRenamingName(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/dashboards/${dashboard.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error ?? `Failed to rename dashboard (${res.status}).`);
+        setNameDraft(name); // revert the input to what's actually saved
+        return;
+      }
+      setName(trimmed);
+      router.refresh();
+    } catch {
+      setError("Network error — try again.");
+      setNameDraft(name);
+    } finally {
+      setEditingName(false);
+      setRenamingName(false);
     }
   }
 
@@ -187,36 +213,37 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
     }
   }
 
-  /** Swaps a tab with its immediate up/down neighbor in `tabs` (already
-   * sorted by `order` — see DashboardNavList's own `orderBy`). Reassigns
-   * both by their *array position*, not by swapping whatever their two
-   * `order` values currently happen to be — tabs created before this field
-   * existed can all share the same default, and swapping two equal numbers
-   * would be a silent no-op. Only ever touches two rows regardless of how
-   * many tabs there are, so no dedicated bulk-reorder endpoint is needed
-   * for a one-step move. */
-  async function moveTab(tabId: string, direction: -1 | 1) {
-    const index = tabs.findIndex((t) => t.id === tabId);
-    const neighborIndex = index + direction;
-    if (index === -1 || neighborIndex < 0 || neighborIndex >= tabs.length) return;
-    const tab = tabs[index];
-    const neighbor = tabs[neighborIndex];
-    setMovingTabId(tabId);
+  /** Drops `draggedId` into `targetId`'s spot, shifting everything between
+   * its old and new position over by one — not just a swap, since a drag
+   * can move a tab several places in one gesture, not just to an adjacent
+   * neighbor. Reassigns every tab's `order` to its *new array position*,
+   * not just the two endpoints — tabs created before `order` existed can
+   * all share the same default value, so anything short of "recompute the
+   * whole sequence" risks two tabs landing on the same number. Native HTML5
+   * drag-and-drop rather than a library: a handful of tabs in one list
+   * doesn't need more than dragstart/dragover/drop. */
+  async function reorderTabs(draggedId: string, targetId: string) {
+    if (draggedId === targetId) return;
+    const fromIndex = tabs.findIndex((t) => t.id === draggedId);
+    const toIndex = tabs.findIndex((t) => t.id === targetId);
+    if (fromIndex === -1 || toIndex === -1) return;
+    const reordered = [...tabs];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+
+    setMovingTabId(draggedId);
     setError(null);
     try {
-      const [res1, res2] = await Promise.all([
-        fetch(`/api/dashboards/${dashboard.id}/tabs/${tab.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ order: neighborIndex }),
-        }),
-        fetch(`/api/dashboards/${dashboard.id}/tabs/${neighbor.id}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ order: index }),
-        }),
-      ]);
-      if (!res1.ok || !res2.ok) {
+      const results = await Promise.all(
+        reordered.map((tab, i) =>
+          fetch(`/api/dashboards/${dashboard.id}/tabs/${tab.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ order: i }),
+          }),
+        ),
+      );
+      if (results.some((res) => !res.ok)) {
         setError("Failed to reorder tabs.");
         return;
       }
@@ -229,7 +256,7 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
   }
 
   async function handleDeleteDashboard() {
-    if (deleteNameInput !== dashboard.name) return; // button is disabled for this too — just a safety net
+    if (deleteNameInput !== name) return; // button is disabled for this too — just a safety net
     setDeleting(true);
     setError(null);
     try {
@@ -250,9 +277,39 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
   const expanded = active && !collapsed;
 
   const panel = (
-    <aside className="sticky top-0 flex h-dvh w-56 shrink-0 flex-col gap-3 border-r border-black/[.08] px-4 py-6 dark:border-white/[.1] creamsicle:border-orange-200 creamsicle:bg-orange-50/60">
+    <div className="mt-1 mb-2 ml-2 flex flex-col gap-2 border-l border-black/[.08] py-1 pl-3 dark:border-white/[.1] creamsicle:border-orange-200">
       <div className="flex items-center justify-between gap-1">
-        <h2 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">{dashboard.name}</h2>
+        {editingName ? (
+          <input
+            type="text"
+            autoFocus
+            value={nameDraft}
+            disabled={renamingName}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") {
+                setNameDraft(name);
+                setEditingName(false);
+              }
+            }}
+            onBlur={handleRenameDashboard}
+            className={inputClasses + " text-sm font-semibold"}
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setNameDraft(name);
+              setEditingName(true);
+            }}
+            title="Rename dashboard"
+            className="group/name flex min-w-0 flex-1 items-center gap-1 text-left"
+          >
+            <h2 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">{name}</h2>
+            <span className="shrink-0 text-xs text-zinc-400 opacity-0 transition-opacity group-hover/name:opacity-100">✎</span>
+          </button>
+        )}
         <div className="flex shrink-0 items-center gap-0.5">
           <button
             type="button"
@@ -287,7 +344,7 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
       </span>
 
       <div className="flex flex-col gap-0.5">
-        {tabs.map((tab, i) =>
+        {tabs.map((tab) =>
           editingTabId === tab.id ? (
             <input
               key={tab.id}
@@ -309,36 +366,49 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
           ) : (
             <div
               key={tab.id}
+              draggable
+              onDragStart={(e) => {
+                setDraggedTabId(tab.id);
+                // Firefox won't fire subsequent drag events at all without
+                // data actually set on the transfer object, even though
+                // this handler reads state instead of the transfer itself.
+                e.dataTransfer.setData("text/plain", tab.id);
+                e.dataTransfer.effectAllowed = "move";
+              }}
+              onDragOver={(e) => {
+                if (!draggedTabId || draggedTabId === tab.id) return;
+                e.preventDefault(); // required for onDrop to fire at all
+                setDragOverTabId(tab.id);
+              }}
+              onDragLeave={() => setDragOverTabId((id) => (id === tab.id ? null : id))}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (draggedTabId) reorderTabs(draggedTabId, tab.id);
+                setDraggedTabId(null);
+                setDragOverTabId(null);
+              }}
+              onDragEnd={() => {
+                setDraggedTabId(null);
+                setDragOverTabId(null);
+              }}
               className={
-                "group flex items-center gap-0.5 rounded-md py-1.5 pr-1 pl-2 text-sm font-medium transition-colors " +
+                "group flex cursor-grab items-center gap-0.5 rounded-md py-1.5 pr-1 pl-2 text-sm font-medium transition-colors active:cursor-grabbing " +
                 (tab.id === activeTabId
                   ? "bg-black/[.05] text-zinc-950 dark:bg-white/[.08] dark:text-zinc-50 creamsicle:bg-orange-100 creamsicle:text-orange-950"
-                  : "text-zinc-600 hover:bg-black/[.03] hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[.05] dark:hover:text-zinc-50 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50")
+                  : "text-zinc-600 hover:bg-black/[.03] hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[.05] dark:hover:text-zinc-50 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50") +
+                (draggedTabId === tab.id ? " opacity-40" : "") +
+                (dragOverTabId === tab.id && draggedTabId !== tab.id
+                  ? " outline outline-2 outline-indigo-400 outline-offset-[-2px]"
+                  : "")
               }
             >
-              <Link href={`${href}?tab=${tab.id}`} className="min-w-0 flex-1 truncate">
+              {/* draggable=false: an <a> is natively draggable on its own
+                  in most browsers, which would fight the row's own drag
+                  handlers above (and start an actual link-drag instead). */}
+              <Link href={`${href}?tab=${tab.id}`} draggable={false} className="min-w-0 flex-1 truncate">
                 {tab.name}
               </Link>
-              <button
-                type="button"
-                onClick={() => moveTab(tab.id, -1)}
-                disabled={i === 0 || movingTabId !== null}
-                title="Move up"
-                aria-label={`Move "${tab.name}" up`}
-                className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-indigo-400 disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                onClick={() => moveTab(tab.id, 1)}
-                disabled={i === tabs.length - 1 || movingTabId !== null}
-                title="Move down"
-                aria-label={`Move "${tab.name}" down`}
-                className="opacity-0 transition-opacity group-hover:opacity-100 hover:text-indigo-400 disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                ↓
-              </button>
+              {movingTabId === tab.id && <span className="text-[10px] text-zinc-400">…</span>}
               <button
                 type="button"
                 onClick={() => {
@@ -399,7 +469,7 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
       </div>
 
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
-    </aside>
+    </div>
   );
 
   return (
@@ -423,10 +493,10 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
             : "text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-50 creamsicle:text-orange-800 creamsicle:hover:text-orange-950")
         }
       >
-        {dashboard.name}
+        {name}
       </Link>
 
-      {expanded && panelSlot && createPortal(panel, panelSlot)}
+      {expanded && panel}
 
       {deleteModalOpen && (
         <>
@@ -435,12 +505,12 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
             <div className="flex w-full max-w-sm flex-col gap-3 rounded-xl border border-black/[.1] bg-[var(--background)] p-5 shadow-xl dark:border-white/[.15]">
               <h2 className="text-lg font-semibold text-red-600 dark:text-red-400">Delete dashboard</h2>
               <p className="text-sm text-zinc-600 dark:text-zinc-400">
-                This will permanently delete <span className="font-semibold">{dashboard.name}</span> — every tab
+                This will permanently delete <span className="font-semibold">{name}</span> — every tab
                 and every widget in it. This cannot be undone.
               </p>
               <label className="flex flex-col gap-1">
                 <span className="text-[11px] text-zinc-500">
-                  Type <span className="font-mono font-semibold">{dashboard.name}</span> to confirm
+                  Type <span className="font-mono font-semibold">{name}</span> to confirm
                 </span>
                 <input
                   type="text"
@@ -467,7 +537,7 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
                 <button
                   type="button"
                   onClick={handleDeleteDashboard}
-                  disabled={deleting || deleteNameInput !== dashboard.name}
+                  disabled={deleting || deleteNameInput !== name}
                   className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-red-700 disabled:opacity-40 dark:bg-red-700 dark:hover:bg-red-600"
                 >
                   {deleting ? "Deleting…" : "Confirm delete"}
