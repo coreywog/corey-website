@@ -32,14 +32,18 @@ const MARGIN: readonly [number, number] = [12, 12];
 const RESIZE_HANDLES = ["nw", "ne", "sw", "se"] as const;
 // Nothing previously stopped a tile from being resized down to 1x1 (or even
 // 0 — no per-item minW/minH was ever set, so the library's own default
-// minMaxSize constraint had nothing to enforce). Below roughly this floor,
-// ResponsiveContainer's measured box gets small enough that recharts either
-// renders nothing at all or lays out a chart sized for a stale, larger
-// reading — visually spilling past the now-tiny tile. gridBounds and
-// minMaxSize are the library's own defaults (see GridLayoutProps'
-// `constraints`); minSize adds this floor on top rather than replacing them.
-const MIN_TILE_W = 3;
-const MIN_TILE_H = 3;
+// minMaxSize constraint had nothing to enforce), which is what let a tile
+// shrink small enough for ResponsiveContainer to render a chart sized for a
+// stale, larger reading — visually spilling past the now-tiny tile. Kept
+// deliberately low (2x2 — six of them still fit across the 12-col grid, the
+// actual layout this is meant to allow) rather than picking a size that
+// merely "looks comfortable": the chart's own error boundary (Widget.tsx)
+// is the backstop for whatever still renders badly at the low end, not this
+// constraint. gridBounds and minMaxSize are the library's own defaults (see
+// GridLayoutProps' `constraints`); minSize adds this floor on top rather
+// than replacing them.
+const MIN_TILE_W = 2;
+const MIN_TILE_H = 2;
 const GRID_CONSTRAINTS = [gridBounds, minMaxSize, minSize(MIN_TILE_W, MIN_TILE_H)];
 
 type Account = { id: string; name: string };
