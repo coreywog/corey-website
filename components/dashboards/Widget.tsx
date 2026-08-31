@@ -136,10 +136,14 @@ function dataLabelList(show: boolean | undefined, valueFormat: ValueFormat | und
 /** The chart's background grid — reference lines aligned to both axes' tick
  * values, not just the horizontal (Y-axis) ones every chart hardcoded
  * before. Omitted/true shows it (the new default); false hides it
- * entirely. */
+ * entirely. A fixed mid-gray rather than the default "currentColor"-ish
+ * "#ccc": recharts' own default reads fine against a plain white tile, but
+ * washes out to essentially invisible against this app's light themes
+ * (creamsicle's cream background especially) — #888 at 0.3 opacity holds up
+ * across light, dark, and creamsicle alike. */
 function chartGridLines(show: boolean | undefined) {
   if (show === false) return null;
-  return <CartesianGrid strokeDasharray="3 3" opacity={0.15} />;
+  return <CartesianGrid stroke="#888888" strokeDasharray="3 3" opacity={0.3} />;
 }
 
 function EmptyState() {

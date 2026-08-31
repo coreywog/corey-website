@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ReactGridLayout, { useContainerWidth, type Layout } from "react-grid-layout";
+import { gridBounds, minMaxSize, minSize } from "react-grid-layout/core";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { Widget, type WidgetWithData } from "./Widget";
@@ -29,12 +30,36 @@ const MARGIN: readonly [number, number] = [12, 12];
 // supports, since edge handles (n/s/e/w) weren't asked for and clutter a
 // small tile.
 const RESIZE_HANDLES = ["nw", "ne", "sw", "se"] as const;
+// Nothing previously stopped a tile from being resized down to 1x1 (or even
+// 0 — no per-item minW/minH was ever set, so the library's own default
+// minMaxSize constraint had nothing to enforce). Below roughly this floor,
+// ResponsiveContainer's measured box gets small enough that recharts either
+// renders nothing at all or lays out a chart sized for a stale, larger
+// reading — visually spilling past the now-tiny tile. gridBounds and
+// minMaxSize are the library's own defaults (see GridLayoutProps'
+// `constraints`); minSize adds this floor on top rather than replacing them.
+const MIN_TILE_W = 3;
+const MIN_TILE_H = 3;
+const GRID_CONSTRAINTS = [gridBounds, minMaxSize, minSize(MIN_TILE_W, MIN_TILE_H)];
 
 type Account = { id: string; name: string };
 type CategoryOption = { category: string; subcategory: string };
 
 function layoutFromWidgets(list: WidgetWithData[]): Layout {
-  return list.map((widget) => ({ i: widget.id, x: widget.x, y: widget.y, w: widget.w, h: widget.h }));
+  // The MIN_TILE_W/H constraint only guards future drags/resizes — it can't
+  // retroactively fix a widget that was already saved smaller (from before
+  // this floor existed, or from resizeItemInDirection/API calls that don't
+  // go through the interactive resize handle at all). Clamping on load
+  // means an already-too-small tile grows back up to a renderable size the
+  // moment its dashboard is opened, instead of staying broken until someone
+  // happens to resize it again.
+  return list.map((widget) => ({
+    i: widget.id,
+    x: widget.x,
+    y: widget.y,
+    w: Math.max(widget.w, MIN_TILE_W),
+    h: Math.max(widget.h, MIN_TILE_H),
+  }));
 }
 
 export function DashboardGrid({
@@ -174,6 +199,7 @@ export function DashboardGrid({
             gridConfig={{ cols: COLS, rowHeight: ROW_HEIGHT, margin: MARGIN }}
             dragConfig={{ enabled: !published, handle: ".widget-drag-handle" }}
             resizeConfig={{ enabled: !published, handles: RESIZE_HANDLES }}
+            constraints={GRID_CONSTRAINTS}
             onLayoutChange={handleLayoutChange}
           >
             {displayWidgets.map((widget) => (
