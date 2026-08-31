@@ -88,6 +88,28 @@ function tickProp(axisLabels: AxisLabels | undefined, axis: "x" | "y"): false | 
   };
 }
 
+/** The Y axis's own reserved width — hiding its tick labels (showYTicks:
+ * false) previously left this at its full fixed size regardless, since
+ * `tick={false}` only skips drawing the label text, not the space reserved
+ * for it. With axisLine/tickLine already always off (see every <YAxis>
+ * below), a hidden Y axis draws literally nothing — so the full 56px was
+ * pure dead space on one side of the plot, visibly skewing everything else
+ * (the bars, the grid) off toward the other side instead of centering it in
+ * the tile. 4px keeps a hair of breathing room rather than jamming the plot
+ * flush against the tile's own edge. */
+function yAxisWidth(axisLabels: AxisLabels | undefined): number {
+  return (axisLabels?.showYTicks ?? true) ? 56 : 4;
+}
+
+/** Same idea as yAxisWidth, for the X axis's own reserved height — only
+ * needed by the two chart types (bar/stackedBar) whose category labels
+ * rotate -20° and so need real vertical room even to just fit; every other
+ * chart type leaves X axis height to recharts' own (much smaller) default,
+ * which already shrinks reasonably on its own once tick text is hidden. */
+function xAxisHeightRotated(axisLabels: AxisLabels | undefined): number {
+  return (axisLabels?.showXTicks ?? true) ? 40 : 4;
+}
+
 /** Y axis tick count and value range — omitted (the historical default, and
  * still the default for every existing widget) lets recharts pick its own
  * "nice round numbers"; setting yDomainMin/yDomainMax overrides just that
@@ -347,7 +369,7 @@ function LineWidget({
           {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
-          width={56}
+          width={yAxisWidth(axisLabels)}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
@@ -407,7 +429,7 @@ function AreaWidget({
           {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
-          width={56}
+          width={yAxisWidth(axisLabels)}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
@@ -490,7 +512,7 @@ function BarWidget({
           interval={0}
           angle={-20}
           textAnchor="end"
-          height={40}
+          height={xAxisHeightRotated(axisLabels)}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
@@ -498,7 +520,7 @@ function BarWidget({
           {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
-          width={56}
+          width={yAxisWidth(axisLabels)}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
@@ -548,7 +570,7 @@ function StackedBarWidget({
           interval={0}
           angle={-20}
           textAnchor="end"
-          height={40}
+          height={xAxisHeightRotated(axisLabels)}
           label={axisLabelProp(axisLabels, "x", onAxisDragStart)}
         />
         <YAxis
@@ -556,7 +578,7 @@ function StackedBarWidget({
           {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
-          width={56}
+          width={yAxisWidth(axisLabels)}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
@@ -612,7 +634,7 @@ function MultiLineWidget({
           {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
-          width={56}
+          width={yAxisWidth(axisLabels)}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
@@ -661,7 +683,7 @@ function MultiAreaWidget({
           {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
-          width={56}
+          width={yAxisWidth(axisLabels)}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
@@ -822,7 +844,7 @@ function ScatterWidget({
           {...yAxisProps(axisLabels)}
           tickLine={false}
           axisLine={false}
-          width={56}
+          width={yAxisWidth(axisLabels)}
           tickFormatter={(v: number) => formatValue(v, axisLabels?.valueFormat)}
           label={axisLabelProp(axisLabels, "y", onAxisDragStart)}
         />
