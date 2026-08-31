@@ -26,6 +26,7 @@ import {
   LINE_STYLE_DASH,
   FillPatternDefs,
   resolveFill,
+  TITLE_DATE_TOKEN,
   type WidgetWithData,
 } from "./Widget";
 import type { CalculatedMetricOption } from "./DashboardTabs";
@@ -1137,6 +1138,20 @@ export function WidgetEditorPanel({
         <label className="flex flex-col gap-1 pr-8">
           <span className={labelClasses}>Title (optional — auto-generated if left blank)</span>
           <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className={selectClasses} />
+          {!isText && (
+            <p className="text-[11px] text-zinc-500">
+              Type <code className="rounded bg-black/[.06] px-1 py-0.5 dark:bg-white/[.1]">{TITLE_DATE_TOKEN}</code>{" "}
+              anywhere in the title to keep that spot live-updated with the date range — resolves to{" "}
+              <strong>“{dateRangeSummary}”</strong> right now.{" "}
+              <button
+                type="button"
+                onClick={() => setTitle((prev) => (prev.trim() ? `${prev.trim()} ${TITLE_DATE_TOKEN}` : TITLE_DATE_TOKEN))}
+                className="text-zinc-700 underline hover:text-zinc-950 dark:text-zinc-300 dark:hover:text-zinc-50"
+              >
+                Insert
+              </button>
+            </p>
+          )}
         </label>
 
         <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] items-start gap-4">

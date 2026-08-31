@@ -28,6 +28,12 @@ import { METRIC_LABELS } from "@/lib/dashboardConfig";
 import { describeDateRangeSelection } from "@/lib/finance";
 import type { BarShapeProps, PieSectorShapeProps, PieLabelRenderProps } from "recharts";
 
+// Dropped into a custom widget title (WidgetEditorPanel's Title field) to
+// have that one spot re-resolve live to the widget's own date range text —
+// see the `customTitle` computation below. Exported so the editor can offer
+// an "insert" button for it rather than requiring it to be typed exactly.
+export const TITLE_DATE_TOKEN = "{date}";
+
 export type WidgetWithData = {
   id: string;
   type: string;
@@ -1223,7 +1229,18 @@ export function Widget({
   const autoTitle = chartConfig
     ? `${chartConfig.series?.length ? "Multiple series" : chartConfig.customMetricId ? "Custom metric" : METRIC_LABELS[chartConfig.metric]} — ${describeDateRangeSelection(chartConfig.dateRange)}`
     : null;
-  const title = widget.title ?? autoTitle ?? "Widget";
+  // A custom title still gets the same live date text substituted in
+  // wherever TITLE_DATE_TOKEN appears — "Food Budget — {date}" reads as
+  // "Food Budget — July" today and "Food Budget — August" once August
+  // starts, same fluid-tracking behavior as the fully auto-generated title
+  // above, just with the user's own wording kept around the moving part
+  // instead of losing it entirely by having to choose between a frozen
+  // custom title or the generic metric-based auto one.
+  const customTitle =
+    widget.title && chartConfig
+      ? widget.title.replaceAll(TITLE_DATE_TOKEN, describeDateRangeSelection(chartConfig.dateRange))
+      : widget.title;
+  const title = customTitle ?? autoTitle ?? "Widget";
   const dateButtons = chartConfig?.dateButtons ?? [];
 
   const [activeButton, setActiveButton] = useState<DateButtonConfig | null>(null);
