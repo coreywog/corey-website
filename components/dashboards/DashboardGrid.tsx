@@ -8,7 +8,7 @@ import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import { Widget, type WidgetWithData } from "./Widget";
 import { WidgetEditorPanel, type ExistingWidget, type WidgetDraft } from "./WidgetEditorPanel";
-import type { CalculatedMetricOption } from "./DashboardTabs";
+import type { CalculatedMetricOption } from "./types";
 
 // Debounced, not fired on every pixel of movement — react-grid-layout's
 // onLayoutChange fires continuously during a drag/resize (that's what
@@ -83,8 +83,9 @@ export function DashboardGrid({
   categoryOptions: CategoryOption[];
   merchantOptions: string[];
   calculatedMetrics: CalculatedMetricOption[];
-  // Dashboard-level, not per-tab (see DashboardTabs, which owns the toggle
-  // and the header row it lives in) — passed straight through here to gate
+  // Dashboard-level, not per-tab (the sidebar's DashboardNavItem owns the
+  // publish toggle — see components/nav/) — read fresh off the dashboard
+  // page's own server-side fetch and passed straight through here to gate
   // drag/resize and the add/edit/delete controls.
   published: boolean;
 }) {

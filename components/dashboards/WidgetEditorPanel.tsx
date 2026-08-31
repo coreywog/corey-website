@@ -29,7 +29,7 @@ import {
   TITLE_DATE_TOKEN,
   type WidgetWithData,
 } from "./Widget";
-import type { CalculatedMetricOption } from "./DashboardTabs";
+import type { CalculatedMetricOption } from "./types";
 import type {
   WidgetConfig,
   ChartWidgetConfig,

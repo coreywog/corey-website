@@ -3,7 +3,16 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
 
-const patchSchema = z.object({ name: z.string().trim().min(1).max(100) });
+const patchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    // Reordering — see DashboardTabs.tsx's moveTab, which swaps a tab with
+    // its neighbor by PATCHing both with each other's `order` value. No
+    // dedicated bulk-reorder endpoint: a single adjacent swap only ever
+    // touches two tabs, so two of these cover it.
+    order: z.number().int().optional(),
+  })
+  .refine((v) => v.name !== undefined || v.order !== undefined, { message: "Nothing to update" });
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ tabId: string }> }) {
   // Proxy already gates this route, but never trust that alone — re-verify.
@@ -20,11 +29,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   try {
-    const tab = await prisma.dashboardTab.update({ where: { id: tabId }, data: { name: parsed.data.name } });
+    const tab = await prisma.dashboardTab.update({
+      where: { id: tabId },
+      data: {
+        ...(parsed.data.name !== undefined ? { name: parsed.data.name } : {}),
+        ...(parsed.data.order !== undefined ? { order: parsed.data.order } : {}),
+      },
+    });
     return NextResponse.json({ tab });
   } catch (err) {
-    console.error("Failed to rename tab", err);
-    return NextResponse.json({ error: "Failed to rename tab" }, { status: 500 });
+    console.error("Failed to update tab", err);
+    return NextResponse.json({ error: "Failed to update tab" }, { status: 500 });
   }
 }
 

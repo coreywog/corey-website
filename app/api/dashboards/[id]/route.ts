@@ -20,7 +20,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   const dashboard = await prisma.dashboard.findUnique({
     where: { id },
     include: {
-      tabs: { orderBy: { order: "asc" }, include: { widgets: { orderBy: { createdAt: "asc" } } } },
+      tabs: { orderBy: [{ order: "asc" }, { createdAt: "asc" }], include: { widgets: { orderBy: { createdAt: "asc" } } } },
     },
   });
   if (!dashboard) {

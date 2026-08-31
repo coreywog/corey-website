@@ -1,12 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
-import { DashboardNavLink } from "./DashboardNavLink";
+import { DashboardNavItem } from "./DashboardNavItem";
 
 /**
  * The sidebar's own list of dashboards — every real Dashboard a user has
- * built. (The original hand-built "Finances" Overview/Daily pages that used
- * to be pinned first here were removed; that data now lives in the
- * dashboard builder and Data Management's Finance tab instead.)
+ * built. Each one pops its tabs (and the publish/delete controls that used
+ * to live at the top of the dashboard page) out underneath it while that
+ * dashboard is the one currently open — see DashboardNavItem, the client
+ * component that actually renders each row and knows whether it's active.
  * Deliberately its own small async Server Component rather than fetched in
  * the layout itself: the layout wraps every page on the site, so awaiting
  * this query there would put a DB round-trip in the critical path of every
@@ -21,15 +22,23 @@ export async function DashboardNavList() {
 
   const dashboards = await prisma.dashboard.findMany({
     orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-    select: { id: true, name: true },
+    select: {
+      id: true,
+      name: true,
+      published: true,
+      // Secondary tiebreaker matters here in a way it didn't before tab
+      // reordering existed: tabs created before the `order` column existed
+      // can all share its default value, and without a tiebreaker their
+      // relative order would be left to whatever Postgres feels like
+      // returning for equal keys — not guaranteed stable across queries.
+      tabs: { orderBy: [{ order: "asc" }, { createdAt: "asc" }], select: { id: true, name: true, order: true } },
+    },
   });
 
   return (
     <>
       {dashboards.map((d) => (
-        <DashboardNavLink key={d.id} href={`/dashboards/${d.id}`}>
-          {d.name}
-        </DashboardNavLink>
+        <DashboardNavItem key={d.id} dashboard={d} />
       ))}
     </>
   );

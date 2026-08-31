@@ -5,10 +5,21 @@ import { decryptText } from "@/lib/crypto";
 import { normalizeMerchantName } from "@/lib/finance";
 import { WidgetConfigSchema, type WidgetType } from "@/lib/dashboardConfig";
 import { computeWidgetData } from "@/lib/dashboardQuery";
-import { DashboardTabs } from "@/components/dashboards/DashboardTabs";
+import { DashboardGrid } from "@/components/dashboards/DashboardGrid";
+import { DashboardNameHeading } from "@/components/dashboards/DashboardNameHeading";
 import type { WidgetWithData } from "@/components/dashboards/Widget";
 
-export default async function DashboardPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function DashboardPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  // Which tab is showing — set by the sidebar's tab links (DashboardNavItem),
+  // not local component state, since the sidebar and this page are separate
+  // parts of the tree with no other easy way to stay in sync. Omitted means
+  // "whichever tab sorts first."
+  searchParams: Promise<{ tab?: string }>;
+}) {
   // Proxy already gates this route, but never trust that alone — re-verify.
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
@@ -16,29 +27,43 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
   }
 
   const { id } = await params;
+  const { tab: requestedTabId } = await searchParams;
+
   const dashboard = await prisma.dashboard.findUnique({
     where: { id },
-    include: {
-      tabs: { orderBy: { order: "asc" }, include: { widgets: { orderBy: { createdAt: "asc" } } } },
+    select: {
+      id: true,
+      name: true,
+      published: true,
+      // Just enough to pick the active tab and know it's a real one — the
+      // sidebar (DashboardNavList) is what actually renders the tab list,
+      // and it runs its own query for that.
+      tabs: { orderBy: [{ order: "asc" }, { createdAt: "asc" }], select: { id: true } },
     },
   });
   if (!dashboard) {
     notFound();
   }
 
+  const activeTabId = dashboard.tabs.find((t) => t.id === requestedTabId)?.id ?? dashboard.tabs[0]?.id;
+  const activeTabRow = activeTabId
+    ? await prisma.dashboardTab.findUnique({
+        where: { id: activeTabId },
+        include: { widgets: { orderBy: { createdAt: "asc" } } },
+      })
+    : null;
+
   // Every widget's config is validated defensively here (not just at write
   // time) — a bad/stale config renders as one broken tile, not a crashed
   // page (see lib/dashboardConfig.ts). The validated config is also handed
-  // to the client so the edit panel can open pre-filled. Computed for every
-  // tab up front (not just the active one) — dashboards are small enough
-  // that this stays cheap, and it means switching tabs is instant with no
-  // extra round trip.
-  const tabs = await Promise.all(
-    dashboard.tabs.map(async (tab) => ({
-      id: tab.id,
-      name: tab.name,
-      widgets: await Promise.all(
-        tab.widgets.map(async (row): Promise<WidgetWithData> => {
+  // to the client so the edit panel can open pre-filled. Only the active
+  // tab's widgets are computed — switching tabs is a real navigation now
+  // (see searchParams above), not a client-side swap between
+  // already-loaded data, so there's nothing to gain by computing every
+  // tab up front the way this used to.
+  const widgets: WidgetWithData[] = activeTabRow
+    ? await Promise.all(
+        activeTabRow.widgets.map(async (row): Promise<WidgetWithData> => {
           const base = { id: row.id, type: row.type, title: row.title, x: row.x, y: row.y, w: row.w, h: row.h };
           const parsed = WidgetConfigSchema.safeParse(row.config);
           if (!parsed.success) {
@@ -51,9 +76,8 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
             return { ...base, config: parsed.data, result: { error: "Failed to load this widget." } };
           }
         }),
-      ),
-    })),
-  );
+      )
+    : [];
 
   // Options for the widget editor's filter/category pickers — same source
   // as the Review tab's category picker (Data Management's Finance tab,
@@ -84,16 +108,22 @@ export default async function DashboardPage({ params }: { params: Promise<{ id: 
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-16">
-      <DashboardTabs
-        dashboardId={dashboard.id}
-        dashboardName={dashboard.name}
-        tabs={tabs}
-        accounts={accounts}
-        categoryOptions={categoryOptions}
-        merchantOptions={merchantOptions}
-        calculatedMetrics={calculatedMetrics}
-        initialPublished={dashboard.published}
-      />
+      <DashboardNameHeading dashboardId={dashboard.id} name={dashboard.name} />
+      {activeTabId && (
+        <DashboardGrid
+          // Remounts on tab switch (a real navigation now) so drag/resize
+          // state from the previous tab's grid can't bleed into this one.
+          key={activeTabId}
+          dashboardId={dashboard.id}
+          tabId={activeTabId}
+          widgets={widgets}
+          accounts={accounts}
+          categoryOptions={categoryOptions}
+          merchantOptions={merchantOptions}
+          calculatedMetrics={calculatedMetrics}
+          published={dashboard.published}
+        />
+      )}
     </div>
   );
 }
