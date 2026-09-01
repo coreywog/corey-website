@@ -250,10 +250,18 @@ model Transaction {
   // when a later sync reports it as modified or removed.
   plaidTransactionId String? @unique
 
+  // Set once this transaction has been swept into a detected recurring
+  // charge (see lib/recurringDetection.ts, RecurringGroup below) — null
+  // means either detection hasn't run since this row was imported, or it
+  // ran and found no regular pattern for this merchant.
+  recurringGroupId String?
+  recurringGroup   RecurringGroup? @relation(fields: [recurringGroupId], references: [id], onDelete: SetNull)
+
   account FinanceAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@unique([accountId, dedupeHash])
   @@index([accountId, date])
+  @@index([recurringGroupId])
 }
 
 model BalanceEntry {
@@ -325,4 +333,40 @@ model CalculatedMetric {
   transactionCategory String? // "income" | "spending" | "transfer" | "other" | null (= any)
   order               Int      @default(0)
   createdAt           DateTime @default(now())
+}
+
+// A detected recurring charge (e.g. "Netflix, about every 30 days") — one
+// row per merchant+cadence pattern lib/recurringDetection.ts finds, with
+// every matching Transaction linked back to it. Persisted (rather than
+// recomputed fresh on every page load) so a human's confirm/dismiss
+// decision sticks — re-running detection never touches a group once it's
+// left "pending" (see lib/recurringDetection.ts), so dismissing a false
+// positive keeps it dismissed even if the same pattern is still there next
+// time transactions import.
+model RecurringGroup {
+  id String @id @default(cuid())
+
+  // Normalized merchant label (see lib/finance.ts's normalizeMerchantName)
+  // — AES-256-GCM ciphertext (base64, see lib/crypto.ts), never plaintext.
+  // A specific merchant name is treated as more sensitive than a broad
+  // category throughout this schema (see MerchantCategoryRule/Transaction's
+  // own comments above) even though it's redundant with what's already
+  // encrypted on each linked transaction — this is what the review list
+  // shows before any transaction is even fetched.
+  merchantLabel String
+
+  interval   String // "weekly" | "biweekly" | "monthly" | "yearly" — see lib/recurringDetection.ts
+  confidence Float // 0..1, computed at detection time from cadence + amount regularity
+
+  // "pending" until a human reviews it in the Data Hub's Recurring panel;
+  // "confirmed" or "dismissed" after. See the model comment above for why
+  // detection leaves a non-pending group alone.
+  status String @default("pending") // "pending" | "confirmed" | "dismissed"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions Transaction[]
+
+  @@index([status])
 }

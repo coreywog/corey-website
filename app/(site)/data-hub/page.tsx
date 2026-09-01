@@ -11,6 +11,8 @@ import { DatasetTableEditor } from "@/components/dataHub/DatasetTableEditor";
 import { RawTransactionTable } from "@/components/finance/RawTransactionTable";
 import { UploadDatasetForm } from "@/components/dataHub/UploadDatasetForm";
 import { DeleteDatasetButton } from "@/components/dataHub/DeleteDatasetButton";
+import { RecurringPanel } from "@/components/dataHub/RecurringPanel";
+import { listRecurringGroups } from "@/lib/recurringDetection";
 import type { ReviewTxn } from "@/components/finance/TransactionReviewCard";
 import { DatasetColumnsSchema } from "@/lib/datasetCsv";
 import { DatasetComputedColumnsSchema, compileFormula } from "@/lib/datasetFormula";
@@ -123,7 +125,7 @@ export default async function DataHubPage({
   if (activeTab === "finance") {
     // Same query shape as the old Transaction Detail page — parallelized,
     // since these don't depend on each other.
-    const [treeRows, globalNeedsReview, rawRows, rawPreviewRows] = await Promise.all([
+    const [treeRows, globalNeedsReview, rawRows, rawPreviewRows, pendingRecurringGroups] = await Promise.all([
       prisma.transaction.findMany({
         where: { category: "spending", merchantCategory: { not: null, notIn: ["other"] }, merchantSubcategory: { not: null } },
         select: { merchantCategory: true, merchantSubcategory: true, reviewed: true },
@@ -153,6 +155,7 @@ export default async function DataHubPage({
         orderBy: { date: "desc" },
         take: RAW_TXN_PREVIEW_CAP,
       }),
+      listRecurringGroups(["pending"]),
     ]);
 
     const tree = buildReviewCategoryTree(
@@ -181,6 +184,7 @@ export default async function DataHubPage({
         <ReviewSidebar tree={tree} globalNeedsReview={globalNeedsReview} />
         <div className="flex min-w-0 flex-1 flex-col gap-8">
           <RawTransactionTable transactions={rawPreviewRows.map(decryptTxn)} />
+          <RecurringPanel initialGroups={pendingRecurringGroups} />
           {mainContent}
         </div>
       </div>

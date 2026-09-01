@@ -934,56 +934,86 @@ function TableWidget({
   );
 }
 
-// GitHub-style day grid — one cell per day the "day"-grouped series covers,
-// shaded by value magnitude relative to the max day in range. Weeks run
-// top-to-bottom in columns (Sun..Sat rows), oldest week on the left, same
-// convention as a contributions graph.
+const CALENDAR_WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
+const calendarMonthFormatter = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
+
+/** Real month-grid calendar — one block per calendar month the "day"-grouped
+ * series covers, each with a Sun..Sat weekday header and day-of-month
+ * numbers, weeks running top-to-bottom and days left-to-right within a week
+ * (standard wall-calendar reading order). Replaces an earlier GitHub-
+ * contributions-style layout that ran weeks as columns with no date numbers
+ * at all — unreadable as an actual calendar. Cells are shaded by value
+ * magnitude relative to the max day in range, same idea as before, but the
+ * shading is now a separate layer behind the day number instead of fading
+ * the whole cell, so the date stays legible regardless of intensity.
+ * Multiple months lay out left-to-right and wrap like a wall calendar. */
 function CalendarWidget({ points, color }: { points: AggregatedPoint[]; color?: string }) {
   if (points.length === 0) return <EmptyState />;
   const byDate = new Map(points.map((p) => [p.key, p.value]));
   const dates = points.map((p) => new Date(`${p.key}T00:00:00.000Z`));
   const start = new Date(Math.min(...dates.map((d) => d.getTime())));
   const end = new Date(Math.max(...dates.map((d) => d.getTime())));
-  // Back up to the preceding Sunday so the grid's first column is a full week.
-  const gridStart = new Date(start);
-  gridStart.setUTCDate(gridStart.getUTCDate() - gridStart.getUTCDay());
-
   const maxAbs = Math.max(1, ...points.map((p) => Math.abs(p.value)));
   const accent = color ?? "#6366f1";
-  const weeks: { date: Date; iso: string; value: number }[][] = [];
-  const cursor = new Date(gridStart);
-  let week: { date: Date; iso: string; value: number }[] = [];
-  while (cursor <= end) {
-    const iso = cursor.toISOString().slice(0, 10);
-    week.push({ date: new Date(cursor), iso, value: byDate.get(iso) ?? 0 });
-    if (week.length === 7) {
-      weeks.push(week);
-      week = [];
-    }
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
+
+  // Every calendar month the range touches, oldest first.
+  const months: { year: number; month: number }[] = [];
+  const monthCursor = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1));
+  const lastMonth = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
+  while (monthCursor <= lastMonth) {
+    months.push({ year: monthCursor.getUTCFullYear(), month: monthCursor.getUTCMonth() });
+    monthCursor.setUTCMonth(monthCursor.getUTCMonth() + 1);
   }
-  if (week.length > 0) weeks.push(week);
 
   return (
-    <div className="flex h-full items-center overflow-x-auto">
-      <div className="flex gap-[3px]">
-        {weeks.map((w, wi) => (
-          <div key={wi} className="flex flex-col gap-[3px]">
-            {w.map((d) => {
-              const inRange = d.date >= start && d.date <= end;
-              const opacity = inRange ? 0.12 + 0.88 * (Math.abs(d.value) / maxAbs) : 0;
-              return (
-                <div
-                  key={d.iso}
-                  title={inRange ? `${d.iso}: ${currencyFormatter.format(d.value)}` : undefined}
-                  className="h-3 w-3 rounded-sm"
-                  style={{ backgroundColor: inRange ? accent : "transparent", opacity: inRange ? opacity : 0 }}
-                />
-              );
-            })}
+    <div className="flex h-full flex-wrap gap-4 overflow-auto">
+      {months.map(({ year, month }) => {
+        const firstOfMonth = new Date(Date.UTC(year, month, 1));
+        const daysInMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+        // Leading blanks so day 1 lands under its actual weekday column.
+        type Cell = { day: number; iso: string; value: number; inRange: boolean } | null;
+        const cells: Cell[] = Array.from({ length: firstOfMonth.getUTCDay() }, () => null);
+        for (let d = 1; d <= daysInMonth; d++) {
+          const date = new Date(Date.UTC(year, month, d));
+          const iso = date.toISOString().slice(0, 10);
+          cells.push({ day: d, iso, value: byDate.get(iso) ?? 0, inRange: date >= start && date <= end });
+        }
+        while (cells.length % 7 !== 0) cells.push(null);
+
+        return (
+          <div key={`${year}-${month}`} className="shrink-0">
+            <div className="mb-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{calendarMonthFormatter.format(firstOfMonth)}</div>
+            <div className="grid grid-cols-7 gap-[3px]">
+              {CALENDAR_WEEKDAY_LABELS.map((label, i) => (
+                <div key={i} className="flex h-4 w-6 items-center justify-center text-[9px] text-zinc-400 dark:text-zinc-500">
+                  {label}
+                </div>
+              ))}
+              {cells.map((c, i) => {
+                if (!c) return <div key={i} className="h-6 w-6" />;
+                const opacity = c.inRange ? 0.15 + 0.85 * (Math.abs(c.value) / maxAbs) : 0;
+                return (
+                  <div
+                    key={c.iso}
+                    title={c.inRange ? `${c.iso}: ${currencyFormatter.format(c.value)}` : c.iso}
+                    className="relative flex h-6 w-6 items-center justify-center rounded-sm"
+                  >
+                    {c.inRange && <div className="absolute inset-0 rounded-sm" style={{ backgroundColor: accent, opacity }} />}
+                    <span
+                      className={
+                        "relative text-[9px] font-medium tabular-nums " +
+                        (c.inRange ? "text-zinc-900 dark:text-zinc-50" : "text-zinc-300 dark:text-zinc-700")
+                      }
+                    >
+                      {c.day}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        ))}
-      </div>
+        );
+      })}
     </div>
   );
 }
@@ -1120,6 +1150,174 @@ function DateRangeButtons({
   );
 }
 
+function CalendarButtonIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="12" height="11" rx="1.5" />
+      <path d="M2 6.5h12M5 1.5v3M11 1.5v3" />
+    </svg>
+  );
+}
+
+/**
+ * Calendar icon + popover next to the quick-range buttons (DateRangeButtons
+ * above) for picking a precise start/end range the presets don't cover.
+ * Fetches the widget's actual data bounds on open (see
+ * /api/dashboards/widgets/date-bounds) and passes them straight through as
+ * native <input type="date"> min/max — the browser's own date picker
+ * already renders a real calendar and grays out anything outside that
+ * range, so there's no need to reimplement one. Applying reuses the exact
+ * same per-viewer override path a preset button uses (onChange with a
+ * "custom" DateButtonConfig) — see DateRangeButtons and Widget's
+ * activeButton state.
+ */
+function DateRangeCalendarPicker({
+  chartConfig,
+  activeKey,
+  onChange,
+}: {
+  chartConfig: ChartWidgetConfig;
+  activeKey: string | null;
+  onChange: (btn: DateButtonConfig | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  // undefined = still loading, null = no data at all matches this widget's filters.
+  const [bounds, setBounds] = useState<{ min: string; max: string } | null | undefined>(undefined);
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const popoverRef = useRef<HTMLDivElement>(null);
+  const isActive = activeKey?.startsWith("custom:Custom:") ?? false;
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetch("/api/dashboards/widgets/date-bounds", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ config: chartConfig }),
+    })
+      .then((res) => res.json())
+      .then((body) => {
+        if (!cancelled) setBounds(body.bounds ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setBounds(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chartConfig is a fresh object every render (derived from widget.config); only `open` should re-trigger this.
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, [open]);
+
+  function apply() {
+    if (!start || !end) return;
+    onChange({ kind: "custom", label: "Custom", start, end });
+    setOpen(false);
+  }
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => {
+          // Reset to the loading state on every open (not inside the fetch
+          // effect below, which only runs the fetch itself) — a stale
+          // bounds/no-data message from a previous open would otherwise
+          // flash before the fresh fetch resolves.
+          const next = !open;
+          if (next) setBounds(undefined);
+          setOpen(next);
+        }}
+        title={isActive ? "Click to go back to the widget's own date range" : "Pick a precise date range"}
+        className={
+          "flex items-center justify-center rounded-full p-1 transition-colors " +
+          (isActive
+            ? "bg-zinc-900 text-white dark:bg-zinc-50 dark:text-zinc-900 creamsicle:bg-orange-600 creamsicle:text-white"
+            : "text-zinc-500 hover:bg-black/[.06] dark:text-zinc-400 dark:hover:bg-white/[.1] creamsicle:text-orange-700 creamsicle:hover:bg-orange-100")
+        }
+      >
+        <CalendarButtonIcon />
+      </button>
+      {open && (
+        <div
+          ref={popoverRef}
+          className="absolute top-full left-0 z-20 mt-1 w-56 rounded-lg border border-black/[.08] bg-[var(--background)] p-3 text-xs shadow-lg dark:border-white/[.15] creamsicle:border-orange-200"
+        >
+          {bounds === undefined ? (
+            <p className="text-zinc-500">Checking available dates…</p>
+          ) : bounds === null ? (
+            <p className="text-zinc-500">No data available to pick a range from.</p>
+          ) : (
+            <>
+              <p className="mb-2 text-[10px] text-zinc-500">
+                Data available {bounds.min} – {bounds.max}
+              </p>
+              <label className="mb-1.5 flex flex-col gap-0.5">
+                <span className="text-[10px] font-medium text-zinc-500">Start</span>
+                <input
+                  type="date"
+                  value={start}
+                  min={bounds.min}
+                  max={end || bounds.max}
+                  onChange={(e) => setStart(e.target.value)}
+                  className="rounded-md border border-black/[.1] bg-white px-1.5 py-1 text-xs outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300"
+                />
+              </label>
+              <label className="mb-2 flex flex-col gap-0.5">
+                <span className="text-[10px] font-medium text-zinc-500">End</span>
+                <input
+                  type="date"
+                  value={end}
+                  min={start || bounds.min}
+                  max={bounds.max}
+                  onChange={(e) => setEnd(e.target.value)}
+                  className="rounded-md border border-black/[.1] bg-white px-1.5 py-1 text-xs outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300"
+                />
+              </label>
+              <div className="flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStart("");
+                    setEnd("");
+                    onChange(null);
+                    setOpen(false);
+                  }}
+                  className="text-[11px] text-zinc-500 underline hover:text-zinc-700 dark:hover:text-zinc-300"
+                >
+                  Clear
+                </button>
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={() => setOpen(false)} className="text-[11px] text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={apply}
+                    disabled={!start || !end}
+                    className="rounded-md bg-zinc-900 px-2 py-1 text-[11px] font-medium text-white disabled:opacity-40 dark:bg-zinc-50 dark:text-zinc-900 creamsicle:bg-orange-600"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * A toggle-pill row for a multi-series widget (config.showSeriesToggles) —
  * one pill per line/area/bar, colored to match, that hides/shows just that
@@ -1246,6 +1444,17 @@ export function Widget({
   const [activeButton, setActiveButton] = useState<DateButtonConfig | null>(null);
   const [overrideResult, setOverrideResult] = useState<WidgetResult | { error: string } | null>(null);
 
+  // Click-to-drill-down from a category bar into its subcategories — only
+  // for a bar widget grouped by merchantCategory, and only on the real
+  // dashboard (onPointClick being set means Widget is rendering inside the
+  // editor's own live preview instead, where a bar click already means
+  // "select this for bulk color/pattern editing" — see onPointClick's own
+  // doc comment). One level deep only: clicking a subcategory bar while
+  // already drilled in does nothing, there's nowhere further to go.
+  const canDrilldown = !onPointClick && widget.type === "bar" && chartConfig?.groupBy === "merchantCategory";
+  const [drilldown, setDrilldown] = useState<{ key: string; label: string } | null>(null);
+  const [drilldownResult, setDrilldownResult] = useState<WidgetResult | { error: string } | null>(null);
+
   // Which series (by key) a viewer has clicked off — client-side only, like
   // activeButton above: never touches the saved config, resets on reload.
   // Keyed by StackedSeries.key rather than index so it survives a re-fetch
@@ -1342,7 +1551,52 @@ export function Widget({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- chartConfig is a fresh object every render (derived from widget.config); only activeButton and the widget identity should re-trigger this.
   }, [activeButton, widget.type, widget.id]);
 
-  const result = activeButton !== null && overrideResult ? overrideResult : widget.result;
+  useEffect(() => {
+    if (!drilldown || !chartConfig) return;
+    let cancelled = false;
+    // Whatever date range is currently in effect (a dateButtons override if
+    // one's active, otherwise the widget's own saved range) carries through
+    // to the drilldown — subcategories for "this month's Food spending"
+    // should stay scoped to this month, not silently reset to all time.
+    const dateRange = activeButton ? dateButtonRange(activeButton) : chartConfig.dateRange;
+    const drillConfig: ChartWidgetConfig = {
+      ...chartConfig,
+      groupBy: "merchantSubcategory",
+      dateRange,
+      filters: { ...chartConfig.filters, merchantCategories: [drilldown.key] },
+    };
+    fetch("/api/dashboards/widgets/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: widget.type, config: drillConfig }),
+    })
+      .then((res) => res.json())
+      .then((body) => {
+        if (!cancelled) setDrilldownResult(body.result ?? { error: "Failed to load subcategories." });
+      })
+      .catch(() => {
+        if (!cancelled) setDrilldownResult({ error: "Network error." });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chartConfig is a fresh object every render; only drilldown/activeButton/the widget identity should re-trigger this.
+  }, [drilldown, activeButton, widget.type, widget.id]);
+
+  const result =
+    drilldown && drilldownResult
+      ? drilldownResult
+      : activeButton !== null && overrideResult
+        ? overrideResult
+        : widget.result;
+
+  const handleBarClick = canDrilldown
+    ? (key: string) => {
+        if (drilldown) return; // already one level deep — nowhere further to go
+        const point = !("error" in result) && result.kind === "series" ? result.points.find((p) => p.key === key) : undefined;
+        setDrilldown({ key, label: point?.label ?? key });
+      }
+    : undefined;
   // Series toggles read off the *live* series list (result.series), not the
   // saved config's series entries — same key, but this is what's actually
   // on the chart right now, colors and all, including under a dateButtons
@@ -1368,6 +1622,19 @@ export function Widget({
         <span className="widget-drag-handle shrink truncate cursor-move text-sm font-medium text-zinc-500 select-none dark:text-zinc-500 creamsicle:text-orange-700">
           {title}
         </span>
+        {drilldown && (
+          <>
+            <span aria-hidden className="h-4 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15] creamsicle:bg-orange-300" />
+            <button
+              type="button"
+              onClick={() => setDrilldown(null)}
+              title="Back to categories"
+              className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-zinc-500 hover:bg-black/[.06] dark:text-zinc-400 dark:hover:bg-white/[.1] creamsicle:text-orange-700 creamsicle:hover:bg-orange-100"
+            >
+              ← {drilldown.label}
+            </button>
+          </>
+        )}
         {dateButtons.length > 0 && (
           <>
             <span aria-hidden className="h-4 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15] creamsicle:bg-orange-300" />
@@ -1376,6 +1643,13 @@ export function Widget({
               activeKey={activeButton ? dateButtonKey(activeButton) : null}
               onChange={setActiveButton}
             />
+            {chartConfig && (
+              <DateRangeCalendarPicker
+                chartConfig={chartConfig}
+                activeKey={activeButton ? dateButtonKey(activeButton) : null}
+                onChange={setActiveButton}
+              />
+            )}
           </>
         )}
         {toggleableSeries.length > 1 && (
@@ -1390,7 +1664,7 @@ export function Widget({
             renders — a fresh key remounts the boundary, giving a changed
             setting a real retry instead of staying stuck on a stale crash
             from a previous config. */}
-        <ChartErrorBoundary key={`${widget.id}:${activeButton ? dateButtonKey(activeButton) : ""}:${JSON.stringify(chartConfig)}`}>
+        <ChartErrorBoundary key={`${widget.id}:${activeButton ? dateButtonKey(activeButton) : ""}:${drilldown?.key ?? ""}:${JSON.stringify(chartConfig)}`}>
         {"error" in result ? (
           <div className="flex h-full items-center justify-center text-center text-sm text-red-600 dark:text-red-400">
             {result.error}
@@ -1456,7 +1730,7 @@ export function Widget({
             axisLabels={effectiveAxisLabels}
             fillPattern={chartConfig?.fillPattern}
             fillPatternOverrides={chartConfig?.fillPatternOverrides}
-            onPointClick={onPointClick}
+            onPointClick={onPointClick ?? handleBarClick}
             selectedKeys={selectedKeys}
             onAxisDragStart={axisDragHandler}
             showDataLabels={chartConfig?.showDataLabels}
