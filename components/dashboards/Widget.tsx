@@ -1444,6 +1444,17 @@ export function Widget({
   const [activeButton, setActiveButton] = useState<DateButtonConfig | null>(null);
   const [overrideResult, setOverrideResult] = useState<WidgetResult | { error: string } | null>(null);
 
+  // Click-to-drill-down from a category bar into its subcategories — only
+  // for a bar widget grouped by merchantCategory, and only on the real
+  // dashboard (onPointClick being set means Widget is rendering inside the
+  // editor's own live preview instead, where a bar click already means
+  // "select this for bulk color/pattern editing" — see onPointClick's own
+  // doc comment). One level deep only: clicking a subcategory bar while
+  // already drilled in does nothing, there's nowhere further to go.
+  const canDrilldown = !onPointClick && widget.type === "bar" && chartConfig?.groupBy === "merchantCategory";
+  const [drilldown, setDrilldown] = useState<{ key: string; label: string } | null>(null);
+  const [drilldownResult, setDrilldownResult] = useState<WidgetResult | { error: string } | null>(null);
+
   // Which series (by key) a viewer has clicked off — client-side only, like
   // activeButton above: never touches the saved config, resets on reload.
   // Keyed by StackedSeries.key rather than index so it survives a re-fetch
@@ -1540,7 +1551,52 @@ export function Widget({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- chartConfig is a fresh object every render (derived from widget.config); only activeButton and the widget identity should re-trigger this.
   }, [activeButton, widget.type, widget.id]);
 
-  const result = activeButton !== null && overrideResult ? overrideResult : widget.result;
+  useEffect(() => {
+    if (!drilldown || !chartConfig) return;
+    let cancelled = false;
+    // Whatever date range is currently in effect (a dateButtons override if
+    // one's active, otherwise the widget's own saved range) carries through
+    // to the drilldown — subcategories for "this month's Food spending"
+    // should stay scoped to this month, not silently reset to all time.
+    const dateRange = activeButton ? dateButtonRange(activeButton) : chartConfig.dateRange;
+    const drillConfig: ChartWidgetConfig = {
+      ...chartConfig,
+      groupBy: "merchantSubcategory",
+      dateRange,
+      filters: { ...chartConfig.filters, merchantCategories: [drilldown.key] },
+    };
+    fetch("/api/dashboards/widgets/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: widget.type, config: drillConfig }),
+    })
+      .then((res) => res.json())
+      .then((body) => {
+        if (!cancelled) setDrilldownResult(body.result ?? { error: "Failed to load subcategories." });
+      })
+      .catch(() => {
+        if (!cancelled) setDrilldownResult({ error: "Network error." });
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chartConfig is a fresh object every render; only drilldown/activeButton/the widget identity should re-trigger this.
+  }, [drilldown, activeButton, widget.type, widget.id]);
+
+  const result =
+    drilldown && drilldownResult
+      ? drilldownResult
+      : activeButton !== null && overrideResult
+        ? overrideResult
+        : widget.result;
+
+  const handleBarClick = canDrilldown
+    ? (key: string) => {
+        if (drilldown) return; // already one level deep — nowhere further to go
+        const point = !("error" in result) && result.kind === "series" ? result.points.find((p) => p.key === key) : undefined;
+        setDrilldown({ key, label: point?.label ?? key });
+      }
+    : undefined;
   // Series toggles read off the *live* series list (result.series), not the
   // saved config's series entries — same key, but this is what's actually
   // on the chart right now, colors and all, including under a dateButtons
@@ -1566,6 +1622,19 @@ export function Widget({
         <span className="widget-drag-handle shrink truncate cursor-move text-sm font-medium text-zinc-500 select-none dark:text-zinc-500 creamsicle:text-orange-700">
           {title}
         </span>
+        {drilldown && (
+          <>
+            <span aria-hidden className="h-4 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15] creamsicle:bg-orange-300" />
+            <button
+              type="button"
+              onClick={() => setDrilldown(null)}
+              title="Back to categories"
+              className="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium text-zinc-500 hover:bg-black/[.06] dark:text-zinc-400 dark:hover:bg-white/[.1] creamsicle:text-orange-700 creamsicle:hover:bg-orange-100"
+            >
+              ← {drilldown.label}
+            </button>
+          </>
+        )}
         {dateButtons.length > 0 && (
           <>
             <span aria-hidden className="h-4 w-px shrink-0 bg-black/[.12] dark:bg-white/[.15] creamsicle:bg-orange-300" />
@@ -1595,7 +1664,7 @@ export function Widget({
             renders — a fresh key remounts the boundary, giving a changed
             setting a real retry instead of staying stuck on a stale crash
             from a previous config. */}
-        <ChartErrorBoundary key={`${widget.id}:${activeButton ? dateButtonKey(activeButton) : ""}:${JSON.stringify(chartConfig)}`}>
+        <ChartErrorBoundary key={`${widget.id}:${activeButton ? dateButtonKey(activeButton) : ""}:${drilldown?.key ?? ""}:${JSON.stringify(chartConfig)}`}>
         {"error" in result ? (
           <div className="flex h-full items-center justify-center text-center text-sm text-red-600 dark:text-red-400">
             {result.error}
@@ -1661,7 +1730,7 @@ export function Widget({
             axisLabels={effectiveAxisLabels}
             fillPattern={chartConfig?.fillPattern}
             fillPatternOverrides={chartConfig?.fillPatternOverrides}
-            onPointClick={onPointClick}
+            onPointClick={onPointClick ?? handleBarClick}
             selectedKeys={selectedKeys}
             onAxisDragStart={axisDragHandler}
             showDataLabels={chartConfig?.showDataLabels}
