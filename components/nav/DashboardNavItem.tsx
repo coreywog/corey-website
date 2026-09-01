@@ -24,6 +24,19 @@ function TrashIcon() {
   );
 }
 
+// Distinct from togglePublished's own "✎"/"✓" text glyphs below — a real
+// icon so the rename trigger doesn't read as the same control once both
+// sit in the same row (see the top-level nav row, which used to keep these
+// apart: rename lived on a second, bolded heading line inside the panel;
+// see 2026-08-31's "collapse the duplicate dashboard name" fix).
+function PencilIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11 2.5l2.5 2.5-8 8H3v-2.5l8-8z" />
+    </svg>
+  );
+}
+
 /**
  * One dashboard's row in the sidebar (see DashboardNavList, its Server
  * Component parent) — the link itself, plus (only while that dashboard is
@@ -76,6 +89,10 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
   const [movingTabId, setMovingTabId] = useState<string | null>(null);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
   const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+  // Which half of dragOverTabId's row the pointer is over — drives both the
+  // insertion-line placement and where the drop actually lands, so what the
+  // user sees is exactly what happens (see reorderTabs).
+  const [dragOverPosition, setDragOverPosition] = useState<"before" | "after">("after");
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteNameInput, setDeleteNameInput] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -213,23 +230,29 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
     }
   }
 
-  /** Drops `draggedId` into `targetId`'s spot, shifting everything between
-   * its old and new position over by one — not just a swap, since a drag
-   * can move a tab several places in one gesture, not just to an adjacent
-   * neighbor. Reassigns every tab's `order` to its *new array position*,
-   * not just the two endpoints — tabs created before `order` existed can
-   * all share the same default value, so anything short of "recompute the
-   * whole sequence" risks two tabs landing on the same number. Native HTML5
-   * drag-and-drop rather than a library: a handful of tabs in one list
-   * doesn't need more than dragstart/dragover/drop. */
-  async function reorderTabs(draggedId: string, targetId: string) {
+  /** Drops `draggedId` immediately before or after `targetId`, per
+   * `position` — decided by which half of the target row the pointer was
+   * over when it dropped (see the insertion-line rendering below), not by
+   * which direction the drag came from. That makes the drop land exactly
+   * where the line was shown, instead of the old behavior where the same
+   * target row meant "insert before" when dragging forward and "insert
+   * after" when dragging backward, with no visual to tell you which.
+   * Reassigns every tab's `order` to its *new array position*, not just the
+   * two endpoints — tabs created before `order` existed can all share the
+   * same default value, so anything short of "recompute the whole sequence"
+   * risks two tabs landing on the same number. Native HTML5 drag-and-drop
+   * rather than a library: a handful of tabs in one list doesn't need more
+   * than dragstart/dragover/drop. */
+  async function reorderTabs(draggedId: string, targetId: string, position: "before" | "after") {
     if (draggedId === targetId) return;
-    const fromIndex = tabs.findIndex((t) => t.id === draggedId);
-    const toIndex = tabs.findIndex((t) => t.id === targetId);
-    if (fromIndex === -1 || toIndex === -1) return;
-    const reordered = [...tabs];
-    const [moved] = reordered.splice(fromIndex, 1);
-    reordered.splice(toIndex, 0, moved);
+    const dragged = tabs.find((t) => t.id === draggedId);
+    if (!dragged) return;
+    const withoutDragged = tabs.filter((t) => t.id !== draggedId);
+    const targetIndex = withoutDragged.findIndex((t) => t.id === targetId);
+    if (targetIndex === -1) return;
+    const insertAt = position === "before" ? targetIndex : targetIndex + 1;
+    const reordered = [...withoutDragged];
+    reordered.splice(insertAt, 0, dragged);
 
     setMovingTabId(draggedId);
     setError(null);
@@ -278,60 +301,6 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
 
   const panel = (
     <div className="mt-1 mb-2 ml-2 flex flex-col gap-2 border-l border-black/[.08] py-1 pl-3 dark:border-white/[.1] creamsicle:border-orange-200">
-      <div className="flex items-center justify-between gap-1">
-        {editingName ? (
-          <input
-            type="text"
-            autoFocus
-            value={nameDraft}
-            disabled={renamingName}
-            onChange={(e) => setNameDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
-              if (e.key === "Escape") {
-                setNameDraft(name);
-                setEditingName(false);
-              }
-            }}
-            onBlur={handleRenameDashboard}
-            className={inputClasses + " text-sm font-semibold"}
-          />
-        ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setNameDraft(name);
-              setEditingName(true);
-            }}
-            title="Rename dashboard"
-            className="group/name flex min-w-0 flex-1 items-center gap-1 text-left"
-          >
-            <h2 className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">{name}</h2>
-            <span className="shrink-0 text-xs text-zinc-400 opacity-0 transition-opacity group-hover/name:opacity-100">✎</span>
-          </button>
-        )}
-        <div className="flex shrink-0 items-center gap-0.5">
-          <button
-            type="button"
-            onClick={togglePublished}
-            disabled={togglingPublish}
-            title={published ? "Switch to editing" : "Publish"}
-            aria-label={published ? "Switch to editing" : "Publish"}
-            className={iconButtonClasses}
-          >
-            {published ? "✎" : "✓"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setDeleteModalOpen(true)}
-            title="Delete dashboard"
-            aria-label="Delete dashboard"
-            className={iconButtonClasses + " hover:text-red-600 dark:hover:text-red-400"}
-          >
-            <TrashIcon />
-          </button>
-        </div>
-      </div>
       <span
         className={
           "self-start rounded-full px-2 py-0.5 text-[10px] font-medium " +
@@ -378,12 +347,14 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
               onDragOver={(e) => {
                 if (!draggedTabId || draggedTabId === tab.id) return;
                 e.preventDefault(); // required for onDrop to fire at all
+                const rect = e.currentTarget.getBoundingClientRect();
                 setDragOverTabId(tab.id);
+                setDragOverPosition(e.clientY - rect.top < rect.height / 2 ? "before" : "after");
               }}
               onDragLeave={() => setDragOverTabId((id) => (id === tab.id ? null : id))}
               onDrop={(e) => {
                 e.preventDefault();
-                if (draggedTabId) reorderTabs(draggedTabId, tab.id);
+                if (draggedTabId) reorderTabs(draggedTabId, tab.id, dragOverPosition);
                 setDraggedTabId(null);
                 setDragOverTabId(null);
               }}
@@ -392,16 +363,26 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
                 setDragOverTabId(null);
               }}
               className={
-                "group flex cursor-grab items-center gap-0.5 rounded-md py-1.5 pr-1 pl-2 text-sm font-medium transition-colors active:cursor-grabbing " +
+                "group relative flex cursor-grab items-center gap-0.5 rounded-md py-1.5 pr-1 pl-2 text-sm font-medium transition-colors active:cursor-grabbing " +
                 (tab.id === activeTabId
                   ? "bg-black/[.05] text-zinc-950 dark:bg-white/[.08] dark:text-zinc-50 creamsicle:bg-orange-100 creamsicle:text-orange-950"
                   : "text-zinc-600 hover:bg-black/[.03] hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[.05] dark:hover:text-zinc-50 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50") +
-                (draggedTabId === tab.id ? " opacity-40" : "") +
-                (dragOverTabId === tab.id && draggedTabId !== tab.id
-                  ? " outline outline-2 outline-indigo-400 outline-offset-[-2px]"
-                  : "")
+                (draggedTabId === tab.id ? " opacity-40" : "")
               }
             >
+              {/* Insertion line — shows exactly where the tab will land
+                  (above/below this row) instead of highlighting the whole
+                  row, which used to read as "swap with this tab" rather
+                  than "insert here". */}
+              {dragOverTabId === tab.id && draggedTabId !== tab.id && (
+                <span
+                  aria-hidden="true"
+                  className={
+                    "pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-indigo-500 dark:bg-indigo-400 " +
+                    (dragOverPosition === "before" ? "-top-px" : "-bottom-px")
+                  }
+                />
+              )}
               {/* draggable=false: an <a> is natively draggable on its own
                   in most browsers, which would fight the row's own drag
                   handlers above (and start an actual link-drag instead). */}
@@ -474,27 +455,93 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
 
   return (
     <div className="flex flex-col">
-      <Link
-        href={href}
-        onClick={(e) => {
-          // Already here — nowhere to navigate to, so this click just
-          // means "toggle the panel," not "go to this page."
-          if (active) {
-            e.preventDefault();
-            setCollapsed((c) => !c);
-          }
-        }}
-        title={active ? (collapsed ? "Show tabs" : "Hide tabs") : undefined}
+      {/* Dashboard name, and (only while this dashboard is the active one)
+          its rename/publish/delete controls — all one row now. These used
+          to be split across two lines (this plain nav link, plus a second
+          bolded heading with the same name inside the expanded panel below)
+          which just duplicated the name for no reason; the buttons that
+          used to live on that second line are folded in here instead. */}
+      <div
         className={
-          navLinkClasses +
-          " " +
-          (active
-            ? "bg-black/[.05] text-zinc-950 dark:bg-white/[.08] dark:text-zinc-50 creamsicle:bg-orange-100 creamsicle:text-orange-950"
-            : "text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-50 creamsicle:text-orange-800 creamsicle:hover:text-orange-950")
+          "flex items-center gap-0.5 rounded-md " +
+          (active ? "bg-black/[.05] dark:bg-white/[.08] creamsicle:bg-orange-100" : "")
         }
       >
-        {name}
-      </Link>
+        {editingName ? (
+          <input
+            type="text"
+            autoFocus
+            value={nameDraft}
+            disabled={renamingName}
+            onChange={(e) => setNameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+              if (e.key === "Escape") {
+                setNameDraft(name);
+                setEditingName(false);
+              }
+            }}
+            onBlur={handleRenameDashboard}
+            className={inputClasses + " my-0.5 ml-1 text-sm font-medium"}
+          />
+        ) : (
+          <Link
+            href={href}
+            onClick={(e) => {
+              // Already here — nowhere to navigate to, so this click just
+              // means "toggle the panel," not "go to this page."
+              if (active) {
+                e.preventDefault();
+                setCollapsed((c) => !c);
+              }
+            }}
+            title={active ? (collapsed ? "Show tabs" : "Hide tabs") : undefined}
+            className={
+              "min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-sm font-medium transition-colors " +
+              (active
+                ? "text-zinc-950 dark:text-zinc-50 creamsicle:text-orange-950"
+                : "text-zinc-600 hover:text-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-50 creamsicle:text-orange-800 creamsicle:hover:text-orange-950")
+            }
+          >
+            {name}
+          </Link>
+        )}
+        {active && !editingName && (
+          <div className="flex shrink-0 items-center gap-0.5 pr-1">
+            <button
+              type="button"
+              onClick={() => {
+                setNameDraft(name);
+                setEditingName(true);
+              }}
+              title="Rename dashboard"
+              aria-label="Rename dashboard"
+              className={iconButtonClasses}
+            >
+              <PencilIcon />
+            </button>
+            <button
+              type="button"
+              onClick={togglePublished}
+              disabled={togglingPublish}
+              title={published ? "Switch to editing" : "Publish"}
+              aria-label={published ? "Switch to editing" : "Publish"}
+              className={iconButtonClasses}
+            >
+              {published ? "✎" : "✓"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteModalOpen(true)}
+              title="Delete dashboard"
+              aria-label="Delete dashboard"
+              className={iconButtonClasses + " hover:text-red-600 dark:hover:text-red-400"}
+            >
+              <TrashIcon />
+            </button>
+          </div>
+        )}
+      </div>
 
       {expanded && panel}
 
