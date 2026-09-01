@@ -286,6 +286,39 @@ function filterByAmount(
  * cumulative-lifetime series/widget, same tradeoff computeMultiSeries
  * already makes per series.
  */
+/**
+ * The actual earliest/latest transaction date matching a widget's filters
+ * (accounts/categories/merchants/amount — everything about `config` except
+ * its own `dateRange`, which this deliberately ignores in favor of
+ * "allTime"), so the custom-range calendar picker (Widget.tsx's
+ * DateRangeCalendarPicker) can gray out dates with nothing to show instead
+ * of accepting any date and silently rendering an empty chart. Reuses the
+ * same fetchRows/filterByMerchant/filterByAmount pipeline every other query
+ * here goes through — rather than a DB-level MIN/MAX — since merchant and
+ * amount filters only resolve after decryption (see buildWhere's own
+ * comments). Returns null when nothing matches at all.
+ */
+export async function computeDateBounds(config: ChartWidgetConfig): Promise<{ min: string; max: string } | null> {
+  const { start: allTimeStart, end: allTimeEnd } = resolveDateRange({ mode: "allTime" });
+  const where = buildWhere(config, allTimeStart, allTimeEnd);
+  const needsDescription = !!config.filters?.merchants?.length;
+  let rows = await fetchRows(where, needsDescription);
+  rows = filterByMerchant(rows, config.filters?.merchants);
+  // customMetric is intentionally null here — bounds are just "is there any
+  // data worth looking at that day," not a metric-accurate total, so a
+  // saved CalculatedMetric's own amount semantics aren't worth resolving
+  // just for this.
+  rows = filterByAmount(rows, config.metric, config.filters?.amountMin, config.filters?.amountMax, null);
+  if (rows.length === 0) return null;
+  let min = rows[0].date;
+  let max = rows[0].date;
+  for (const r of rows) {
+    if (r.date < min) min = r.date;
+    if (r.date > max) max = r.date;
+  }
+  return { min: min.toISOString().slice(0, 10), max: max.toISOString().slice(0, 10) };
+}
+
 async function computeCumulativeOffset(config: ChartWidgetConfig, before: string, customMetric: CustomMetric | null): Promise<number> {
   // Earlier than any real transaction could be — stands in for "everything
   // up to `before`" without needing a separate unbounded query shape.
@@ -328,11 +361,6 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
 
   const resolved = await Promise.all(
     series.map(async (entry) => {
-      const customMetric: CustomMetric | null = entry.customMetricId
-        ? await prisma.calculatedMetric
-            .findUnique({ where: { id: entry.customMetricId } })
-            .then((m) => (m ? { aggregation: m.aggregation as Aggregation, transactionCategory: m.transactionCategory } : null))
-        : null;
       const seriesConfig: ChartWidgetConfig = {
         ...config,
         metric: entry.metric,
@@ -343,8 +371,23 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
         },
       };
       const where = buildWhere(seriesConfig, start, end);
+      // Same reasoning as computeWidgetData's own customMetric lookup —
+      // buildWhere above only needed entry.customMetricId's truthiness (a
+      // plain string, no query), not the resolved row, so this can run
+      // alongside fetchRows instead of blocking it. Each series already
+      // runs in parallel with every other series (the outer Promise.all
+      // this callback lives in) — this shaves a round-trip off whichever
+      // series turns out to be the slowest one.
+      const [customMetric, fetchedRows] = await Promise.all([
+        entry.customMetricId
+          ? prisma.calculatedMetric
+              .findUnique({ where: { id: entry.customMetricId } })
+              .then((m): CustomMetric | null => (m ? { aggregation: m.aggregation as Aggregation, transactionCategory: m.transactionCategory } : null))
+          : Promise.resolve<CustomMetric | null>(null),
+        fetchRows(where, needsDescription),
+      ]);
       const rows = filterByAmount(
-        filterByMerchant(await fetchRows(where, needsDescription), merchantFilter),
+        filterByMerchant(fetchedRows, merchantFilter),
         entry.metric,
         config.filters?.amountMin,
         config.filters?.amountMax,
@@ -463,30 +506,36 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
 
   const { start, end } = resolveDateRange(config.dateRange);
 
-  // A saved CalculatedMetric (see prisma/schema.prisma), if this widget
-  // uses one, takes over from the built-in `metric` everywhere below — one
-  // extra query, only when actually referenced. Falls back to the built-in
-  // metric (rather than erroring the whole widget) if it's ever been
-  // deleted since this widget was configured — same defensive-read
-  // philosophy as a bad WidgetConfig JSON blob. Loaded before buildWhere/
-  // filterByAmount since both need to know whether it's active: forcing
-  // category="spending" from a stale, ignored `metric` field, or measuring
-  // "amount" filters against the wrong metric's contribution, would
-  // silently wrong-filter a custom "income" or "any" metric otherwise.
-  const customMetric: CustomMetric | null = config.customMetricId
-    ? await prisma.calculatedMetric
-        .findUnique({ where: { id: config.customMetricId } })
-        .then((m) => (m ? { aggregation: m.aggregation as Aggregation, transactionCategory: m.transactionCategory } : null))
-    : null;
-
   const where = buildWhere(config, start, end);
   // Merchant names aren't a plain DB column (see filtersSchema's own
   // comment in lib/dashboardConfig.ts) — decrypting descriptions is the
   // only way to filter or group by one, so either need turns it on.
   const merchantFilter = config.filters?.merchants;
   const needsDescription = config.groupBy === "merchant" || Boolean(merchantFilter?.length);
+
+  // A saved CalculatedMetric (see prisma/schema.prisma), if this widget uses
+  // one, takes over from the built-in `metric` for filterByAmount below —
+  // one extra query, only when actually referenced, run in parallel with
+  // fetchRows rather than awaited first: buildWhere above only needs to
+  // know *whether* one is active (config.customMetricId, a plain string
+  // already in hand — no query needed for that), not its resolved
+  // aggregation/category, so there's nothing forcing this to go first. One
+  // fewer round-trip serialized into every widget load, which matters most
+  // here — this runs once per widget, and a tab switch computes every
+  // widget on the new tab at once. Falls back to the built-in metric
+  // (rather than erroring the whole widget) if the CalculatedMetric's ever
+  // been deleted since this widget was configured — same defensive-read
+  // philosophy as a bad WidgetConfig JSON blob.
+  const [customMetric, fetchedRows] = await Promise.all([
+    config.customMetricId
+      ? prisma.calculatedMetric
+          .findUnique({ where: { id: config.customMetricId } })
+          .then((m): CustomMetric | null => (m ? { aggregation: m.aggregation as Aggregation, transactionCategory: m.transactionCategory } : null))
+      : Promise.resolve<CustomMetric | null>(null),
+    fetchRows(where, needsDescription),
+  ]);
   const rows = filterByAmount(
-    filterByMerchant(await fetchRows(where, needsDescription), merchantFilter),
+    filterByMerchant(fetchedRows, merchantFilter),
     config.metric,
     config.filters?.amountMin,
     config.filters?.amountMax,
