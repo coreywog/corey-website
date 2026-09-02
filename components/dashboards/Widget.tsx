@@ -875,11 +875,27 @@ function StatWidget({ result, color }: { result: Extract<WidgetResult, { kind: "
       <div className="text-2xl font-semibold tabular-nums" style={color ? { color } : undefined}>
         {currencyFormatter.format(result.value)}
       </div>
-      {/* Only set when this stat came from a groupBy — "top/bottom result"
-          mode (see lib/dashboardQuery.ts's `type === "stat"` branch) — the
-          ranked group the value actually came from, e.g. "Housing" under a
-          top-spending-category number. */}
+      {/* Set either by a groupBy stat ("top/bottom result" mode — the
+          ranked group the value came from, e.g. "Housing" under a
+          top-spending-category number) or by a periodic max/min metric
+          (which specific day/week/month/year produced it, e.g. "March 15,
+          2026" under a highest-spending-day number) — see
+          lib/dashboardQuery.ts's `type === "stat"` branch and
+          findPeriodicExtreme respectively. */}
       {result.label && <div className="text-xs text-zinc-500 dark:text-zinc-400">{result.label}</div>}
+      {/* Only set for the periodic-max/min case above — what actually made
+          up that period, largest first, so "$342 on March 15" doesn't
+          leave you guessing why. */}
+      {result.transactions && result.transactions.length > 0 && (
+        <div className="mt-1 flex w-full max-w-[220px] flex-col gap-0.5">
+          {result.transactions.map((t, i) => (
+            <div key={i} className="flex items-center justify-between gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+              <span className="min-w-0 truncate">{t.merchant}</span>
+              <span className="shrink-0 tabular-nums">{currencyFormatter.format(t.amount)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {delta !== null && (
         <div
           className={

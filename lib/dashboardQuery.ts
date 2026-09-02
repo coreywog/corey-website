@@ -22,7 +22,12 @@ export type WidgetResult =
   // `label` is set only for a stat tile that also has a groupBy — the
   // ranked group the value came from (e.g. "Housing" for a top-category
   // stat) — see computeWidgetData's `type === "stat"` branch below.
-  | { kind: "stat"; value: number; previousValue?: number; label?: string }
+  // `transactions` is set only for a periodic custom metric whose
+  // periodAggregation is "max"/"min" — the actual line items behind the
+  // period `label` points at (e.g. what was bought on your highest-
+  // spending day), sorted largest first and capped to a handful. See
+  // findPeriodicExtreme below.
+  | { kind: "stat"; value: number; previousValue?: number; label?: string; transactions?: { merchant: string; amount: number }[] }
   | { kind: "scatter"; points: ScatterPoint[] }
   | { kind: "stacked"; points: StackedPoint[]; series: StackedSeries[] }
   // Manually-configured multiple series (config.series — the editor's Line
@@ -192,6 +197,29 @@ function periodKeyFor(date: Date, period: MetricPeriod): string {
  * compares only the two most recent periods (latest vs. previous), not a
  * trend line across all of them.
  */
+/** Buckets rows by period and reduces each bucket via the metric's own
+ * `aggregation`, keeping each bucket's raw rows alongside its number — the
+ * shared building block for both computeCustomMetricValue (which only
+ * needs the final combined number) and findPeriodicExtreme below (which
+ * needs to know exactly *which* period, and which transactions, produced
+ * it — "Highest spending day: $342 on March 15," not just "$342"). Ordered
+ * chronologically, oldest first, same as everywhere else a period sequence
+ * gets built in this file. */
+function bucketByPeriod(rows: DecryptedRow[], metric: CustomMetric & { period: MetricPeriod }): { key: string; value: number; rows: DecryptedRow[] }[] {
+  const buckets = new Map<string, DecryptedRow[]>();
+  for (const r of rows) {
+    if (customMetricRowValue(r, metric) === null) continue;
+    const key = periodKeyFor(r.date, metric.period);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(r);
+  }
+  return [...buckets.keys()].sort().map((key) => {
+    const bucketRows = buckets.get(key)!;
+    const values = bucketRows.map((r) => customMetricRowValue(r, metric)).filter((v): v is number => v !== null);
+    return { key, value: reduceValues(values, metric.aggregation, metric.percentile), rows: bucketRows };
+  });
+}
+
 function computeCustomMetricValue(rows: DecryptedRow[], metric: CustomMetric): number {
   if (!metric.period) {
     const values: number[] = [];
@@ -201,16 +229,8 @@ function computeCustomMetricValue(rows: DecryptedRow[], metric: CustomMetric): n
     }
     return reduceValues(values, metric.aggregation, metric.percentile);
   }
-  const buckets = new Map<string, number[]>();
-  for (const r of rows) {
-    const v = customMetricRowValue(r, metric);
-    if (v === null) continue;
-    const key = periodKeyFor(r.date, metric.period);
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key)!.push(v);
-  }
-  const orderedKeys = [...buckets.keys()].sort();
-  const periodValues = orderedKeys.map((k) => reduceValues(buckets.get(k)!, metric.aggregation, metric.percentile));
+  const buckets = bucketByPeriod(rows, metric as CustomMetric & { period: MetricPeriod });
+  const periodValues = buckets.map((b) => b.value);
   if (periodValues.length === 0) return 0;
   switch (metric.periodAggregation) {
     case "min":
@@ -226,6 +246,38 @@ function computeCustomMetricValue(rows: DecryptedRow[], metric: CustomMetric): n
     case "max":
     default:
       return Math.max(...periodValues);
+  }
+}
+
+/** The specific period a periodic max/min metric's value actually came
+ * from, plus the raw transactions in it — only meaningful for
+ * periodAggregation "max"/"min" (a single winning period to point to);
+ * "average"/"growth" combine every period, so there's no one period to
+ * highlight. Used by the stat-tile branch below to pair a number like
+ * "$342" with "March 15, 2026" and what was actually bought that day. */
+function findPeriodicExtreme(rows: DecryptedRow[], metric: CustomMetric): { key: string; value: number; rows: DecryptedRow[] } | null {
+  if (!metric.period || (metric.periodAggregation !== "max" && metric.periodAggregation !== "min")) return null;
+  const buckets = bucketByPeriod(rows, metric as CustomMetric & { period: MetricPeriod });
+  if (buckets.length === 0) return null;
+  return metric.periodAggregation === "min"
+    ? buckets.reduce((a, b) => (b.value < a.value ? b : a))
+    : buckets.reduce((a, b) => (b.value > a.value ? b : a));
+}
+
+/** "2026-03-15" -> "March 15, 2026", "2026-03-01" (a month bucket, always
+ * stored as the 1st) -> "March 2026", etc. — periodKeyFor's own sortable
+ * keys turned back into something worth reading in a chart. */
+function formatPeriodLabel(key: string, period: MetricPeriod): string {
+  const d = new Date(`${key}T00:00:00Z`);
+  switch (period) {
+    case "day":
+      return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+    case "week":
+      return `Week of ${d.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" })}`;
+    case "month":
+      return formatMonthLabel(key.slice(0, 7));
+    case "year":
+      return key.slice(0, 4);
   }
 }
 
@@ -694,7 +746,16 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   // comment in lib/dashboardConfig.ts) — decrypting descriptions is the
   // only way to filter or group by one, so either need turns it on.
   const merchantFilter = config.filters?.merchants;
-  const needsDescription = config.groupBy === "merchant" || Boolean(merchantFilter?.length);
+  // The last clause is for a stat tile's periodic-max/min transaction
+  // breakdown (findPeriodicExtreme, below) — whether *this* customMetricId
+  // actually turns out to be periodic isn't knowable without a query, and
+  // resolving it first would serialize a round-trip back in ahead of
+  // fetchRows (see the comment on that Promise.all below, which exists
+  // specifically to avoid that). Decrypting unconditionally for any
+  // custom-metric stat tile is the cheaper tradeoff: CPU-bound and scoped
+  // to this one widget's own row set, not an extra network round-trip on
+  // every tab switch.
+  const needsDescription = config.groupBy === "merchant" || Boolean(merchantFilter?.length) || (!config.groupBy && Boolean(config.customMetricId));
 
   // A saved CalculatedMetric (see prisma/schema.prisma), if this widget uses
   // one, takes over from the built-in `metric` for filterByAmount below —
@@ -839,8 +900,26 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   if (!config.groupBy) {
     const value = round2(reduceRows(rows, config.metric));
 
+    // For a periodic max/min metric ("highest-spending day," "lowest-
+    // spending month"), pair the number with *which* period it came from
+    // and what actually made it up — not just "$342," but "$342 on March
+    // 15, 2026: Whole Foods $120, Amazon $80, …". Every other combination
+    // (non-periodic, or period + average/growth) has no single period to
+    // point to, so this stays undefined and the stat renders exactly as
+    // before.
+    const extreme = customMetric ? findPeriodicExtreme(rows, customMetric) : null;
+    const detail = extreme
+      ? {
+          label: formatPeriodLabel(extreme.key, customMetric!.period!),
+          transactions: extreme.rows
+            .map((r) => ({ merchant: r.description ? normalizeMerchantName(r.description) : "Unknown", amount: round2(Math.abs(r.amount)) }))
+            .sort((a, b) => b.amount - a.amount)
+            .slice(0, 5),
+        }
+      : undefined;
+
     if (!config.compareToPrevious) {
-      return { kind: "stat", value };
+      return { kind: "stat", value, ...detail };
     }
 
     // Equal-length window immediately preceding the current one.
@@ -856,7 +935,7 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
       customMetric,
     );
     const previousValue = round2(reduceRows(prevRows, config.metric));
-    return { kind: "stat", value, previousValue };
+    return { kind: "stat", value, previousValue, ...detail };
   }
 
   const groupBy = config.groupBy;
