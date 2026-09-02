@@ -2,7 +2,7 @@ import { redirect, notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireAdminSession } from "@/lib/auth";
 import { WidgetConfigSchema, type WidgetType } from "@/lib/dashboardConfig";
-import { computeWidgetData } from "@/lib/dashboardQuery";
+import { computeWidgetData, getCalculatedMetricNames } from "@/lib/dashboardQuery";
 import { DashboardGrid } from "@/components/dashboards/DashboardGrid";
 import type { WidgetWithData } from "@/components/dashboards/Widget";
 
@@ -85,6 +85,22 @@ export default async function DashboardPage({
   // nothing to do with just looking at a tab. Moved to
   // /api/dashboards/[id]/editor-context, fetched by DashboardGrid on demand
   // the first time the editor actually opens.
+  //
+  // The one exception: a custom-metric widget's auto-generated title wants
+  // that metric's real *name* (not the generic "Custom metric" fallback),
+  // which needs to show up on first load, not only once the editor's been
+  // opened — so this pulls just the id -> name for whichever metrics this
+  // tab's widgets actually reference (single-metric and per-series both),
+  // a tiny query nowhere near the cost of the full editor-context bundle.
+  const referencedMetricIds = [
+    ...new Set(
+      widgets.flatMap((w) => [
+        w.config?.dataSource === "transactions" ? w.config.customMetricId : undefined,
+        ...(w.config?.dataSource === "transactions" ? (w.config.series?.map((s) => s.customMetricId) ?? []) : []),
+      ]),
+    ),
+  ].filter((id): id is string => Boolean(id));
+  const customMetricNames = await getCalculatedMetricNames(referencedMetricIds);
 
   return (
     // The dashboard's name/rename, tabs, publish toggle, and delete all
@@ -100,6 +116,7 @@ export default async function DashboardPage({
           dashboardId={dashboard.id}
           tabId={activeTabId}
           widgets={widgets}
+          customMetricNames={customMetricNames}
           published={dashboard.published}
         />
       )}

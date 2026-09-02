@@ -30,6 +30,7 @@ import {
   type WidgetWithData,
 } from "./Widget";
 import type { CalculatedMetricOption } from "./types";
+import { CalculatedMetricForm } from "./CalculatedMetricForm";
 import type {
   WidgetConfig,
   ChartWidgetConfig,
@@ -92,7 +93,6 @@ const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
   { value: "merchant", label: "Merchant" },
 ];
 
-const TRANSACTION_CATEGORY_OPTIONS = ["income", "spending", "transfer", "other"] as const;
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 const RECENT_COLORS_KEY = "dashboardWidgetRecentColors";
 
@@ -493,49 +493,20 @@ export function WidgetEditorPanel({
   // Local copy, not just the prop directly — saving a new one appends here
   // immediately so it's selectable right away, without waiting on a
   // router.refresh() to re-fetch the server-side list.
+  // Create/edit form is a shared component now (CalculatedMetricForm — also
+  // used by Settings' management list) rather than a form hand-built and
+  // duplicated in both places; this only needs to track whether it's open
+  // and hold the resulting list.
   const [calculatedMetrics, setCalculatedMetrics] = useState<CalculatedMetricOption[]>(initialCalculatedMetrics);
   const [creatingMetric, setCreatingMetric] = useState(false);
-  const [newMetricName, setNewMetricName] = useState("");
-  const [newMetricAggregation, setNewMetricAggregation] = useState<"sum" | "average" | "count" | "min" | "max">("sum");
-  const [newMetricCategory, setNewMetricCategory] = useState("");
-  const [savingMetric, setSavingMetric] = useState(false);
-  const [metricError, setMetricError] = useState<string | null>(null);
-
-  async function handleCreateMetric() {
-    const name = newMetricName.trim();
-    if (!name) return;
-    setSavingMetric(true);
-    setMetricError(null);
-    try {
-      const res = await fetch("/api/dashboards/metrics", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          aggregation: newMetricAggregation,
-          transactionCategory: newMetricCategory || null,
-        }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        setMetricError(body?.error ?? `Failed to save (${res.status}).`);
-        return;
-      }
-      const body = await res.json();
-      setCalculatedMetrics((prev) => [...prev, body.metric]);
-      setCustomMetricId(body.metric.id);
-      setCreatingMetric(false);
-      setNewMetricName("");
-      setNewMetricAggregation("sum");
-      setNewMetricCategory("");
-    } catch {
-      setMetricError("Network error — try again.");
-    } finally {
-      setSavingMetric(false);
-    }
-  }
 
   const [groupBy, setGroupBy] = useState<GroupBy | "">(chartConfig?.groupBy ?? "merchantCategory");
+  // No UI drove this before now — bar/pie/table always used the schema's
+  // own "totalDesc" default with nothing to change it. Only actually
+  // surfaced today for the new stat-tile "top/bottom result" toggle below;
+  // left general (not stat-only) in case a future bar/pie sort control
+  // wants to reuse the same state.
+  const [sort, setSort] = useState<"totalDesc" | "totalAsc" | "labelAsc">(chartConfig?.sort ?? "totalDesc");
   const [dateMode, setDateMode] = useState<DateRangeMode>(chartConfig?.dateRange.mode ?? "relative");
   const [relativeMonths, setRelativeMonths] = useState<1 | 3 | 6 | 12>(
     chartConfig?.dateRange.mode === "relative" ? chartConfig.dateRange.months : 6,
@@ -674,6 +645,13 @@ export function WidgetEditorPanel({
   // histogram plot/bin raw transactions, and calendar's grouping is always
   // "day" — forced below in the config useMemo, not offered as a choice.
   const needsGroupBy = !isText && !isScatter && !isHistogram && !isCalendar && type !== "stat";
+  // A stat tile's own groupBy is always optional (the no-groupBy case is
+  // still the plain single-number stat it always was) — but choosing one
+  // turns it into a "top category"/"bottom category" style tile, showing
+  // the #1 ranked result instead of a whole chart (see
+  // lib/dashboardQuery.ts's `type === "stat"` branch). Kept separate from
+  // needsGroupBy, which stays the *required* gate for every other type.
+  const showGroupByForStat = type === "stat";
   const isTimeSeries = groupBy === "day" || groupBy === "month";
   const showLimit = (needsGroupBy && groupBy !== "" && !isTimeSeries && (type === "bar" || type === "pie")) || isStackedBar;
   const showAxisLabels = type === "line" || type === "area" || type === "bar" || isScatter || isHistogram || isStackedBar;
@@ -870,9 +848,14 @@ export function WidgetEditorPanel({
       dataSource: "transactions",
       metric,
       ...(customMetricId ? { customMetricId } : {}),
-      ...(needsGroupBy ? { groupBy: groupBy as GroupBy } : isCalendar ? { groupBy: "day" as const } : {}),
+      ...(needsGroupBy || (showGroupByForStat && groupBy)
+        ? { groupBy: groupBy as GroupBy }
+        : isCalendar
+          ? { groupBy: "day" as const }
+          : {}),
       dateRange,
       ...(Object.keys(filters).length ? { filters } : {}),
+      ...(sort !== "totalDesc" ? { sort } : {}),
       ...((showLimit || isScatter) && limit ? { limit: Number(limit) } : {}),
       // Only persist when it differs from the schema default (12) — same
       // "don't save the default" convention as every other opt-in field.
@@ -911,7 +894,7 @@ export function WidgetEditorPanel({
       // non-default "turned off" case, same as every other on-by-default flag.
       ...(showGridLinesOption && !showGridLines ? { showGridLines: false } : {}),
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/needsGroupBy/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- showLimit/needsGroupBy/showGroupByForStat/isCalendar/showAxisLabels/showColor/showMultiColor are all derived from type/metric/groupBy, already listed.
   }, [
     isText,
     text,
@@ -921,6 +904,7 @@ export function WidgetEditorPanel({
     cumulative,
     cumulativeBasis,
     groupBy,
+    sort,
     dateMode,
     relativeMonths,
     relativeDaysAgo,
@@ -1904,74 +1888,28 @@ export function WidgetEditorPanel({
                 )}
 
                 {!multiSeries && creatingMetric && (
-                  <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
-                    <span className={labelClasses}>New calculated metric</span>
-                    <p className="text-[11px] text-zinc-500">
-                      Saved once, usable as the Metric on any widget from now on.
-                    </p>
-                    <input
-                      type="text"
-                      value={newMetricName}
-                      onChange={(e) => setNewMetricName(e.target.value)}
-                      placeholder="Name (e.g. Average grocery trip)"
-                      maxLength={60}
-                      className={selectClasses}
-                    />
-                    <div className="flex gap-1.5">
-                      <select
-                        value={newMetricAggregation}
-                        onChange={(e) => setNewMetricAggregation(e.target.value as typeof newMetricAggregation)}
-                        className={selectClasses}
-                      >
-                        <option value="sum">Sum</option>
-                        <option value="average">Average</option>
-                        <option value="count">Count</option>
-                        <option value="min">Minimum</option>
-                        <option value="max">Maximum</option>
-                      </select>
-                      <select
-                        value={newMetricCategory}
-                        onChange={(e) => setNewMetricCategory(e.target.value)}
-                        className={selectClasses}
-                      >
-                        <option value="">Any transaction type</option>
-                        {TRANSACTION_CATEGORY_OPTIONS.map((c) => (
-                          <option key={c} value={c}>
-                            {c} only
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    {metricError && <p className="text-sm text-red-600 dark:text-red-400">{metricError}</p>}
-                    <div className="flex justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setCreatingMetric(false);
-                          setMetricError(null);
-                        }}
-                        className="rounded-md border border-black/[.1] px-3 py-1.5 text-sm text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleCreateMetric}
-                        disabled={!newMetricName.trim() || savingMetric}
-                        className="rounded-md bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-50 dark:text-zinc-900"
-                      >
-                        {savingMetric ? "Saving…" : "Save metric"}
-                      </button>
-                    </div>
-                  </div>
+                  <CalculatedMetricForm
+                    categoryOptions={categoryOptions}
+                    onSaved={(metric) => {
+                      setCalculatedMetrics((prev) => [...prev, metric]);
+                      setCustomMetricId(metric.id);
+                      setCreatingMetric(false);
+                    }}
+                    onCancel={() => setCreatingMetric(false)}
+                  />
                 )}
 
-                {needsGroupBy && (
+                {(needsGroupBy || showGroupByForStat) && (
                   <label className="flex flex-col gap-1">
                     <span className={labelClasses}>Group by</span>
                     <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className={selectClasses}>
-                      <option value="" disabled>
-                        Select…
+                      {/* For a stat tile, blank is a real choice ("just the
+                          plain total"), not a placeholder — picking a group
+                          turns it into a "top result" tile instead (see
+                          lib/dashboardQuery.ts). Every other type still
+                          requires an actual pick. */}
+                      <option value="" disabled={!showGroupByForStat}>
+                        {showGroupByForStat ? "Just the total (no grouping)" : "Select…"}
                       </option>
                       {GROUP_BY_OPTIONS.map((o) => (
                         <option key={o.value} value={o.value}>
@@ -1979,6 +1917,14 @@ export function WidgetEditorPanel({
                         </option>
                       ))}
                     </select>
+                    {showGroupByForStat && groupBy && (
+                      <label className="flex items-center gap-2 pt-0.5">
+                        <input type="checkbox" checked={sort === "totalAsc"} onChange={(e) => setSort(e.target.checked ? "totalAsc" : "totalDesc")} />
+                        <span className="text-[11px] text-zinc-500">
+                          Show the lowest instead of the highest {GROUP_BY_OPTIONS.find((o) => o.value === groupBy)?.label.toLowerCase()}
+                        </span>
+                      </label>
+                    )}
                   </label>
                 )}
 
@@ -2082,6 +2028,7 @@ export function WidgetEditorPanel({
         <div className="h-96 shrink-0 overflow-hidden rounded-xl border border-black/[.08] dark:border-white/[.1]">
           <Widget
             widget={{ id: "__preview__", type, title: title.trim() || null, x: 0, y: 0, w: 0, h: 0, result: draftResult, config }}
+            customMetricNames={Object.fromEntries(calculatedMetrics.map((m) => [m.id, m.name]))}
             onPointClick={showMultiColor ? togglePointSelected : undefined}
             selectedKeys={showMultiColor ? selectedPointKeys : undefined}
             onAxisLabelOffsetChange={showAxisLabels ? handleAxisLabelOffsetChange : undefined}

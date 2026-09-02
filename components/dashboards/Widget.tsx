@@ -875,6 +875,11 @@ function StatWidget({ result, color }: { result: Extract<WidgetResult, { kind: "
       <div className="text-2xl font-semibold tabular-nums" style={color ? { color } : undefined}>
         {currencyFormatter.format(result.value)}
       </div>
+      {/* Only set when this stat came from a groupBy — "top/bottom result"
+          mode (see lib/dashboardQuery.ts's `type === "stat"` branch) — the
+          ranked group the value actually came from, e.g. "Housing" under a
+          top-spending-category number. */}
+      {result.label && <div className="text-xs text-zinc-500 dark:text-zinc-400">{result.label}</div>}
       {delta !== null && (
         <div
           className={
@@ -1400,11 +1405,20 @@ class ChartErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
  */
 export function Widget({
   widget,
+  customMetricNames,
   onPointClick,
   selectedKeys,
   onAxisLabelOffsetChange,
 }: {
   widget: WidgetWithData;
+  // id -> name for saved CalculatedMetrics — just enough for the
+  // auto-generated title (below) to show a custom-metric widget's real
+  // name instead of the generic "Custom metric" fallback. Omitted
+  // (defaults to {}) falls back to the generic label everywhere, not a
+  // crash — the dashboard page passes the real map (see
+  // components/dashboards/DashboardGrid.tsx); the widget editor's own live
+  // preview passes one built from its already-loaded calculatedMetrics.
+  customMetricNames?: Record<string, string>;
   // Editor-only: lets a viewer click a bar/slice/row directly in the chart
   // to select it for bulk color/pattern editing, instead of a separate list
   // of chip buttons. Undefined on the real dashboard (Widget is rendered
@@ -1425,7 +1439,13 @@ export function Widget({
   // correctly as time passes: "Spending — July" becomes "Spending — August"
   // on its own once August ends, with nothing to manually retype.
   const autoTitle = chartConfig
-    ? `${chartConfig.series?.length ? "Multiple series" : chartConfig.customMetricId ? "Custom metric" : METRIC_LABELS[chartConfig.metric]} — ${describeDateRangeSelection(chartConfig.dateRange)}`
+    ? `${
+        chartConfig.series?.length
+          ? "Multiple series"
+          : chartConfig.customMetricId
+            ? (customMetricNames?.[chartConfig.customMetricId] ?? "Custom metric")
+            : METRIC_LABELS[chartConfig.metric]
+      } — ${describeDateRangeSelection(chartConfig.dateRange)}`
     : null;
   // A custom title still gets the same live date text substituted in
   // wherever TITLE_DATE_TOKEN appears — "Food Budget — {date}" reads as

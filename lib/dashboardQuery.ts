@@ -19,7 +19,10 @@ export type StackedPoint = { x: string; label: string; [seriesKey: string]: numb
 export type StackedSeries = { key: string; label: string; color: string };
 export type WidgetResult =
   | { kind: "series"; points: AggregatedPoint[] }
-  | { kind: "stat"; value: number; previousValue?: number }
+  // `label` is set only for a stat tile that also has a groupBy — the
+  // ranked group the value came from (e.g. "Housing" for a top-category
+  // stat) — see computeWidgetData's `type === "stat"` branch below.
+  | { kind: "stat"; value: number; previousValue?: number; label?: string }
   | { kind: "scatter"; points: ScatterPoint[] }
   | { kind: "stacked"; points: StackedPoint[]; series: StackedSeries[] }
   // Manually-configured multiple series (config.series — the editor's Line
@@ -70,41 +73,159 @@ function metricContribution(row: { amount: number; category: string }, metric: M
   }
 }
 
-type Aggregation = "sum" | "average" | "count" | "min" | "max";
-type CustomMetric = { aggregation: Aggregation; transactionCategory: string | null };
+// Expanded this session from the original sum/average/count/min/max —
+// median/percentile/stddev/variance/range all need the *full* list of
+// matching values, not a running total, which is why the accumulator
+// pattern below (emptyAccumulator/accumulate/finalizeAccumulator, one
+// streaming {sum,count,min,max} struct) got replaced with array-collect-
+// then-reduce (reduceValues). Transaction volumes here are thousands, not
+// millions, so holding the array is cheap.
+type Aggregation = "sum" | "average" | "count" | "min" | "max" | "median" | "percentile" | "stddev" | "variance" | "range";
+type MetricPeriod = "day" | "week" | "month" | "year";
+type PeriodAggregation = "max" | "min" | "average" | "growth";
+type CustomMetric = {
+  aggregation: Aggregation;
+  // Only meaningful when aggregation === "percentile" (25/50/75/90/95/99).
+  percentile: number | null;
+  transactionCategory: string | null;
+  // Narrows to specific merchant categories — independent of
+  // transactionCategory (the transaction-level type vs. the richer,
+  // arbitrary merchant taxonomy), same as a widget's own filters. Empty =
+  // every category.
+  merchantCategories: string[];
+  // When set, this is a *periodic* metric — see computeCustomMetricValue.
+  period: MetricPeriod | null;
+  periodAggregation: PeriodAggregation | null;
+};
 
-/** A row's contribution under a saved CalculatedMetric — absolute value,
- * not signed: the category filter is what narrows to spending-only/
- * income-only/etc., so "average transaction size" doesn't get thrown off
- * by this app's negative-for-spending sign convention. */
-function customMetricRowValue(row: { amount: number; category: string }, metric: CustomMetric): number | null {
+/** A row's contribution under a saved CalculatedMetric, or null if this row
+ * falls outside the metric's own scope (transaction type and/or merchant
+ * categories) — absolute value, not signed: the category filter is what
+ * narrows to spending-only/income-only/etc., so "average transaction size"
+ * doesn't get thrown off by this app's negative-for-spending sign
+ * convention. */
+function customMetricRowValue(row: { amount: number; category: string; merchantCategory: string | null }, metric: CustomMetric): number | null {
   if (metric.transactionCategory && row.category !== metric.transactionCategory) return null;
+  if (metric.merchantCategories.length && !metric.merchantCategories.includes(row.merchantCategory ?? "other")) return null;
   return Math.abs(row.amount);
 }
 
-function emptyAccumulator() {
-  return { sum: 0, count: 0, min: Infinity, max: -Infinity };
+/** Percentile via linear interpolation between the two nearest ranks (the
+ * same method spreadsheets' PERCENTILE.INC use) — p=50 is the median. */
+function percentileOf(values: number[], p: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  if (sorted.length === 1) return sorted[0];
+  const rank = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(rank);
+  const hi = Math.ceil(rank);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (rank - lo);
 }
 
-function accumulate(acc: ReturnType<typeof emptyAccumulator>, value: number) {
-  acc.sum += value;
-  acc.count += 1;
-  if (value < acc.min) acc.min = value;
-  if (value > acc.max) acc.max = value;
+/** Population variance (divides by N, not N-1) — this describes the actual
+ * spread of the transactions that happened, not an estimate extrapolated
+ * from a sample of some larger population. */
+function varianceOf(values: number[]): number {
+  if (values.length === 0) return 0;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  return values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
 }
 
-function finalizeAccumulator(acc: ReturnType<typeof emptyAccumulator>, aggregation: Aggregation): number {
+/** Reduces a list of numbers — one per matching transaction, or (for a
+ * periodic metric) one per period bucket — down to a single number.
+ * Empty input is 0 across every case rather than letting NaN/Infinity leak
+ * into a chart. */
+function reduceValues(values: number[], aggregation: Aggregation, percentile: number | null): number {
+  if (values.length === 0) return 0;
   switch (aggregation) {
     case "sum":
-      return acc.sum;
+      return values.reduce((a, b) => a + b, 0);
     case "count":
-      return acc.count;
+      return values.length;
     case "average":
-      return acc.count > 0 ? acc.sum / acc.count : 0;
+      return values.reduce((a, b) => a + b, 0) / values.length;
     case "min":
-      return acc.count > 0 ? acc.min : 0;
+      return Math.min(...values);
     case "max":
-      return acc.count > 0 ? acc.max : 0;
+      return Math.max(...values);
+    case "range":
+      return Math.max(...values) - Math.min(...values);
+    case "median":
+      return percentileOf(values, 50);
+    case "percentile":
+      return percentileOf(values, percentile ?? 50);
+    case "stddev":
+      return Math.sqrt(varianceOf(values));
+    case "variance":
+      return varianceOf(values);
+  }
+}
+
+/** The start of the day/week/month/year a date falls in, as a sortable
+ * "YYYY-MM-DD" key — week starts Sunday. */
+function periodKeyFor(date: Date, period: MetricPeriod): string {
+  switch (period) {
+    case "day":
+      return date.toISOString().slice(0, 10);
+    case "week": {
+      const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+      d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+      return d.toISOString().slice(0, 10);
+    }
+    case "month":
+      return `${date.toISOString().slice(0, 7)}-01`;
+    case "year":
+      return `${date.getUTCFullYear()}-01-01`;
+  }
+}
+
+/**
+ * A saved CalculatedMetric's value over a set of rows — every call site
+ * below (stat tiles, groupBy buckets, multi-series cells, cumulative
+ * offsets) funnels through this one function, so "what does this metric
+ * mean" is defined exactly once. Non-periodic: reduces every matching
+ * row's value straight to one number via `aggregation`. Periodic
+ * (metric.period set): buckets rows by period first, reduces *within* each
+ * bucket via the same `aggregation`, then reduces that list of per-period
+ * numbers via `periodAggregation` — e.g. period="month" + aggregation="sum"
+ * + periodAggregation="max" is "the highest-spending month"; "growth"
+ * compares only the two most recent periods (latest vs. previous), not a
+ * trend line across all of them.
+ */
+function computeCustomMetricValue(rows: DecryptedRow[], metric: CustomMetric): number {
+  if (!metric.period) {
+    const values: number[] = [];
+    for (const r of rows) {
+      const v = customMetricRowValue(r, metric);
+      if (v !== null) values.push(v);
+    }
+    return reduceValues(values, metric.aggregation, metric.percentile);
+  }
+  const buckets = new Map<string, number[]>();
+  for (const r of rows) {
+    const v = customMetricRowValue(r, metric);
+    if (v === null) continue;
+    const key = periodKeyFor(r.date, metric.period);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key)!.push(v);
+  }
+  const orderedKeys = [...buckets.keys()].sort();
+  const periodValues = orderedKeys.map((k) => reduceValues(buckets.get(k)!, metric.aggregation, metric.percentile));
+  if (periodValues.length === 0) return 0;
+  switch (metric.periodAggregation) {
+    case "min":
+      return Math.min(...periodValues);
+    case "average":
+      return periodValues.reduce((a, b) => a + b, 0) / periodValues.length;
+    case "growth": {
+      if (periodValues.length < 2) return 0;
+      const prev = periodValues[periodValues.length - 2];
+      const latest = periodValues[periodValues.length - 1];
+      return prev === 0 ? 0 : ((latest - prev) / Math.abs(prev)) * 100;
+    }
+    case "max":
+    default:
+      return Math.max(...periodValues);
   }
 }
 
@@ -298,6 +419,24 @@ function filterByAmount(
  * amount filters only resolve after decryption (see buildWhere's own
  * comments). Returns null when nothing matches at all.
  */
+/**
+ * Just the id -> name of a set of saved CalculatedMetrics — for the
+ * dashboard page to show a custom-metric widget's real name in its
+ * auto-generated title (Widget.tsx) instead of the generic "Custom metric"
+ * placeholder, without pulling in the full editor-context bundle (accounts,
+ * category options, the decrypted merchant list) that only the widget
+ * editor itself actually needs — see app/api/dashboards/[id]/editor-context.
+ * A widget whose customMetricId no longer resolves to a real row (deleted
+ * since) just isn't in the returned map; callers fall back to the generic
+ * label the same way computeWidgetData already falls back for the value
+ * itself.
+ */
+export async function getCalculatedMetricNames(ids: string[]): Promise<Record<string, string>> {
+  if (ids.length === 0) return {};
+  const rows = await prisma.calculatedMetric.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
+  return Object.fromEntries(rows.map((r) => [r.id, r.name]));
+}
+
 export async function computeDateBounds(config: ChartWidgetConfig): Promise<{ min: string; max: string } | null> {
   const { start: allTimeStart, end: allTimeEnd } = resolveDateRange({ mode: "allTime" });
   const where = buildWhere(config, allTimeStart, allTimeEnd);
@@ -317,6 +456,28 @@ export async function computeDateBounds(config: ChartWidgetConfig): Promise<{ mi
     if (r.date > max) max = r.date;
   }
   return { min: min.toISOString().slice(0, 10), max: max.toISOString().slice(0, 10) };
+}
+
+/** Shape a raw `calculatedMetric` DB row into the `CustomMetric` the query
+ * engine actually works with — the one place both resolution call sites
+ * (computeWidgetData, computeMultiSeries) build this from, so a new field
+ * only needs adding here once. */
+function toCustomMetric(m: {
+  aggregation: string;
+  percentile: number | null;
+  transactionCategory: string | null;
+  merchantCategories: string[];
+  period: string | null;
+  periodAggregation: string | null;
+}): CustomMetric {
+  return {
+    aggregation: m.aggregation as Aggregation,
+    percentile: m.percentile,
+    transactionCategory: m.transactionCategory,
+    merchantCategories: m.merchantCategories,
+    period: m.period as MetricPeriod | null,
+    periodAggregation: m.periodAggregation as PeriodAggregation | null,
+  };
 }
 
 async function computeCumulativeOffset(config: ChartWidgetConfig, before: string, customMetric: CustomMetric | null): Promise<number> {
@@ -382,7 +543,7 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
         entry.customMetricId
           ? prisma.calculatedMetric
               .findUnique({ where: { id: entry.customMetricId } })
-              .then((m): CustomMetric | null => (m ? { aggregation: m.aggregation as Aggregation, transactionCategory: m.transactionCategory } : null))
+              .then((m): CustomMetric | null => (m ? toCustomMetric(m) : null))
           : Promise.resolve<CustomMetric | null>(null),
         fetchRows(where, needsDescription),
       ]);
@@ -440,15 +601,37 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
   const groupBy = config.groupBy;
   const cellsByX = new Map<string, Map<string, number>>();
   const xLabels = new Map<string, string>();
+  // Per entry, not one big pass over every row: a built-in metric keeps the
+  // cheap running-sum it always used (metricContribution is sign-aware, and
+  // "sum" is the only sensible reduction for it); a custom metric groups
+  // its own rows by xKey first — retaining the full rows, not just a
+  // number, since computeCustomMetricValue needs each row's actual date to
+  // do its own period bucketing when the metric is periodic — then reduces
+  // each xKey's bucket in one shot via the metric's own aggregation.
   for (const { entry, rows, customMetric } of resolved) {
-    for (const r of rows) {
-      const contribution = customMetric ? customMetricRowValue(r, customMetric) : metricContribution(r, entry.metric);
-      if (contribution === null) continue;
-      const { key: xKey, label: xLabel } = keyAndLabelFor(r, groupBy);
-      xLabels.set(xKey, xLabel);
-      if (!cellsByX.has(xKey)) cellsByX.set(xKey, new Map());
-      const cell = cellsByX.get(xKey)!;
-      cell.set(entry.id, (cell.get(entry.id) ?? 0) + contribution);
+    if (customMetric) {
+      const rowsByX = new Map<string, DecryptedRow[]>();
+      for (const r of rows) {
+        if (customMetricRowValue(r, customMetric) === null) continue;
+        const { key: xKey, label: xLabel } = keyAndLabelFor(r, groupBy);
+        xLabels.set(xKey, xLabel);
+        if (!rowsByX.has(xKey)) rowsByX.set(xKey, []);
+        rowsByX.get(xKey)!.push(r);
+      }
+      for (const [xKey, xRows] of rowsByX) {
+        if (!cellsByX.has(xKey)) cellsByX.set(xKey, new Map());
+        cellsByX.get(xKey)!.set(entry.id, computeCustomMetricValue(xRows, customMetric));
+      }
+    } else {
+      for (const r of rows) {
+        const contribution = metricContribution(r, entry.metric);
+        if (contribution === null) continue;
+        const { key: xKey, label: xLabel } = keyAndLabelFor(r, groupBy);
+        xLabels.set(xKey, xLabel);
+        if (!cellsByX.has(xKey)) cellsByX.set(xKey, new Map());
+        const cell = cellsByX.get(xKey)!;
+        cell.set(entry.id, (cell.get(entry.id) ?? 0) + contribution);
+      }
     }
   }
   const isTimeSeries = groupBy === "day" || groupBy === "month";
@@ -530,7 +713,7 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     config.customMetricId
       ? prisma.calculatedMetric
           .findUnique({ where: { id: config.customMetricId } })
-          .then((m): CustomMetric | null => (m ? { aggregation: m.aggregation as Aggregation, transactionCategory: m.transactionCategory } : null))
+          .then((m): CustomMetric | null => (m ? toCustomMetric(m) : null))
       : Promise.resolve<CustomMetric | null>(null),
     fetchRows(where, needsDescription),
   ]);
@@ -643,23 +826,18 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     return { kind: "stacked", points, series };
   }
 
-  if (!config.groupBy) {
-    let value: number;
-    if (customMetric) {
-      const acc = emptyAccumulator();
-      for (const r of rows) {
-        const v = customMetricRowValue(r, customMetric);
-        if (v !== null) accumulate(acc, v);
-      }
-      value = finalizeAccumulator(acc, customMetric.aggregation);
-    } else {
-      value = 0;
-      for (const r of rows) {
-        const c = metricContribution(r, config.metric);
-        if (c !== null) value += c;
-      }
+  function reduceRows(rowSet: DecryptedRow[], metric: Metric): number {
+    if (customMetric) return computeCustomMetricValue(rowSet, customMetric);
+    let total = 0;
+    for (const r of rowSet) {
+      const c = metricContribution(r, metric);
+      if (c !== null) total += c;
     }
-    value = round2(value);
+    return total;
+  }
+
+  if (!config.groupBy) {
+    const value = round2(reduceRows(rows, config.metric));
 
     if (!config.compareToPrevious) {
       return { kind: "stat", value };
@@ -677,52 +855,58 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
       config.filters?.amountMax,
       customMetric,
     );
-    let previousValue: number;
-    if (customMetric) {
-      const acc = emptyAccumulator();
-      for (const r of prevRows) {
-        const v = customMetricRowValue(r, customMetric);
-        if (v !== null) accumulate(acc, v);
-      }
-      previousValue = finalizeAccumulator(acc, customMetric.aggregation);
-    } else {
-      previousValue = 0;
-      for (const r of prevRows) {
-        const c = metricContribution(r, config.metric);
-        if (c !== null) previousValue += c;
-      }
-    }
-    return { kind: "stat", value, previousValue: round2(previousValue) };
+    const previousValue = round2(reduceRows(prevRows, config.metric));
+    return { kind: "stat", value, previousValue };
   }
 
   const groupBy = config.groupBy;
   const totals = new Map<string, { label: string; value: number }>();
-  const customAccumulators = new Map<string, ReturnType<typeof emptyAccumulator>>();
-  for (const r of rows) {
-    const { key, label } = keyAndLabelFor(r, groupBy);
-    if (customMetric) {
-      const v = customMetricRowValue(r, customMetric);
-      if (v === null) continue;
-      if (!customAccumulators.has(key)) customAccumulators.set(key, emptyAccumulator());
-      accumulate(customAccumulators.get(key)!, v);
-      if (!totals.has(key)) totals.set(key, { label, value: 0 }); // value filled in below, once accumulation is complete
-      continue;
+  if (customMetric) {
+    // Group this metric's own matching rows by key first — retaining the
+    // full rows, not a running number, since computeCustomMetricValue needs
+    // each row's actual date to do its own period bucketing when the
+    // metric is periodic — then reduce each key's bucket in one shot via
+    // the metric's own aggregation. A key only appears at all if at least
+    // one of its rows actually matched the metric's scope (transaction
+    // type / merchant categories), same as the built-in-metric branch
+    // below only ever adds a key once it's seen a real contribution.
+    const rowsByKey = new Map<string, DecryptedRow[]>();
+    const labelByKey = new Map<string, string>();
+    for (const r of rows) {
+      if (customMetricRowValue(r, customMetric) === null) continue;
+      const { key, label } = keyAndLabelFor(r, groupBy);
+      labelByKey.set(key, label);
+      if (!rowsByKey.has(key)) rowsByKey.set(key, []);
+      rowsByKey.get(key)!.push(r);
     }
-    const contribution = metricContribution(r, config.metric);
-    if (contribution === null) continue;
-    const existing = totals.get(key);
-    if (existing) existing.value += contribution;
-    else totals.set(key, { label, value: contribution });
+    for (const [key, keyRows] of rowsByKey) {
+      totals.set(key, { label: labelByKey.get(key)!, value: computeCustomMetricValue(keyRows, customMetric) });
+    }
+  } else {
+    for (const r of rows) {
+      const contribution = metricContribution(r, config.metric);
+      if (contribution === null) continue;
+      const { key, label } = keyAndLabelFor(r, groupBy);
+      const existing = totals.get(key);
+      if (existing) existing.value += contribution;
+      else totals.set(key, { label, value: contribution });
+    }
   }
 
-  // Fill in each group's real value now that every row's been accumulated —
-  // can't finalize per-row above since average/min/max need the whole
-  // group's data first, unlike a running sum.
-  if (customMetric) {
-    for (const [key, acc] of customAccumulators) {
-      const existing = totals.get(key);
-      if (existing) existing.value = finalizeAccumulator(acc, customMetric.aggregation);
-    }
+  // "Top category"/"Bottom category" and friends — a stat tile can set a
+  // groupBy too now, and just wants the #1 (or, sorted ascending, the
+  // last-place) result from the exact same per-group aggregation bar/pie/
+  // table already use, not a whole chart of its own. `sort` still controls
+  // direction (totalAsc = bottom; anything else, including the totalDesc
+  // default, = top). A day/month groupBy is allowed here unlike every
+  // chart type below, which forces chronological order instead — a stat
+  // tile isn't plotting a sequence, it's picking one row out of the
+  // ranking ("the highest-spending day," not "spending over time").
+  if (type === "stat") {
+    const ranked = [...totals.entries()].map(([key, v]) => ({ key, ...v }));
+    ranked.sort((a, b) => (config.sort === "totalAsc" ? a.value - b.value : b.value - a.value));
+    const top = ranked[0];
+    return { kind: "stat", value: top ? round2(top.value) : 0, label: top?.label };
   }
 
   let points: AggregatedPoint[] = [...totals.entries()].map(([key, { label, value }]) => ({

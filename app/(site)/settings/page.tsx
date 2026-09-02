@@ -5,6 +5,7 @@ import { ThemeSettings } from "@/components/ThemeSettings";
 import { ConnectBank } from "@/components/ConnectBank";
 import { SyncPlaidButton } from "@/components/SyncPlaidButton";
 import { DisconnectPlaidButton } from "@/components/DisconnectPlaidButton";
+import { CalculatedMetricsManager } from "@/components/dashboards/CalculatedMetricsManager";
 
 export default async function SettingsPage() {
   // Proxy already gates this route, but never trust that alone — re-verify.
@@ -13,10 +14,26 @@ export default async function SettingsPage() {
     redirect("/quietharbor");
   }
 
-  const plaidItems = await prisma.plaidItem.findMany({
-    include: { accounts: { select: { id: true, name: true, archived: true } } },
-    orderBy: { createdAt: "asc" },
-  });
+  const [plaidItems, calculatedMetrics, categorized] = await Promise.all([
+    prisma.plaidItem.findMany({
+      include: { accounts: { select: { id: true, name: true, archived: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    prisma.calculatedMetric.findMany({ orderBy: [{ order: "asc" }, { createdAt: "asc" }] }),
+    // Same source as the widget editor's own category picker
+    // (app/api/dashboards/[id]/editor-context) — just enough for
+    // CalculatedMetricForm's merchant-category scoping, not the full
+    // editor-context bundle (accounts, decrypted merchant names) this page
+    // has no other use for.
+    prisma.transaction.findMany({
+      where: { category: "spending", merchantCategory: { not: null, notIn: ["other"] }, merchantSubcategory: { not: null } },
+      select: { merchantCategory: true, merchantSubcategory: true },
+      distinct: ["merchantCategory", "merchantSubcategory"],
+    }),
+  ]);
+  const categoryOptions = categorized
+    .map((c) => ({ category: c.merchantCategory as string, subcategory: c.merchantSubcategory as string }))
+    .sort((a, b) => a.category.localeCompare(b.category) || a.subcategory.localeCompare(b.subcategory));
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-10 px-6 py-16">
@@ -27,6 +44,17 @@ export default async function SettingsPage() {
           Appearance
         </h2>
         <ThemeSettings />
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
+          Calculated metrics
+        </h2>
+        <p className="-mt-1 text-xs text-zinc-500">
+          Saved measures usable as the Metric on any dashboard widget — sums, averages, percentiles, and
+          period-over-period comparisons, each optionally scoped to a transaction type or merchant categories.
+        </p>
+        <CalculatedMetricsManager initialMetrics={calculatedMetrics} categoryOptions={categoryOptions} />
       </div>
 
       <div className="flex flex-col gap-3">

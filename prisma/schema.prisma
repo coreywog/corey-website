@@ -329,10 +329,31 @@ model DatasetRow {
 model CalculatedMetric {
   id                  String   @id @default(cuid())
   name                String   @unique
-  aggregation         String // "sum" | "average" | "count" | "min" | "max"
+  aggregation         String // "sum" | "average" | "count" | "min" | "max" | "median" | "percentile" | "stddev" | "variance" | "range"
+  // Only meaningful (and required) when aggregation === "percentile" — which
+  // percentile to report (25/50/75/90/95/99). See lib/dashboardQuery.ts's
+  // percentileOf.
+  percentile          Int?
   transactionCategory String? // "income" | "spending" | "transfer" | "other" | null (= any)
+  // Narrows to specific merchant categories, same array-of-strings shape as
+  // a widget's own filters.merchantCategories — independent of
+  // transactionCategory (that's the transaction-level type; this is the
+  // richer, arbitrary merchant taxonomy). Empty/omitted = every category.
+  merchantCategories  String[] @default([])
+  // When set, this becomes a *periodic* metric: rows are bucketed by this
+  // interval, `aggregation` runs once per bucket, and the resulting list of
+  // per-period values is what periodAggregation then combines — e.g.
+  // period="month" + aggregation="sum" + periodAggregation="max" is "the
+  // highest-spending month." null (the default/original shape) means a
+  // single aggregation over every matching row with no bucketing at all.
+  period              String? // "day" | "week" | "month" | "year" | null
+  // Only meaningful (and required) when `period` is set — how the list of
+  // per-period values collapses into one number. "growth" is
+  // (latest - previous) / previous, i.e. month-over-month %-style change.
+  periodAggregation   String? // "max" | "min" | "average" | "growth" | null
   order               Int      @default(0)
   createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 }
 
 // A detected recurring charge (e.g. "Netflix, about every 30 days") — one

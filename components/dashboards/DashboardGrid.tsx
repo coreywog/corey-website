@@ -108,11 +108,16 @@ export function DashboardGrid({
   dashboardId,
   tabId,
   widgets,
+  customMetricNames,
   published,
 }: {
   dashboardId: string;
   tabId: string;
   widgets: WidgetWithData[];
+  // id -> name for whichever saved CalculatedMetrics this tab's widgets
+  // reference — just enough for Widget.tsx's auto-title to show the real
+  // name instead of the generic "Custom metric" fallback (see page.tsx).
+  customMetricNames: Record<string, string>;
   // Dashboard-level, not per-tab (the sidebar's DashboardNavItem owns the
   // publish toggle — see components/nav/) — read fresh off the dashboard
   // page's own server-side fetch and passed straight through here to gate
@@ -301,7 +306,7 @@ export function DashboardGrid({
                     </button>
                   </div>
                 )}
-                <Widget widget={widget} />
+                <Widget widget={widget} customMetricNames={customMetricNames} />
               </div>
             ))}
           </ReactGridLayout>

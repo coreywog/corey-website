@@ -7,5 +7,9 @@ export type CalculatedMetricOption = {
   id: string;
   name: string;
   aggregation: string;
+  percentile: number | null;
   transactionCategory: string | null;
+  merchantCategories: string[];
+  period: string | null;
+  periodAggregation: string | null;
 };
