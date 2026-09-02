@@ -30,7 +30,7 @@ import {
   type WidgetWithData,
 } from "./Widget";
 import type { CalculatedMetricOption } from "./types";
-import { CalculatedMetricForm } from "./CalculatedMetricForm";
+import { MetricBuilderPanel } from "./MetricBuilderPanel";
 import type {
   WidgetConfig,
   ChartWidgetConfig,
@@ -63,6 +63,11 @@ export type WidgetDraft = {
   result: WidgetWithData["result"];
   config: WidgetConfig | null;
 };
+
+// Which select triggered the metric builder (see the `metricBuilder` state
+// below) — so a saved/edited metric routes back to the right place: the
+// single Metric select, or a specific multi-series row's select.
+type MetricBuilderTarget = { kind: "single" } | { kind: "series"; seriesId: string };
 
 const CHART_TYPE_OPTIONS: { value: ChartType; label: string; Icon: typeof LineChartIcon }[] = [
   { value: "line", label: "Line", Icon: LineChartIcon },
@@ -498,7 +503,23 @@ export function WidgetEditorPanel({
   // duplicated in both places; this only needs to track whether it's open
   // and hold the resulting list.
   const [calculatedMetrics, setCalculatedMetrics] = useState<CalculatedMetricOption[]>(initialCalculatedMetrics);
-  const [creatingMetric, setCreatingMetric] = useState(false);
+  // Tracks not just whether the metric builder is open, but which selector
+  // triggered it (the single Metric select vs. a specific multi-series
+  // row's select) and, for edit, which metric — so save routes the result
+  // back to the right place. See MetricBuilderPanel, which renders in place
+  // of this state.
+  const [metricBuilder, setMetricBuilder] = useState<
+    | { mode: "closed" }
+    | { mode: "create"; target: MetricBuilderTarget }
+    | { mode: "edit"; target: MetricBuilderTarget; metric: CalculatedMetricOption }
+  >({ mode: "closed" });
+
+  function handleMetricSaved(target: MetricBuilderTarget, metric: CalculatedMetricOption) {
+    setCalculatedMetrics((prev) => (prev.some((m) => m.id === metric.id) ? prev.map((m) => (m.id === metric.id ? metric : m)) : [...prev, metric]));
+    if (target.kind === "single") setCustomMetricId(metric.id);
+    else updateSeriesLine(target.seriesId, { customMetricId: metric.id });
+    setMetricBuilder({ mode: "closed" });
+  }
 
   const [groupBy, setGroupBy] = useState<GroupBy | "">(chartConfig?.groupBy ?? "merchantCategory");
   // No UI drove this before now — bar/pie/table always used the schema's
@@ -1698,30 +1719,55 @@ export function WidgetEditorPanel({
                                 placeholder={`${seriesNoun} ${i + 1} (optional name)`}
                                 className={selectClasses}
                               />
-                              <select
-                                value={s.customMetricId ? `custom:${s.customMetricId}` : s.metric}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  if (v.startsWith("custom:")) updateSeriesLine(s.id, { customMetricId: v.slice("custom:".length) });
-                                  else updateSeriesLine(s.id, { metric: v as Metric, customMetricId: undefined });
-                                }}
-                                className={selectClasses}
-                              >
-                                {METRIC_OPTIONS.filter((o) => !isHistogram || o.value !== "transactionCount").map((o) => (
-                                  <option key={o.value} value={o.value}>
-                                    {o.label}
-                                  </option>
-                                ))}
-                                {!isHistogram && calculatedMetrics.length > 0 && (
-                                  <optgroup label="Your metrics">
-                                    {calculatedMetrics.map((m) => (
-                                      <option key={m.id} value={`custom:${m.id}`}>
-                                        {m.name}
-                                      </option>
-                                    ))}
-                                  </optgroup>
+                              <div className="flex items-center gap-1.5">
+                                <select
+                                  value={s.customMetricId ? `custom:${s.customMetricId}` : s.metric}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    if (v === "__new__") {
+                                      setMetricBuilder({ mode: "create", target: { kind: "series", seriesId: s.id } });
+                                      return;
+                                    }
+                                    if (v.startsWith("custom:")) updateSeriesLine(s.id, { customMetricId: v.slice("custom:".length) });
+                                    else updateSeriesLine(s.id, { metric: v as Metric, customMetricId: undefined });
+                                  }}
+                                  className={selectClasses + " flex-1"}
+                                >
+                                  {METRIC_OPTIONS.filter((o) => !isHistogram || o.value !== "transactionCount").map((o) => (
+                                    <option key={o.value} value={o.value}>
+                                      {o.label}
+                                    </option>
+                                  ))}
+                                  {!isHistogram && (
+                                    <>
+                                      {calculatedMetrics.length > 0 && (
+                                        <optgroup label="Your metrics">
+                                          {calculatedMetrics.map((m) => (
+                                            <option key={m.id} value={`custom:${m.id}`}>
+                                              {m.name}
+                                            </option>
+                                          ))}
+                                        </optgroup>
+                                      )}
+                                      <option value="__new__">+ New calculated metric…</option>
+                                    </>
+                                  )}
+                                </select>
+                                {s.customMetricId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const m = calculatedMetrics.find((m) => m.id === s.customMetricId);
+                                      if (m) setMetricBuilder({ mode: "edit", target: { kind: "series", seriesId: s.id }, metric: m });
+                                    }}
+                                    title="Edit this metric"
+                                    aria-label="Edit this metric"
+                                    className="shrink-0 text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
+                                  >
+                                    ✎
+                                  </button>
                                 )}
-                              </select>
+                              </div>
                               {/* Quick whole-widget measures — none of the actual
                                   merchant categories below represent income (income
                                   transactions aren't assigned a spending category),
@@ -1833,51 +1879,64 @@ export function WidgetEditorPanel({
                   <>
                     <label className="flex flex-col gap-1">
                       <span className={labelClasses}>Metric</span>
-                      <select
-                        value={customMetricId ? `custom:${customMetricId}` : metric}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v === "__new__") {
-                            setCreatingMetric(true);
-                            return;
-                          }
-                          if (v.startsWith("custom:")) {
-                            setCustomMetricId(v.slice("custom:".length));
-                            return;
-                          }
-                          setCustomMetricId(undefined);
-                          setMetric(v as Metric);
-                        }}
-                        className={selectClasses}
-                      >
-                        {/* "Transaction count" is meaningless per-transaction —
-                            every scatter point or histogram sample is exactly
-                            one, so it'd produce a flat line of dots or a single
-                            useless bin. Hidden rather than allowed through. */}
-                        {METRIC_OPTIONS.filter((o) => !(isScatter || isHistogram) || o.value !== "transactionCount").map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
-                        {/* Saved metrics apply to bucketed/stat results only —
-                            scatter plots raw transactions and histogram bins by
-                            magnitude, neither of which has a "sum vs. average"
-                            distinction to offer. */}
-                        {!isScatter && !isHistogram && !isStackedBar && (
-                          <>
-                            {calculatedMetrics.length > 0 && (
-                              <optgroup label="Your metrics">
-                                {calculatedMetrics.map((m) => (
-                                  <option key={m.id} value={`custom:${m.id}`}>
-                                    {m.name}
-                                  </option>
-                                ))}
-                              </optgroup>
-                            )}
-                            <option value="__new__">+ New calculated metric…</option>
-                          </>
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={customMetricId ? `custom:${customMetricId}` : metric}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "__new__") {
+                              setMetricBuilder({ mode: "create", target: { kind: "single" } });
+                              return;
+                            }
+                            if (v.startsWith("custom:")) {
+                              setCustomMetricId(v.slice("custom:".length));
+                              return;
+                            }
+                            setCustomMetricId(undefined);
+                            setMetric(v as Metric);
+                          }}
+                          className={selectClasses + " flex-1"}
+                        >
+                          {/* "Transaction count" is meaningless per-transaction —
+                              every scatter point or histogram sample is exactly
+                              one, so it'd produce a flat line of dots or a single
+                              useless bin. Hidden rather than allowed through. */}
+                          {METRIC_OPTIONS.filter((o) => !(isScatter || isHistogram) || o.value !== "transactionCount").map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
+                          {/* Saved metrics apply to bucketed/stat results only —
+                              scatter plots raw transactions and histogram bins by
+                              magnitude, neither of which has a "sum vs. average"
+                              distinction to offer. */}
+                          {!isScatter && !isHistogram && !isStackedBar && (
+                            <>
+                              {calculatedMetrics.length > 0 && (
+                                <optgroup label="Your metrics">
+                                  {calculatedMetrics.map((m) => (
+                                    <option key={m.id} value={`custom:${m.id}`}>
+                                      {m.name}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
+                              <option value="__new__">+ New calculated metric…</option>
+                            </>
+                          )}
+                        </select>
+                        {selectedMetric && (
+                          <button
+                            type="button"
+                            onClick={() => setMetricBuilder({ mode: "edit", target: { kind: "single" }, metric: selectedMetric })}
+                            title="Edit this metric"
+                            aria-label="Edit this metric"
+                            className="shrink-0 text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
+                          >
+                            ✎
+                          </button>
                         )}
-                      </select>
+                      </div>
                     </label>
 
                     {isTimeSeries && (
@@ -1910,16 +1969,25 @@ export function WidgetEditorPanel({
                   </>
                 )}
 
-                {!multiSeries && creatingMetric && (
-                  <CalculatedMetricForm
-                    categoryOptions={categoryOptions}
-                    onSaved={(metric) => {
-                      setCalculatedMetrics((prev) => [...prev, metric]);
-                      setCustomMetricId(metric.id);
-                      setCreatingMetric(false);
-                    }}
-                    onCancel={() => setCreatingMetric(false)}
-                  />
+                {/* Below `lg` (1024px), the takeover panel below (the
+                    fixed-position "Preview" panel, hidden below that
+                    breakpoint) doesn't exist to take over — this renders the
+                    same MetricBuilderPanel inline instead, right where the
+                    picker that opened it lives. Unconditional on
+                    multiSeries/single now (target tracks which one opened
+                    it), unlike the old single-select-only inline form this
+                    replaced. */}
+                {metricBuilder.mode !== "closed" && (
+                  <div className="lg:hidden">
+                    <MetricBuilderPanel
+                      variant="inline"
+                      initial={metricBuilder.mode === "edit" ? metricBuilder.metric : undefined}
+                      categoryOptions={categoryOptions}
+                      scope={{ accountIds, dateRange: config?.dataSource === "transactions" ? config.dateRange : undefined }}
+                      onSaved={(metric) => handleMetricSaved(metricBuilder.target, metric)}
+                      onCancel={() => setMetricBuilder({ mode: "closed" })}
+                    />
+                  </div>
                 )}
 
                 {/* A periodic metric ("Compare across time periods" — see
@@ -2063,6 +2131,17 @@ export function WidgetEditorPanel({
           (mounted ? "translate-x-0" : "-translate-x-full")
         }
       >
+        {metricBuilder.mode !== "closed" ? (
+          <MetricBuilderPanel
+            variant="panel"
+            initial={metricBuilder.mode === "edit" ? metricBuilder.metric : undefined}
+            categoryOptions={categoryOptions}
+            scope={{ accountIds, dateRange: config?.dataSource === "transactions" ? config.dateRange : undefined }}
+            onSaved={(metric) => handleMetricSaved(metricBuilder.target, metric)}
+            onCancel={() => setMetricBuilder({ mode: "closed" })}
+          />
+        ) : (
+          <>
         <span className={labelClasses}>Preview</span>
         {showMultiColor && (
           <p className="-mt-2 text-[11px] text-zinc-500">Click a bar, slice, or row below to select it for Colors/Style.</p>
@@ -2733,6 +2812,8 @@ export function WidgetEditorPanel({
               </div>
             )}
           </div>
+        )}
+          </>
         )}
       </div>
     </>

@@ -8,7 +8,11 @@ import { z } from "zod";
  * tile, not a crashed page — see lib/dashboardQuery.ts.
  */
 
-const dateRangeSchema = z.union([
+// Exported for app/api/dashboards/metrics/preview/route.ts, which validates
+// a draft metric's preview *scope* against this same shape rather than
+// duplicating it — the scope a metric builder previews against is just a
+// date range, same as any widget's.
+export const dateRangeSchema = z.union([
   z.object({ mode: z.literal("relative"), months: z.union([z.literal(1), z.literal(3), z.literal(6), z.literal(12)]) }),
   // Day-granularity version of the above ("Today"/"Yesterday"/...), or any
   // custom N-days-back the user types in — see lib/finance.ts's

@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { decryptAmount, decryptText } from "@/lib/crypto";
 import { resolveDateRange, formatMonthLabel, formatCategoryLabel, normalizeMerchantName } from "@/lib/finance";
+import type { DateRangeSelection } from "@/lib/finance";
 import { colorForCategory, colorForKey } from "@/components/finance/categoryColors";
 import type { WidgetConfig, ChartWidgetConfig, WidgetType, GroupBy, Metric, SeriesEntryConfig } from "@/lib/dashboardConfig";
 
@@ -88,7 +89,10 @@ function metricContribution(row: { amount: number; category: string }, metric: M
 type Aggregation = "sum" | "average" | "count" | "min" | "max" | "median" | "percentile" | "stddev" | "variance" | "range";
 type MetricPeriod = "day" | "week" | "month" | "year";
 type PeriodAggregation = "max" | "min" | "average" | "growth";
-type CustomMetric = {
+// Exported so the metric builder's live-preview route (see
+// computeDraftMetricPreview below) can share this exact shape instead of
+// inventing a parallel one.
+export type CustomMetric = {
   aggregation: Aggregation;
   // Only meaningful when aggregation === "percentile" (25/50/75/90/95/99).
   percentile: number | null;
@@ -409,8 +413,13 @@ function applyPointColors(points: AggregatedPoint[], config: ChartWidgetConfig):
   return points;
 }
 
-/** Builds the Prisma `where` shared by the main window and (for stat tiles) the comparison window. */
-function buildWhere(config: ChartWidgetConfig, start: string, end: string) {
+/** Builds the Prisma `where` shared by the main window and (for stat tiles)
+ * the comparison window. Narrowed to just the fields this actually reads
+ * (rather than the full ChartWidgetConfig) so computeDraftMetricPreview
+ * below can call it with a plain object literal, not a full widget config —
+ * a metric being previewed while it's still being built has no widget
+ * config yet. */
+function buildWhere(config: Pick<ChartWidgetConfig, "metric" | "customMetricId" | "filters">, start: string, end: string) {
   return {
     date: { gte: new Date(start), lt: new Date(end) },
     ...(config.filters?.accountIds?.length
@@ -480,6 +489,59 @@ function filterByMerchant(rows: DecryptedRow[], merchants: string[] | undefined)
   if (!merchants?.length) return rows;
   const wanted = new Set(merchants);
   return rows.filter((r) => r.description && wanted.has(normalizeMerchantName(r.description)));
+}
+
+export type DraftMetricPreview = {
+  value: number;
+  // How many transactions actually fed the number above — surfaced so a
+  // percentile/stddev/periodic result over 2-3 transactions visibly looks
+  // thin rather than looking as authoritative as one over thousands. Zero
+  // is a legitimate, informative answer (nothing in scope matched), not an
+  // error.
+  sampleSize: number;
+  label?: string;
+  transactions?: { merchant: string; amount: number }[];
+};
+
+/**
+ * A calculated metric's value against real data *before it's saved* — the
+ * metric builder's live "here's what this actually computes" feedback (see
+ * components/dashboards/MetricBuilderPanel.tsx and
+ * app/api/dashboards/metrics/preview/route.ts). Composes the exact same
+ * pieces computeWidgetData's stat branch does (buildWhere/fetchRows/
+ * filterByMerchant/computeCustomMetricValue/computePeriodicDetail) rather
+ * than a second, parallel computation path, so a metric previewed here
+ * behaves identically once it's actually saved and used on a widget.
+ *
+ * `customMetricId: "draft"` below is a placeholder, not a real id — its
+ * only job is being *truthy*, which routes buildWhere down the same branch
+ * a real saved metric already takes (skip the metric-derived category
+ * pre-filter; customMetricRowValue applies the metric's own
+ * transactionCategory after the fact instead). needsDescription is always
+ * true (unlike computeWidgetData, which only decrypts descriptions when a
+ * groupBy actually needs them) because a draft preview always wants to be
+ * able to show computePeriodicDetail's transaction list if the metric turns
+ * out to be periodic-with-an-extreme — surfacing "what data produced this"
+ * is the whole point.
+ */
+export async function computeDraftMetricPreview(
+  metric: CustomMetric,
+  scope: { accountIds?: string[]; dateRange?: DateRangeSelection },
+): Promise<DraftMetricPreview> {
+  const { start, end } = resolveDateRange(scope.dateRange ?? { mode: "allTime" });
+  const where = buildWhere(
+    {
+      metric: "spendingTotal",
+      customMetricId: "draft",
+      filters: scope.accountIds?.length ? { accountIds: scope.accountIds } : undefined,
+    },
+    start,
+    end,
+  );
+  const rows = filterByMerchant(await fetchRows(where, true), undefined);
+  const value = round2(computeCustomMetricValue(rows, metric));
+  const sampleSize = rows.filter((r) => customMetricRowValue(r, metric) !== null).length;
+  return { value, sampleSize, ...computePeriodicDetail(rows, metric, true, true) };
 }
 
 /**
@@ -574,21 +636,26 @@ export async function computeDateBounds(config: ChartWidgetConfig): Promise<{ mi
  * engine actually works with — the one place both resolution call sites
  * (computeWidgetData, computeMultiSeries) build this from, so a new field
  * only needs adding here once. */
-function toCustomMetric(m: {
+// Exported (and its fields loosened to optional/undefined, not just
+// null) so the metric-builder preview route can run a Zod-parsed request
+// body — where an omitted field comes back `undefined`, not `null` the way
+// a Prisma row always has it — through this same single conversion path,
+// rather than a second ad-hoc mapping living in the route.
+export function toCustomMetric(m: {
   aggregation: string;
-  percentile: number | null;
-  transactionCategory: string | null;
-  merchantCategories: string[];
-  period: string | null;
-  periodAggregation: string | null;
+  percentile?: number | null;
+  transactionCategory?: string | null;
+  merchantCategories?: string[];
+  period?: string | null;
+  periodAggregation?: string | null;
 }): CustomMetric {
   return {
     aggregation: m.aggregation as Aggregation,
-    percentile: m.percentile,
-    transactionCategory: m.transactionCategory,
-    merchantCategories: m.merchantCategories,
-    period: m.period as MetricPeriod | null,
-    periodAggregation: m.periodAggregation as PeriodAggregation | null,
+    percentile: m.percentile ?? null,
+    transactionCategory: m.transactionCategory ?? null,
+    merchantCategories: m.merchantCategories ?? [],
+    period: (m.period as MetricPeriod | null | undefined) ?? null,
+    periodAggregation: (m.periodAggregation as PeriodAggregation | null | undefined) ?? null,
   };
 }
 
