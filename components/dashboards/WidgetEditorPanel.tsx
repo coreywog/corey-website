@@ -582,6 +582,8 @@ export function WidgetEditorPanel({
   const [limit, setLimit] = useState(chartConfig?.limit ? String(chartConfig.limit) : "");
   const [histogramBins, setHistogramBins] = useState(String(chartConfig?.histogramBins ?? 12));
   const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
+  const [showMetricPeriodLabel, setShowMetricPeriodLabel] = useState(chartConfig?.showMetricPeriodLabel ?? false);
+  const [showMetricTransactions, setShowMetricTransactions] = useState(chartConfig?.showMetricTransactions ?? false);
   const [xAxisLabel, setXAxisLabel] = useState(chartConfig?.axisLabels?.x ?? "");
   const [yAxisLabel, setYAxisLabel] = useState(chartConfig?.axisLabels?.y ?? "");
   // Pixel nudge from the default position (below the X axis, left of the Y
@@ -680,6 +682,17 @@ export function WidgetEditorPanel({
   // just one full-width column when only one does.
   const hasColorSection = showColor || showMultiColor;
   const hasStyleSection = showLineStyle || showFillPattern || showGridLinesOption;
+  // A stat tile built on a periodic metric (period set — see
+  // CalculatedMetricForm's "Compare across time periods") can show the
+  // period/range the number came from, and (max/min only) the actual
+  // transactions — see lib/dashboardQuery.ts's computePeriodicDetail. Off
+  // by default (new UI real estate, opt-in); which checkboxes make sense
+  // depends on the metric's own periodAggregation, so this reads the
+  // already-loaded calculatedMetrics list rather than needing its own
+  // lookup.
+  const selectedMetric = customMetricId ? calculatedMetrics.find((m) => m.id === customMetricId) : undefined;
+  const showMetricDetailOption = type === "stat" && Boolean(selectedMetric?.period);
+  const metricHasExtreme = selectedMetric?.periodAggregation === "max" || selectedMetric?.periodAggregation === "min";
   // Multiple independently-configured lines/bars in place of the single
   // Metric picker — only for the chart types that can actually plot more
   // than one series at once (see computeMultiSeries in lib/dashboardQuery.ts).
@@ -861,6 +874,8 @@ export function WidgetEditorPanel({
       // "don't save the default" convention as every other opt-in field.
       ...(isHistogram && Number(histogramBins) !== 12 ? { histogramBins: Number(histogramBins) } : {}),
       ...(type === "stat" ? { compareToPrevious } : {}),
+      ...(type === "stat" && showMetricPeriodLabel ? { showMetricPeriodLabel: true } : {}),
+      ...(type === "stat" && showMetricTransactions ? { showMetricTransactions: true } : {}),
       ...(!multiSeries && isTimeSeries && cumulative
         ? { cumulative: true, ...(cumulativeBasis !== "range" ? { cumulativeBasis } : {}) }
         : {}),
@@ -923,6 +938,8 @@ export function WidgetEditorPanel({
     limit,
     histogramBins,
     compareToPrevious,
+    showMetricPeriodLabel,
+    showMetricTransactions,
     xAxisLabel,
     yAxisLabel,
     xAxisOffset,
@@ -2036,7 +2053,7 @@ export function WidgetEditorPanel({
         </div>
 
         {typeChosen && !isText && (
-          <div className={showAxisLabels ? "grid grid-cols-2 gap-3" : "flex flex-col gap-3"}>
+          <div className={showAxisLabels || showMetricDetailOption ? "grid grid-cols-2 gap-3" : "flex flex-col gap-3"}>
           <div className="flex flex-col gap-2.5 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
             <span className={labelClasses}>Buttons</span>
 
@@ -2338,6 +2355,35 @@ export function WidgetEditorPanel({
               nice-round-number default.
             </p>
           </div>
+          )}
+
+          {showMetricDetailOption && (
+            <div className="flex flex-col gap-2.5 rounded-lg border border-black/[.08] bg-[var(--background)]/60 p-3 dark:border-white/[.1]">
+              <span className={labelClasses}>Detail</span>
+              <p className="text-[11px] text-zinc-500">
+                &ldquo;{selectedMetric?.name}&rdquo; is a periodic metric — pair the number with where it came from.
+              </p>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={showMetricPeriodLabel}
+                  onChange={(e) => setShowMetricPeriodLabel(e.target.checked)}
+                />
+                <span className="text-sm">
+                  {metricHasExtreme ? "Show which period it came from" : "Show the period range it's averaged/compared over"}
+                </span>
+              </label>
+              {metricHasExtreme && (
+                <label className="flex items-center gap-2 pl-6">
+                  <input
+                    type="checkbox"
+                    checked={showMetricTransactions}
+                    onChange={(e) => setShowMetricTransactions(e.target.checked)}
+                  />
+                  <span className="text-sm">Also list the transactions from that period</span>
+                </label>
+              )}
+            </div>
           )}
           </div>
         )}

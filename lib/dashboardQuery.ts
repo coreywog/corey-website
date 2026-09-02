@@ -281,6 +281,66 @@ function formatPeriodLabel(key: string, period: MetricPeriod): string {
   }
 }
 
+const PERIOD_UNIT: Record<MetricPeriod, string> = { day: "days", week: "weeks", month: "months", year: "years" };
+
+/**
+ * A periodic metric's stat-tile companion text — config.showMetricPeriodLabel
+ * (the period/range) and config.showMetricTransactions (the line-item
+ * breakdown, max/min only), both opt-in (see WidgetEditorPanel's "Detail"
+ * section). max/min point at the one period that won, same as
+ * findPeriodicExtreme above; average/growth have no single period to
+ * highlight, so their caption describes the *span* instead — "92 days
+ * (Jan 1 – Mar 31, 2026)" for average, "Feb 2026 → Mar 2026" for growth.
+ * Returns {} (nothing to spread onto the stat result) whenever the metric
+ * isn't periodic, both toggles are off, or there's no data to describe.
+ */
+function computePeriodicDetail(
+  rows: DecryptedRow[],
+  metric: CustomMetric,
+  showLabel: boolean,
+  showTransactions: boolean,
+): { label?: string; transactions?: { merchant: string; amount: number }[] } {
+  if (!metric.period || (!showLabel && !showTransactions)) return {};
+  const isExtreme = metric.periodAggregation === "max" || metric.periodAggregation === "min";
+
+  if (isExtreme) {
+    const extreme = findPeriodicExtreme(rows, metric);
+    if (!extreme) return {};
+    return {
+      ...(showLabel ? { label: formatPeriodLabel(extreme.key, metric.period) } : {}),
+      ...(showTransactions
+        ? {
+            transactions: extreme.rows
+              .map((r) => ({ merchant: r.description ? normalizeMerchantName(r.description) : "Unknown", amount: round2(Math.abs(r.amount)) }))
+              .sort((a, b) => b.amount - a.amount)
+              .slice(0, 5),
+          }
+        : {}),
+    };
+  }
+
+  // average/growth: no single winning period, so no transaction breakdown
+  // makes sense regardless of showTransactions — only the range caption.
+  if (!showLabel) return {};
+  const buckets = bucketByPeriod(rows, metric as CustomMetric & { period: MetricPeriod });
+  if (buckets.length === 0) return {};
+  if (metric.periodAggregation === "growth") {
+    if (buckets.length < 2) return {};
+    const prev = buckets[buckets.length - 2];
+    const latest = buckets[buckets.length - 1];
+    return { label: `${formatPeriodLabel(prev.key, metric.period)} → ${formatPeriodLabel(latest.key, metric.period)}` };
+  }
+  // average (or any other future periodAggregation — falls back to the
+  // same span description rather than showing nothing).
+  const first = buckets[0];
+  const last = buckets[buckets.length - 1];
+  const label =
+    buckets.length === 1
+      ? formatPeriodLabel(first.key, metric.period)
+      : `${buckets.length} ${PERIOD_UNIT[metric.period]} (${formatPeriodLabel(first.key, metric.period)} – ${formatPeriodLabel(last.key, metric.period)})`;
+  return { label };
+}
+
 function keyAndLabelFor(row: DecryptedRow, groupBy: GroupBy): { key: string; label: string } {
   switch (groupBy) {
     case "day": {
@@ -900,23 +960,13 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   if (!config.groupBy) {
     const value = round2(reduceRows(rows, config.metric));
 
-    // For a periodic max/min metric ("highest-spending day," "lowest-
-    // spending month"), pair the number with *which* period it came from
-    // and what actually made it up — not just "$342," but "$342 on March
-    // 15, 2026: Whole Foods $120, Amazon $80, …". Every other combination
-    // (non-periodic, or period + average/growth) has no single period to
-    // point to, so this stays undefined and the stat renders exactly as
-    // before.
-    const extreme = customMetric ? findPeriodicExtreme(rows, customMetric) : null;
-    const detail = extreme
-      ? {
-          label: formatPeriodLabel(extreme.key, customMetric!.period!),
-          transactions: extreme.rows
-            .map((r) => ({ merchant: r.description ? normalizeMerchantName(r.description) : "Unknown", amount: round2(Math.abs(r.amount)) }))
-            .sort((a, b) => b.amount - a.amount)
-            .slice(0, 5),
-        }
-      : undefined;
+    // For a periodic metric, pair the number with where it came from — see
+    // computePeriodicDetail. Both parts are opt-in (WidgetEditorPanel's
+    // "Detail" section), off by default, so an existing widget's stat
+    // keeps rendering exactly as it always has until asked otherwise.
+    const detail = customMetric
+      ? computePeriodicDetail(rows, customMetric, Boolean(config.showMetricPeriodLabel), Boolean(config.showMetricTransactions))
+      : {};
 
     if (!config.compareToPrevious) {
       return { kind: "stat", value, ...detail };

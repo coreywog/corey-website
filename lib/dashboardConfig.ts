@@ -270,6 +270,16 @@ const chartConfigSchema = z.object({
   limit: z.number().int().positive().max(1000).optional(),
   sort: z.enum(["totalDesc", "totalAsc", "labelAsc"]).optional(), // ignored when groupBy is day/month — see lib/dashboardQuery.ts
   compareToPrevious: z.boolean().optional(), // stat tiles only
+  // Stat tiles only, and only meaningful when the metric is a periodic
+  // CalculatedMetric (period set — see prisma/schema.prisma). Shows the
+  // specific period/range the number came from (max/min: "March 15, 2026";
+  // average/growth: "92 days (Jan 1 – Mar 31, 2026)" or "Feb 2026 → Mar
+  // 2026") — see lib/dashboardQuery.ts's computePeriodicDetail.
+  showMetricPeriodLabel: z.boolean().optional(),
+  // Also stat-only, and only meaningful for periodAggregation max/min (a
+  // single winning period has actual transactions to list; average/growth
+  // combine every period, so there's nothing single to break down).
+  showMetricTransactions: z.boolean().optional(),
   // Single-series version of seriesEntrySchema's `cumulative` above — same
   // running-total behavior, same day/month-groupBy-only restriction, for a
   // widget that isn't using config.series at all.
