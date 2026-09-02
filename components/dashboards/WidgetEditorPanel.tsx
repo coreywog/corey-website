@@ -714,6 +714,14 @@ export function WidgetEditorPanel({
   const selectedMetric = customMetricId ? calculatedMetrics.find((m) => m.id === customMetricId) : undefined;
   const showMetricDetailOption = type === "stat" && Boolean(selectedMetric?.period);
   const metricHasExtreme = selectedMetric?.periodAggregation === "max" || selectedMetric?.periodAggregation === "min";
+  // Whether the winning period's actual line items are worth listing — see
+  // lib/dashboardQuery.ts's computePeriodicDetail: only for a row-level
+  // aggregation (sum/max/min), where "the transactions behind this number"
+  // is a straightforward, honest thing to show. Anything else (average,
+  // median, percentile, stddev, variance, range, count) gets a plain
+  // transaction count instead.
+  const metricShowsLineItems =
+    selectedMetric?.aggregation === "sum" || selectedMetric?.aggregation === "max" || selectedMetric?.aggregation === "min";
   // Multiple independently-configured lines/bars in place of the single
   // Metric picker — only for the chart types that can actually plot more
   // than one series at once (see computeMultiSeries in lib/dashboardQuery.ts).
@@ -1182,6 +1190,9 @@ export function WidgetEditorPanel({
           )}
         </label>
 
+        {/* `relative` wrapper exists only to host the metric-builder overlay
+            below — see its own comment for why. */}
+        <div className="relative">
         <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] items-start gap-4">
           {/* Left column: every field, each independently filterable — click
               one to open its picker. Hidden for a text tile, which has no
@@ -2085,6 +2096,27 @@ export function WidgetEditorPanel({
 
           </div>
         </div>
+        {/* Everything above (Data sources, this widget's own Metric/Group
+            by/etc.) is real and interactive, but none of it feeds the
+            metric being built — only this widget's current Account and
+            Date carry into the preview (see MetricBuilderPanel's `scope`
+            prop), and even those are frozen at whatever they already were
+            when the builder opened, not editable from here. Blurred +
+            covered rather than just left ambiguous, so "does this stuff
+            matter right now?" has an unmissable, explicit answer instead
+            of being something to guess at. */}
+        {metricBuilder.mode !== "closed" && (
+          <div className="absolute inset-0 z-10 flex items-start justify-center rounded-lg bg-[var(--background)]/85 pt-12 backdrop-blur-[2px]">
+            <div className="mx-4 max-w-sm rounded-lg border border-black/[.1] bg-[var(--background)] p-4 text-center shadow-lg dark:border-white/[.15]">
+              <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">Building a metric</p>
+              <p className="mt-1.5 text-[13px] text-zinc-600 dark:text-zinc-300">
+                Uses this widget&rsquo;s own Account and Date ({dateRangeSummary}) — shown behind, frozen while you build. Nothing else here
+                (Amount/Merchant/Category filters, or this widget&rsquo;s own Metric/Group by) affects the metric on the right.
+              </p>
+            </div>
+          </div>
+        )}
+        </div>
 
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
@@ -2484,7 +2516,9 @@ export function WidgetEditorPanel({
                     checked={showMetricTransactions}
                     onChange={(e) => setShowMetricTransactions(e.target.checked)}
                   />
-                  <span className="text-sm">Also list the transactions from that period</span>
+                  <span className="text-sm">
+                    {metricShowsLineItems ? "Also list the transactions from that period" : "Also show how many transactions that period"}
+                  </span>
                 </label>
               )}
             </div>

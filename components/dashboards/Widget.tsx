@@ -896,6 +896,16 @@ function StatWidget({ result, color }: { result: Extract<WidgetResult, { kind: "
           ))}
         </div>
       )}
+      {/* The non-row-level counterpart to the line-item list above (an
+          average/median/percentile/stddev/variance/range/count metric has
+          no single set of "the transactions that made this number," so a
+          count is the honest version of the same "here's what's behind
+          it" idea — see computePeriodicDetail's own comment for why. */}
+      {result.transactionCount !== undefined && (
+        <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+          {result.transactionCount} transaction{result.transactionCount === 1 ? "" : "s"} that period
+        </div>
+      )}
       {delta !== null && (
         <div
           className={

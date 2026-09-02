@@ -24,11 +24,23 @@ export type WidgetResult =
   // ranked group the value came from (e.g. "Housing" for a top-category
   // stat) — see computeWidgetData's `type === "stat"` branch below.
   // `transactions` is set only for a periodic custom metric whose
-  // periodAggregation is "max"/"min" — the actual line items behind the
-  // period `label` points at (e.g. what was bought on your highest-
-  // spending day), sorted largest first and capped to a handful. See
-  // findPeriodicExtreme below.
-  | { kind: "stat"; value: number; previousValue?: number; label?: string; transactions?: { merchant: string; amount: number }[] }
+  // periodAggregation is "max"/"min" *and* whose own aggregation is
+  // row-level (sum/max/min) — the actual line items behind the period
+  // `label` points at (e.g. what was bought on your highest-spending day),
+  // sorted largest first and capped to a handful. See findPeriodicExtreme
+  // below. `transactionCount` is the same "how many transactions" fact for
+  // every other aggregation (average/median/percentile/stddev/variance/
+  // range/count) instead — a curated list of a few large raw amounts would
+  // look contradictory next to a combined number like an average, so those
+  // get a plain count rather than line items. See computePeriodicDetail.
+  | {
+      kind: "stat";
+      value: number;
+      previousValue?: number;
+      label?: string;
+      transactions?: { merchant: string; amount: number }[];
+      transactionCount?: number;
+    }
   | { kind: "scatter"; points: ScatterPoint[] }
   | { kind: "stacked"; points: StackedPoint[]; series: StackedSeries[] }
   // Manually-configured multiple series (config.series — the editor's Line
@@ -303,23 +315,35 @@ function computePeriodicDetail(
   metric: CustomMetric,
   showLabel: boolean,
   showTransactions: boolean,
-): { label?: string; transactions?: { merchant: string; amount: number }[] } {
+): { label?: string; transactions?: { merchant: string; amount: number }[]; transactionCount?: number } {
   if (!metric.period || (!showLabel && !showTransactions)) return {};
   const isExtreme = metric.periodAggregation === "max" || metric.periodAggregation === "min";
 
   if (isExtreme) {
     const extreme = findPeriodicExtreme(rows, metric);
     if (!extreme) return {};
+    // A curated "5 biggest raw transactions" list only reads as an honest
+    // explanation when the metric itself is row-level (sum: "these
+    // purchases pushed the month over the top"; max/min: the #1 transaction
+    // *is* the metric). For average/median/percentile/stddev/variance/
+    // range/count, the period's own number is a combination across every
+    // transaction in it — showing 5 large raw amounts next to a much
+    // smaller combined figure (e.g. "$104 average" beside a $3,182 line
+    // item) looks contradictory rather than explanatory, so those get a
+    // plain count instead.
+    const showsLineItems = metric.aggregation === "sum" || metric.aggregation === "max" || metric.aggregation === "min";
     return {
       ...(showLabel ? { label: formatPeriodLabel(extreme.key, metric.period) } : {}),
-      ...(showTransactions
+      ...(showTransactions && showsLineItems
         ? {
             transactions: extreme.rows
               .map((r) => ({ merchant: r.description ? normalizeMerchantName(r.description) : "Unknown", amount: round2(Math.abs(r.amount)) }))
               .sort((a, b) => b.amount - a.amount)
               .slice(0, 5),
           }
-        : {}),
+        : showTransactions
+          ? { transactionCount: extreme.rows.length }
+          : {}),
     };
   }
 
@@ -501,6 +525,11 @@ export type DraftMetricPreview = {
   sampleSize: number;
   label?: string;
   transactions?: { merchant: string; amount: number }[];
+  // Set instead of `transactions` for a periodic max/min metric whose own
+  // aggregation isn't row-level (see computePeriodicDetail) — "how many
+  // transactions" rather than a curated, potentially-contradictory-looking
+  // list of a few large raw amounts.
+  transactionCount?: number;
 };
 
 /**
