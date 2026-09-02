@@ -861,7 +861,12 @@ export function WidgetEditorPanel({
       dataSource: "transactions",
       metric,
       ...(customMetricId ? { customMetricId } : {}),
-      ...(needsGroupBy || (showGroupByForStat && groupBy)
+      // The Group By control is hidden whenever the selected metric is
+      // periodic (see the JSX below) — excluded here too, in case a value
+      // set before switching to a periodic metric is still sitting in
+      // state, so it can't silently leak into the saved config once the
+      // control disappears.
+      ...(needsGroupBy || (showGroupByForStat && groupBy && !selectedMetric?.period)
         ? { groupBy: groupBy as GroupBy }
         : isCalendar
           ? { groupBy: "day" as const }
@@ -916,6 +921,7 @@ export function WidgetEditorPanel({
     type,
     metric,
     customMetricId,
+    calculatedMetrics,
     cumulative,
     cumulativeBasis,
     groupBy,
@@ -1916,33 +1922,52 @@ export function WidgetEditorPanel({
                   />
                 )}
 
-                {(needsGroupBy || showGroupByForStat) && (
-                  <label className="flex flex-col gap-1">
-                    <span className={labelClasses}>Group by</span>
-                    <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className={selectClasses}>
-                      {/* For a stat tile, blank is a real choice ("just the
-                          plain total"), not a placeholder — picking a group
-                          turns it into a "top result" tile instead (see
-                          lib/dashboardQuery.ts). Every other type still
-                          requires an actual pick. */}
-                      <option value="" disabled={!showGroupByForStat}>
-                        {showGroupByForStat ? "Just the total (no grouping)" : "Select…"}
-                      </option>
-                      {GROUP_BY_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
+                {/* A periodic metric ("Compare across time periods" — see
+                    CalculatedMetricForm) already does its own bucketing
+                    internally (see lib/dashboardQuery.ts's
+                    computeCustomMetricValue). Also setting Group By here
+                    would layer a second, unrelated "rank every bucket, show
+                    the #1 result" behavior on top of it — e.g. picking
+                    "Average" + Group By: Day doesn't give you "average
+                    spending per day," it gives you "which single day had
+                    the highest average transaction," an easy trap since
+                    both features happen to mention "day." Hiding the
+                    control here (rather than just warning) makes the two
+                    impossible to accidentally combine. */}
+                {showGroupByForStat && selectedMetric?.period ? (
+                  <p className="text-[11px] text-zinc-500">
+                    &ldquo;{selectedMetric.name}&rdquo; already breaks itself down by {selectedMetric.period} — see the Detail
+                    section below for its own date/range and transaction options, instead of Group By.
+                  </p>
+                ) : (
+                  (needsGroupBy || showGroupByForStat) && (
+                    <label className="flex flex-col gap-1">
+                      <span className={labelClasses}>Group by</span>
+                      <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as GroupBy)} className={selectClasses}>
+                        {/* For a stat tile, blank is a real choice ("just
+                            the plain total"), not a placeholder — picking a
+                            group turns it into a "top result" tile instead
+                            (see lib/dashboardQuery.ts). Every other type
+                            still requires an actual pick. */}
+                        <option value="" disabled={!showGroupByForStat}>
+                          {showGroupByForStat ? "Just the total (no grouping)" : "Select…"}
                         </option>
-                      ))}
-                    </select>
-                    {showGroupByForStat && groupBy && (
-                      <label className="flex items-center gap-2 pt-0.5">
-                        <input type="checkbox" checked={sort === "totalAsc"} onChange={(e) => setSort(e.target.checked ? "totalAsc" : "totalDesc")} />
-                        <span className="text-[11px] text-zinc-500">
-                          Show the lowest instead of the highest {GROUP_BY_OPTIONS.find((o) => o.value === groupBy)?.label.toLowerCase()}
-                        </span>
-                      </label>
-                    )}
-                  </label>
+                        {GROUP_BY_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </select>
+                      {showGroupByForStat && groupBy && (
+                        <label className="flex items-center gap-2 pt-0.5">
+                          <input type="checkbox" checked={sort === "totalAsc"} onChange={(e) => setSort(e.target.checked ? "totalAsc" : "totalDesc")} />
+                          <span className="text-[11px] text-zinc-500">
+                            Show the lowest instead of the highest {GROUP_BY_OPTIONS.find((o) => o.value === groupBy)?.label.toLowerCase()}
+                          </span>
+                        </label>
+                      )}
+                    </label>
+                  )
                 )}
 
                 {(showLimit || isScatter) && (

@@ -1035,7 +1035,12 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     const ranked = [...totals.entries()].map(([key, v]) => ({ key, ...v }));
     ranked.sort((a, b) => (config.sort === "totalAsc" ? a.value - b.value : b.value - a.value));
     const top = ranked[0];
-    return { kind: "stat", value: top ? round2(top.value) : 0, label: top?.label };
+    // keyAndLabelFor's own "day" label is a bare "2026-07-14" — fine as a
+    // compact chart-axis tick (its usual job), too terse for a stat tile's
+    // one-line caption, so it's reformatted here rather than changing what
+    // every day-grouped chart's x-axis shows.
+    const label = top ? (groupBy === "day" ? formatPeriodLabel(top.key, "day") : top.label) : undefined;
+    return { kind: "stat", value: top ? round2(top.value) : 0, label };
   }
 
   let points: AggregatedPoint[] = [...totals.entries()].map(([key, { label, value }]) => ({
