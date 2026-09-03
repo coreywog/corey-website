@@ -22,17 +22,16 @@ import {
   YAxis,
   ResponsiveContainer,
 } from "recharts";
-import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
+import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult, DetailRow } from "@/lib/dashboardQuery";
 import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern, ValueFormat, FontFamily, TableColumn } from "@/lib/dashboardConfig";
-import { METRIC_LABELS, TABLE_COLUMN_LABELS, DEFAULT_TABLE_COLUMNS } from "@/lib/dashboardConfig";
-import { describeDateRangeSelection } from "@/lib/finance";
+import { TABLE_COLUMN_LABELS, DEFAULT_TABLE_COLUMNS, TITLE_DATE_TOKEN, deriveWidgetTitle } from "@/lib/dashboardConfig";
 import type { BarShapeProps, PieSectorShapeProps, PieLabelRenderProps } from "recharts";
 
-// Dropped into a custom widget title (WidgetEditorPanel's Title field) to
-// have that one spot re-resolve live to the widget's own date range text —
-// see the `customTitle` computation below. Exported so the editor can offer
-// an "insert" button for it rather than requiring it to be typed exactly.
-export const TITLE_DATE_TOKEN = "{date}";
+// Re-exported so WidgetEditorPanel's existing `import { TITLE_DATE_TOKEN }
+// from "./Widget"` keeps working unchanged — the token itself now lives in
+// lib/dashboardConfig.ts alongside deriveWidgetTitle (see there), which
+// needs it too and can't import from this "use client" file.
+export { TITLE_DATE_TOKEN };
 
 export type WidgetWithData = {
   id: string;
@@ -971,7 +970,7 @@ function TableWidget({
  * `kind: "table"`); `columns` (config.tableColumns, defaulting to
  * DEFAULT_TABLE_COLUMNS) is purely which ones to render, and in what
  * order. */
-function DetailTableWidget({ rows, columns }: { rows: Extract<WidgetResult, { kind: "table" }>["rows"]; columns?: TableColumn[] }) {
+export function DetailTableWidget({ rows, columns }: { rows: DetailRow[]; columns?: TableColumn[] }) {
   if (rows.length === 0) return <EmptyState />;
   const cols = columns?.length ? columns : DEFAULT_TABLE_COLUMNS;
   return (
@@ -1507,28 +1506,11 @@ export function Widget({
   // Recomputed on every render (never stored) so a blank-titled widget using
   // a fluid date range — "Last month", a monthsWindow, YTD — keeps reading
   // correctly as time passes: "Spending — July" becomes "Spending — August"
-  // on its own once August ends, with nothing to manually retype.
-  const autoTitle = chartConfig
-    ? `${
-        chartConfig.series?.length
-          ? "Multiple series"
-          : chartConfig.customMetricId
-            ? (customMetricNames?.[chartConfig.customMetricId] ?? "Custom metric")
-            : METRIC_LABELS[chartConfig.metric]
-      } — ${describeDateRangeSelection(chartConfig.dateRange)}`
-    : null;
-  // A custom title still gets the same live date text substituted in
-  // wherever TITLE_DATE_TOKEN appears — "Food Budget — {date}" reads as
-  // "Food Budget — July" today and "Food Budget — August" once August
-  // starts, same fluid-tracking behavior as the fully auto-generated title
-  // above, just with the user's own wording kept around the moving part
-  // instead of losing it entirely by having to choose between a frozen
-  // custom title or the generic metric-based auto one.
-  const customTitle =
-    widget.title && chartConfig
-      ? widget.title.replaceAll(TITLE_DATE_TOKEN, describeDateRangeSelection(chartConfig.dateRange))
-      : widget.title;
-  const title = customTitle ?? autoTitle ?? "Widget";
+  // on its own once August ends, with nothing to manually retype. See
+  // lib/dashboardConfig.ts's deriveWidgetTitle — same function
+  // lib/dashboardQuery.ts's metric-usage report uses, so a widget's name
+  // there matches what's actually on screen here.
+  const title = deriveWidgetTitle(widget.title, chartConfig, customMetricNames);
   const dateButtons = chartConfig?.dateButtons ?? [];
 
   const [activeButton, setActiveButton] = useState<DateButtonConfig | null>(null);

@@ -4,6 +4,7 @@ import { resolveDateRange, formatMonthLabel, formatCategoryLabel, normalizeMerch
 import type { DateRangeSelection } from "@/lib/finance";
 import { colorForCategory, colorForKey } from "@/components/finance/categoryColors";
 import type { WidgetConfig, ChartWidgetConfig, WidgetType, GroupBy, Metric, SeriesEntryConfig } from "@/lib/dashboardConfig";
+import { WidgetConfigSchema, deriveWidgetTitle } from "@/lib/dashboardConfig";
 
 export type AggregatedPoint = { key: string; label: string; value: number; color: string };
 // One raw transaction, not a bucket — scatter is the one chart type that
@@ -59,19 +60,23 @@ export type WidgetResult =
   // display hint (income "+", spending "−", transfer/other blank) — `amount`
   // itself is always the unsigned magnitude, same convention
   // customMetricRowValue already uses elsewhere in this file.
-  | {
-      kind: "table";
-      rows: {
-        date: string;
-        dayOfWeek: string;
-        merchant: string;
-        category: string;
-        subcategory: string;
-        account: string;
-        amount: number;
-        sign: "+" | "−" | "";
-      }[];
-    };
+  | { kind: "table"; rows: DetailRow[] };
+
+// One individual transaction, shaped for display — shared by a table
+// widget's own "detail" mode (above) and computeDraftMetricPreview's
+// `detailRows` (the metric builder's live "here's what's actually
+// matching" table), via the one toDetailRows helper below, so both surfaces
+// agree on exactly what a row looks like.
+export type DetailRow = {
+  date: string;
+  dayOfWeek: string;
+  merchant: string;
+  category: string;
+  subcategory: string;
+  account: string;
+  amount: number;
+  sign: "+" | "−" | "";
+};
 
 type DecryptedRow = {
   date: Date;
@@ -401,6 +406,25 @@ function dayOfWeekLabel(date: Date): string {
   return WEEKDAY_NAMES[date.getUTCDay()];
 }
 
+/** Newest-first, capped detail rows — shared by a table widget's "detail"
+ * mode and computeDraftMetricPreview's `detailRows` below, so both surfaces
+ * compute the same row shape the same way rather than two drifting copies. */
+function toDetailRows(rows: DecryptedRow[], limit: number): DetailRow[] {
+  return [...rows]
+    .sort((a, b) => b.date.getTime() - a.date.getTime())
+    .slice(0, limit)
+    .map((r) => ({
+      date: r.date.toISOString().slice(0, 10),
+      dayOfWeek: dayOfWeekLabel(r.date),
+      merchant: r.description ? normalizeMerchantName(r.description) : "Unknown",
+      category: formatCategoryLabel(r.category),
+      subcategory: r.merchantSubcategory ? formatCategoryLabel(r.merchantSubcategory) : "—",
+      account: r.accountName,
+      amount: round2(Math.abs(r.amount)),
+      sign: (r.category === "income" ? "+" : r.category === "spending" ? "−" : "") as "+" | "−" | "",
+    }));
+}
+
 function keyAndLabelFor(row: DecryptedRow, groupBy: GroupBy): { key: string; label: string } {
   switch (groupBy) {
     case "day": {
@@ -571,7 +595,20 @@ export type DraftMetricPreview = {
   // transactions" rather than a curated, potentially-contradictory-looking
   // list of a few large raw amounts.
   transactionCount?: number;
+  // Every transaction currently matching this draft metric's scope (not
+  // just a periodic extreme's line items, which is what `transactions`
+  // above is for) — newest first, capped well below sampleSize for a
+  // live-typing preview payload. Always populated (possibly empty), so the
+  // metric builder's table view can render directly off it without a
+  // separate loading state. `sampleSize > detailRows.length` means it's
+  // truncated.
+  detailRows: DetailRow[];
 };
+
+// Smaller than a saved detail table's own cap (100/500, see
+// chartConfigSchema's tableRowLimit) — this rides along on every debounced
+// keystroke while building a metric, not a one-time widget load.
+const DRAFT_PREVIEW_ROW_LIMIT = 50;
 
 /**
  * A calculated metric's value against real data *before it's saved* — the
@@ -610,8 +647,58 @@ export async function computeDraftMetricPreview(
   );
   const rows = filterByMerchant(await fetchRows(where, true), undefined);
   const value = round2(computeCustomMetricValue(rows, metric));
-  const sampleSize = rows.filter((r) => customMetricRowValue(r, metric) !== null).length;
-  return { value, sampleSize, ...computePeriodicDetail(rows, metric, true, true) };
+  const matchingRows = rows.filter((r) => customMetricRowValue(r, metric) !== null);
+  const sampleSize = matchingRows.length;
+  const detailRows = toDetailRows(matchingRows, DRAFT_PREVIEW_ROW_LIMIT);
+  return { value, sampleSize, detailRows, ...computePeriodicDetail(rows, metric, true, true) };
+}
+
+export type MetricUsageEntry = { dashboardName: string; tabName: string; widgetTitle: string; widgetId: string };
+
+/**
+ * Which saved CalculatedMetrics are actually referenced by a real widget
+ * right now, and where — the answer Settings' "Calculated metrics" list
+ * needs before letting someone delete one. There's no foreign key from
+ * DashboardWidget to CalculatedMetric (config is a free-form JSON blob —
+ * see prisma/schema.prisma), so this is a full scan of every widget's
+ * config rather than a join: fine at this app's single-admin scale (see
+ * that schema's own comment), and simpler than a raw jsonb_path_exists
+ * query for the one shape Prisma's own JSON filters can't express anyway
+ * (customMetricId nested inside config.series, a JSON array).
+ *
+ * One query for every metric's usage at once, not N — Settings shows this
+ * proactively next to every metric, not just at delete time.
+ */
+export async function getCalculatedMetricUsage(): Promise<Record<string, MetricUsageEntry[]>> {
+  const [widgets, metrics] = await Promise.all([
+    prisma.dashboardWidget.findMany({ include: { tab: { include: { dashboard: true } } } }),
+    prisma.calculatedMetric.findMany({ select: { id: true, name: true } }),
+  ]);
+  const metricNames = Object.fromEntries(metrics.map((m) => [m.id, m.name]));
+  const usage: Record<string, MetricUsageEntry[]> = {};
+  for (const row of widgets) {
+    // Defensive-read, same as every other place a stored config gets
+    // parsed back (see WidgetConfigSchema's own doc comment) — a widget
+    // with a stale/invalid config just doesn't contribute usage entries,
+    // rather than breaking this scan for every other widget.
+    const parsed = WidgetConfigSchema.safeParse(row.config);
+    if (!parsed.success || parsed.data.dataSource !== "transactions") continue; // a text tile, or a stale/invalid config — neither can reference a metric
+    const config = parsed.data;
+
+    const idsUsed = new Set<string>();
+    if (config.customMetricId) idsUsed.add(config.customMetricId);
+    for (const s of config.series ?? []) if (s.customMetricId) idsUsed.add(s.customMetricId);
+    if (idsUsed.size === 0) continue;
+
+    const entry: MetricUsageEntry = {
+      dashboardName: row.tab.dashboard.name,
+      tabName: row.tab.name,
+      widgetTitle: deriveWidgetTitle(row.title, config, metricNames),
+      widgetId: row.id,
+    };
+    for (const id of idsUsed) (usage[id] ??= []).push(entry);
+  }
+  return usage;
 }
 
 /**
@@ -993,21 +1080,7 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   // than every matching row, same "don't ship an unbounded payload"
   // reasoning as scatter's own cap just below.
   if (type === "table" && config.tableMode === "detail") {
-    const limit = config.tableRowLimit ?? 100;
-    const tableRows = [...rows]
-      .sort((a, b) => b.date.getTime() - a.date.getTime())
-      .slice(0, limit)
-      .map((r) => ({
-        date: r.date.toISOString().slice(0, 10),
-        dayOfWeek: dayOfWeekLabel(r.date),
-        merchant: r.description ? normalizeMerchantName(r.description) : "Unknown",
-        category: formatCategoryLabel(r.category),
-        subcategory: r.merchantSubcategory ? formatCategoryLabel(r.merchantSubcategory) : "—",
-        account: r.accountName,
-        amount: round2(Math.abs(r.amount)),
-        sign: (r.category === "income" ? "+" : r.category === "spending" ? "−" : "") as "+" | "−" | "",
-      }));
-    return { kind: "table", rows: tableRows };
+    return { kind: "table", rows: toDetailRows(rows, config.tableRowLimit ?? 100) };
   }
 
   // Scatter is the one chart type that plots raw transactions instead of an

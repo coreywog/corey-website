@@ -6,6 +6,7 @@ import { ConnectBank } from "@/components/ConnectBank";
 import { SyncPlaidButton } from "@/components/SyncPlaidButton";
 import { DisconnectPlaidButton } from "@/components/DisconnectPlaidButton";
 import { CalculatedMetricsManager } from "@/components/dashboards/CalculatedMetricsManager";
+import { getCalculatedMetricUsage } from "@/lib/dashboardQuery";
 
 export default async function SettingsPage() {
   // Proxy already gates this route, but never trust that alone — re-verify.
@@ -14,12 +15,16 @@ export default async function SettingsPage() {
     redirect("/quietharbor");
   }
 
-  const [plaidItems, calculatedMetrics, categorized] = await Promise.all([
+  const [plaidItems, calculatedMetrics, metricUsage, categorized] = await Promise.all([
     prisma.plaidItem.findMany({
       include: { accounts: { select: { id: true, name: true, archived: true } } },
       orderBy: { createdAt: "asc" },
     }),
     prisma.calculatedMetric.findMany({ orderBy: [{ order: "asc" }, { createdAt: "asc" }] }),
+    // Proactively shown next to every metric below, and re-checked before a
+    // delete goes through — see getCalculatedMetricUsage's own doc comment
+    // for why this is a full-widget scan, not a join.
+    getCalculatedMetricUsage(),
     // Same source as the widget editor's own category picker
     // (app/api/dashboards/[id]/editor-context) — just enough for
     // CalculatedMetricForm's merchant-category scoping, not the full
@@ -54,7 +59,7 @@ export default async function SettingsPage() {
           Saved measures usable as the Metric on any dashboard widget — sums, averages, percentiles, and
           period-over-period comparisons, each optionally scoped to a transaction type or merchant categories.
         </p>
-        <CalculatedMetricsManager initialMetrics={calculatedMetrics} categoryOptions={categoryOptions} />
+        <CalculatedMetricsManager initialMetrics={calculatedMetrics} categoryOptions={categoryOptions} initialUsage={metricUsage} />
       </div>
 
       <div className="flex flex-col gap-3">

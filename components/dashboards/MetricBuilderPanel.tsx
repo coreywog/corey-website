@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { CalculatedMetricForm, type Aggregation, type DraftMetricFields, type MetricPeriod } from "./CalculatedMetricForm";
+import { DetailTableWidget } from "./Widget";
 import type { CalculatedMetricOption } from "./types";
 import type { ChartWidgetConfig } from "@/lib/dashboardConfig";
+import type { DetailRow } from "@/lib/dashboardQuery";
 import { formatCategoryLabel } from "@/lib/finance";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
@@ -79,6 +81,7 @@ type PreviewState =
       label?: string;
       transactions?: { merchant: string; amount: number }[];
       transactionCount?: number;
+      detailRows: DetailRow[];
     };
 
 /**
@@ -152,6 +155,7 @@ export function MetricBuilderPanel({
             label: body.label,
             transactions: body.transactions,
             transactionCount: body.transactionCount,
+            detailRows: body.detailRows ?? [],
           });
         } else {
           setPreview({ status: "error", message: "Couldn't compute a preview for this metric." });
@@ -229,6 +233,23 @@ export function MetricBuilderPanel({
                 <p className="mt-2 text-[11px] text-zinc-500">
                   Made up of {preview.transactionCount} transaction{preview.transactionCount === 1 ? "" : "s"} that period.
                 </p>
+              )}
+              {/* Everything currently matching this metric's own scope — a
+                  different, wider question than the periodic-extreme list
+                  above ("what made up March" vs. "what's in scope at all
+                  right now"). Requested explicitly: seeing the real rows
+                  behind a metric while building it, not just after saving
+                  it onto a widget. */}
+              {preview.detailRows.length > 0 && (
+                <div className="mt-3 border-t border-black/[.06] pt-3 dark:border-white/[.08]">
+                  <p className="text-[11px] text-zinc-500">
+                    Matching transactions
+                    {preview.sampleSize > preview.detailRows.length ? ` (newest ${preview.detailRows.length} of ${preview.sampleSize})` : ""}:
+                  </p>
+                  <div className="mt-1 max-h-64 overflow-y-auto">
+                    <DetailTableWidget rows={preview.detailRows} />
+                  </div>
+                </div>
               )}
             </>
           )}

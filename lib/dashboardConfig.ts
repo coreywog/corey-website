@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { describeDateRangeSelection } from "@/lib/finance";
 
 /**
  * Validated shape of DashboardWidget.config (see prisma/schema.prisma —
@@ -156,6 +157,45 @@ export const METRIC_LABELS: Record<Metric, string> = {
   net: "Net",
   transactionCount: "Transactions",
 };
+
+// A magic substring a custom title can include to keep one spot
+// live-updated with the widget's own date range — "Food Budget — {date}"
+// reads as "Food Budget — July" today and "Food Budget — August" once
+// August starts, without ever needing to retype it. Lives here (not
+// Widget.tsx, a "use client" file) so lib/dashboardQuery.ts's usage-report
+// logic can compute the same real title a live widget shows, not a
+// second, drifting approximation of it — see deriveWidgetTitle below.
+export const TITLE_DATE_TOKEN = "{date}";
+
+/**
+ * The title a widget actually displays — a custom title (with
+ * TITLE_DATE_TOKEN substituted) if one was set, else an auto-generated
+ * "{measure} — {date range}" (e.g. "Spending — Last 3 months", "Average
+ * grocery trip — Year to date"). Pure and framework-agnostic (no React) so
+ * both Widget.tsx's live render and lib/dashboardQuery.ts's metric-usage
+ * report resolve the exact same name for a widget, rather than the report
+ * inventing its own approximation. Extracted from Widget.tsx's own
+ * inline autoTitle/customTitle computation — same logic, same result,
+ * just callable from a server-side scan too.
+ */
+export function deriveWidgetTitle(
+  title: string | null,
+  chartConfig: ChartWidgetConfig | undefined,
+  customMetricNames: Record<string, string> | undefined,
+): string {
+  const autoTitle = chartConfig
+    ? `${
+        chartConfig.series?.length
+          ? "Multiple series"
+          : chartConfig.customMetricId
+            ? (customMetricNames?.[chartConfig.customMetricId] ?? "Custom metric")
+            : METRIC_LABELS[chartConfig.metric]
+      } — ${describeDateRangeSelection(chartConfig.dateRange)}`
+    : null;
+  const customTitle =
+    title && chartConfig ? title.replaceAll(TITLE_DATE_TOKEN, describeDateRangeSelection(chartConfig.dateRange)) : title;
+  return customTitle ?? autoTitle ?? "Widget";
+}
 
 // "dayOfWeek" buckets by calendar weekday (Sunday..Saturday) across the
 // whole date range — a *category* like merchantCategory/account, not a

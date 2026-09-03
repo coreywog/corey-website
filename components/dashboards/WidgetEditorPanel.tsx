@@ -31,6 +31,7 @@ import {
 } from "./Widget";
 import type { CalculatedMetricOption } from "./types";
 import { MetricBuilderPanel } from "./MetricBuilderPanel";
+import { MetricPicker } from "./MetricPicker";
 import type {
   WidgetConfig,
   ChartWidgetConfig,
@@ -173,10 +174,12 @@ function FilterChip({ label }: { label: string }) {
 
 type DateRangeMode = "relative" | "relativeDays" | "monthsWindow" | "relativeMonth" | "ytd" | "specific" | "allTime" | "custom";
 
-const selectClasses =
+// Exported — components/dashboards/MetricPicker.tsx reuses these rather
+// than re-declaring the same styling a second place.
+export const selectClasses =
   "rounded-md border border-black/[.1] bg-white px-2 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500";
-const labelClasses = "text-xs text-zinc-500";
-const pillClasses = (active: boolean) =>
+export const labelClasses = "text-xs text-zinc-500";
+export const pillClasses = (active: boolean) =>
   "rounded-full border px-3 py-1 text-xs font-medium transition-colors " +
   (active
     ? "border-zinc-900 bg-zinc-900 text-white dark:border-zinc-50 dark:bg-zinc-50 dark:text-zinc-900 creamsicle:border-orange-600 creamsicle:bg-orange-600 creamsicle:text-white"
@@ -1775,55 +1778,16 @@ export function WidgetEditorPanel({
                                 placeholder={`${seriesNoun} ${i + 1} (optional name)`}
                                 className={selectClasses}
                               />
-                              <div className="flex items-center gap-1.5">
-                                <select
-                                  value={s.customMetricId ? `custom:${s.customMetricId}` : s.metric}
-                                  onChange={(e) => {
-                                    const v = e.target.value;
-                                    if (v === "__new__") {
-                                      setMetricBuilder({ mode: "create", target: { kind: "series", seriesId: s.id } });
-                                      return;
-                                    }
-                                    if (v.startsWith("custom:")) updateSeriesLine(s.id, { customMetricId: v.slice("custom:".length) });
-                                    else updateSeriesLine(s.id, { metric: v as Metric, customMetricId: undefined });
-                                  }}
-                                  className={selectClasses + " flex-1"}
-                                >
-                                  {METRIC_OPTIONS.filter((o) => !isHistogram || o.value !== "transactionCount").map((o) => (
-                                    <option key={o.value} value={o.value}>
-                                      {o.label}
-                                    </option>
-                                  ))}
-                                  {!isHistogram && (
-                                    <>
-                                      {calculatedMetrics.length > 0 && (
-                                        <optgroup label="Your metrics">
-                                          {calculatedMetrics.map((m) => (
-                                            <option key={m.id} value={`custom:${m.id}`}>
-                                              {m.name}
-                                            </option>
-                                          ))}
-                                        </optgroup>
-                                      )}
-                                      <option value="__new__">+ New calculated metric…</option>
-                                    </>
-                                  )}
-                                </select>
-                                {s.customMetricId && (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      const m = calculatedMetrics.find((m) => m.id === s.customMetricId);
-                                      if (m) setMetricBuilder({ mode: "edit", target: { kind: "series", seriesId: s.id }, metric: m });
-                                    }}
-                                    title="Edit this metric"
-                                    aria-label="Edit this metric"
-                                    className="shrink-0 text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
-                                  >
-                                    ✎
-                                  </button>
-                                )}
-                              </div>
+                              <MetricPicker
+                                value={s.customMetricId ? { kind: "custom", id: s.customMetricId } : { kind: "builtin", metric: s.metric }}
+                                builtinOptions={METRIC_OPTIONS.filter((o) => !isHistogram || o.value !== "transactionCount")}
+                                calculatedMetrics={calculatedMetrics}
+                                allowCustom={!isHistogram}
+                                onSelectBuiltin={(m) => updateSeriesLine(s.id, { metric: m, customMetricId: undefined })}
+                                onSelectCustom={(id) => updateSeriesLine(s.id, { customMetricId: id })}
+                                onCreate={() => setMetricBuilder({ mode: "create", target: { kind: "series", seriesId: s.id } })}
+                                onEdit={(m) => setMetricBuilder({ mode: "edit", target: { kind: "series", seriesId: s.id }, metric: m })}
+                              />
                               {/* Quick whole-widget measures — none of the actual
                                   merchant categories below represent income (income
                                   transactions aren't assigned a spending category),
@@ -1933,67 +1897,27 @@ export function WidgetEditorPanel({
                   </div>
                 ) : (
                   <>
-                    <label className="flex flex-col gap-1">
-                      <span className={labelClasses}>Metric</span>
-                      <div className="flex items-center gap-1.5">
-                        <select
-                          value={customMetricId ? `custom:${customMetricId}` : metric}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            if (v === "__new__") {
-                              setMetricBuilder({ mode: "create", target: { kind: "single" } });
-                              return;
-                            }
-                            if (v.startsWith("custom:")) {
-                              setCustomMetricId(v.slice("custom:".length));
-                              return;
-                            }
-                            setCustomMetricId(undefined);
-                            setMetric(v as Metric);
-                          }}
-                          className={selectClasses + " flex-1"}
-                        >
-                          {/* "Transaction count" is meaningless per-transaction —
-                              every scatter point or histogram sample is exactly
-                              one, so it'd produce a flat line of dots or a single
-                              useless bin. Hidden rather than allowed through. */}
-                          {METRIC_OPTIONS.filter((o) => !(isScatter || isHistogram) || o.value !== "transactionCount").map((o) => (
-                            <option key={o.value} value={o.value}>
-                              {o.label}
-                            </option>
-                          ))}
-                          {/* Saved metrics apply to bucketed/stat results only —
-                              scatter plots raw transactions and histogram bins by
-                              magnitude, neither of which has a "sum vs. average"
-                              distinction to offer. */}
-                          {!isScatter && !isHistogram && !isStackedBar && (
-                            <>
-                              {calculatedMetrics.length > 0 && (
-                                <optgroup label="Your metrics">
-                                  {calculatedMetrics.map((m) => (
-                                    <option key={m.id} value={`custom:${m.id}`}>
-                                      {m.name}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              )}
-                              <option value="__new__">+ New calculated metric…</option>
-                            </>
-                          )}
-                        </select>
-                        {selectedMetric && (
-                          <button
-                            type="button"
-                            onClick={() => setMetricBuilder({ mode: "edit", target: { kind: "single" }, metric: selectedMetric })}
-                            title="Edit this metric"
-                            aria-label="Edit this metric"
-                            className="shrink-0 text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200"
-                          >
-                            ✎
-                          </button>
-                        )}
-                      </div>
-                    </label>
+                    <MetricPicker
+                      value={customMetricId ? { kind: "custom", id: customMetricId } : { kind: "builtin", metric }}
+                      // "Transaction count" is meaningless per-transaction —
+                      // every scatter point or histogram sample is exactly
+                      // one, so it'd produce a flat line of dots or a single
+                      // useless bin. Hidden rather than allowed through.
+                      builtinOptions={METRIC_OPTIONS.filter((o) => !(isScatter || isHistogram) || o.value !== "transactionCount")}
+                      calculatedMetrics={calculatedMetrics}
+                      // Saved metrics apply to bucketed/stat results only —
+                      // scatter plots raw transactions and histogram bins by
+                      // magnitude, neither of which has a "sum vs. average"
+                      // distinction to offer.
+                      allowCustom={!isScatter && !isHistogram && !isStackedBar}
+                      onSelectBuiltin={(m) => {
+                        setCustomMetricId(undefined);
+                        setMetric(m);
+                      }}
+                      onSelectCustom={setCustomMetricId}
+                      onCreate={() => setMetricBuilder({ mode: "create", target: { kind: "single" } })}
+                      onEdit={(m) => setMetricBuilder({ mode: "edit", target: { kind: "single" }, metric: m })}
+                    />
 
                     {isTimeSeries && (
                       <div className="flex flex-col gap-1.5">

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { formatCategoryLabel } from "@/lib/finance";
 import { CalculatedMetricForm } from "./CalculatedMetricForm";
 import type { CalculatedMetricOption } from "./types";
+import type { MetricUsageEntry } from "@/lib/dashboardQuery";
 
 const AGGREGATION_LABELS: Record<string, string> = {
   sum: "Sum",
@@ -47,23 +48,57 @@ function describeMetric(m: CalculatedMetricOption): string {
  * surface for the saved metrics the widget editor's "+ New calculated
  * metric…" flow creates. Previously there was no way to see them all in
  * one place, edit one, or actually reach the (already-existing but
- * uncalled) delete endpoint.
+ * uncalled) delete endpoint. Now also shows, for every metric, exactly
+ * which dashboard widgets currently use it — and re-checks that before
+ * letting a delete through, since deleting a metric a widget still
+ * references makes that widget silently fall back to a generic built-in
+ * measure instead of erroring, which is easy to not notice happened.
  */
 export function CalculatedMetricsManager({
   initialMetrics,
   categoryOptions,
+  initialUsage,
 }: {
   initialMetrics: CalculatedMetricOption[];
   categoryOptions: { category: string; subcategory: string }[];
+  initialUsage: Record<string, MetricUsageEntry[]>;
 }) {
   const [metrics, setMetrics] = useState(initialMetrics);
+  const [usage, setUsage] = useState(initialUsage);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Distinct from "which row is mid-delete" (deletingId, below) — this is
+  // "which row is showing the confirm-before-delete step," entered by
+  // clicking Delete and left by Cancel or a completed delete.
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const [checkingUsage, setCheckingUsage] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleDelete(metric: CalculatedMetricOption) {
-    if (!window.confirm(`Delete "${metric.name}"? Any widget still using it falls back to its own built-in metric.`)) return;
+  async function startDelete(id: string) {
+    setError(null);
+    setConfirmingDeleteId(id);
+    // Re-checked here, not just read from the page-load snapshot — a
+    // widget could have started using this metric (or stopped) since this
+    // page loaded, and the whole point of this step is not to be stale
+    // right before a destructive action.
+    setCheckingUsage(true);
+    try {
+      const res = await fetch("/api/dashboards/metrics/usage");
+      if (res.ok) {
+        const body = await res.json();
+        setUsage(body.usage);
+      }
+    } catch {
+      // Falls back to the last-known snapshot (page load, or an earlier
+      // check) — still shows a real, if possibly slightly stale, warning
+      // rather than blocking the whole delete flow on a network hiccup.
+    } finally {
+      setCheckingUsage(false);
+    }
+  }
+
+  async function confirmDelete(metric: CalculatedMetricOption) {
     setDeletingId(metric.id);
     setError(null);
     try {
@@ -74,6 +109,7 @@ export function CalculatedMetricsManager({
         return;
       }
       setMetrics((prev) => prev.filter((m) => m.id !== metric.id));
+      setConfirmingDeleteId(null);
     } catch {
       setError("Network error — try again.");
     } finally {
@@ -87,19 +123,81 @@ export function CalculatedMetricsManager({
         <p className="text-sm text-zinc-500">None yet — a widget&apos;s Metric picker can create one, or start here.</p>
       )}
 
-      {metrics.map((m) =>
-        editingId === m.id ? (
-          <CalculatedMetricForm
-            key={m.id}
-            initial={m}
-            categoryOptions={categoryOptions}
-            onSaved={(updated) => {
-              setMetrics((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-              setEditingId(null);
-            }}
-            onCancel={() => setEditingId(null)}
-          />
-        ) : (
+      {metrics.map((m) => {
+        const usedBy = usage[m.id] ?? [];
+        if (editingId === m.id) {
+          return (
+            <CalculatedMetricForm
+              key={m.id}
+              initial={m}
+              categoryOptions={categoryOptions}
+              onSaved={(updated) => {
+                setMetrics((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
+                setEditingId(null);
+              }}
+              onCancel={() => setEditingId(null)}
+            />
+          );
+        }
+        if (confirmingDeleteId === m.id) {
+          return (
+            <div
+              key={m.id}
+              className={
+                "flex flex-col gap-2 rounded-md border p-3 " +
+                (usedBy.length > 0
+                  ? "border-red-300 bg-red-50 dark:border-red-900/50 dark:bg-red-950/20"
+                  : "border-black/[.08] dark:border-white/[.1]")
+              }
+            >
+              {checkingUsage ? (
+                <p className="text-sm text-zinc-500">Checking where &ldquo;{m.name}&rdquo; is used…</p>
+              ) : usedBy.length > 0 ? (
+                <>
+                  <p className="text-sm font-medium text-red-700 dark:text-red-400">
+                    This will affect {usedBy.length} widget{usedBy.length === 1 ? "" : "s"}
+                  </p>
+                  <ul className="flex flex-col gap-0.5 text-xs text-red-700/90 dark:text-red-300/90">
+                    {usedBy.map((u) => (
+                      <li key={u.widgetId}>
+                        {u.dashboardName} → {u.tabName} → &ldquo;{u.widgetTitle}&rdquo;
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-red-700/90 dark:text-red-300/90">
+                    Deleting &ldquo;{m.name}&rdquo; won&rsquo;t delete these widgets, but any graph or number built from it will fall back to a
+                    generic built-in metric.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-zinc-600 dark:text-zinc-400">
+                  Delete &ldquo;{m.name}&rdquo;? Nothing currently uses it.
+                </p>
+              )}
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmingDeleteId(null)}
+                  className="rounded-md border border-black/[.1] px-3 py-1.5 text-sm text-zinc-600 hover:bg-black/[.03] dark:border-white/[.15] dark:text-zinc-400 dark:hover:bg-white/[.05]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => confirmDelete(m)}
+                  disabled={checkingUsage || deletingId === m.id}
+                  className={
+                    "rounded-md px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50 " +
+                    (usedBy.length > 0 ? "bg-red-600 hover:bg-red-700" : "bg-zinc-900 hover:bg-zinc-700 dark:bg-zinc-50 dark:text-zinc-900")
+                  }
+                >
+                  {deletingId === m.id ? "Deleting…" : usedBy.length > 0 ? "Delete anyway" : "Delete"}
+                </button>
+              </div>
+            </div>
+          );
+        }
+        return (
           <div
             key={m.id}
             className="flex items-center justify-between gap-3 rounded-md border border-black/[.08] px-3 py-2 dark:border-white/[.1]"
@@ -107,6 +205,9 @@ export function CalculatedMetricsManager({
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">{m.name}</p>
               <p className="truncate text-xs text-zinc-500">{describeMetric(m)}</p>
+              <p className={"truncate text-[11px] " + (usedBy.length > 0 ? "text-amber-700 dark:text-amber-400" : "text-zinc-400")}>
+                {usedBy.length > 0 ? `Used on ${usedBy.length} widget${usedBy.length === 1 ? "" : "s"}` : "Not used on any dashboard"}
+              </p>
             </div>
             <div className="flex shrink-0 items-center gap-1">
               <button
@@ -118,16 +219,15 @@ export function CalculatedMetricsManager({
               </button>
               <button
                 type="button"
-                onClick={() => handleDelete(m)}
-                disabled={deletingId === m.id}
-                className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:hover:bg-red-950/30 dark:hover:text-red-400"
+                onClick={() => startDelete(m.id)}
+                className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/30 dark:hover:text-red-400"
               >
-                {deletingId === m.id ? "…" : "Delete"}
+                Delete
               </button>
             </div>
           </div>
-        ),
-      )}
+        );
+      })}
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
