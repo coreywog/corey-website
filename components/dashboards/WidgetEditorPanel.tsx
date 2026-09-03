@@ -43,8 +43,19 @@ import type {
   FillPattern,
   FontFamily,
   CumulativeBasis,
+  TableColumn,
 } from "@/lib/dashboardConfig";
-import { WIDGET_COLORS, DATE_BUTTON_PRESETS, GRADIENT_PRESETS, LINE_STYLES, FILL_PATTERNS, FONT_FAMILIES } from "@/lib/dashboardConfig";
+import {
+  WIDGET_COLORS,
+  DATE_BUTTON_PRESETS,
+  GRADIENT_PRESETS,
+  LINE_STYLES,
+  FILL_PATTERNS,
+  FONT_FAMILIES,
+  TABLE_COLUMNS,
+  TABLE_COLUMN_LABELS,
+  DEFAULT_TABLE_COLUMNS,
+} from "@/lib/dashboardConfig";
 
 type CategoryOption = { category: string; subcategory: string };
 type Account = { id: string; name: string };
@@ -92,6 +103,7 @@ const METRIC_OPTIONS: { value: Metric; label: string }[] = [
 const GROUP_BY_OPTIONS: { value: GroupBy; label: string }[] = [
   { value: "day", label: "Day" },
   { value: "month", label: "Month" },
+  { value: "dayOfWeek", label: "Day of week" },
   { value: "merchantCategory", label: "Category" },
   { value: "merchantSubcategory", label: "Subcategory" },
   { value: "account", label: "Account" },
@@ -602,6 +614,15 @@ export function WidgetEditorPanel({
   const [accountDropdownOpen, setAccountDropdownOpen] = useState(false);
   const [limit, setLimit] = useState(chartConfig?.limit ? String(chartConfig.limit) : "");
   const [histogramBins, setHistogramBins] = useState(String(chartConfig?.histogramBins ?? 12));
+  // Table tiles only — "detail" lists individual transactions (see
+  // lib/dashboardQuery.ts's `kind: "table"`) instead of the grouped rollup
+  // ("summary") a table originally always was. tableColumns defaults to
+  // DEFAULT_TABLE_COLUMNS when empty, same "omit the default" convention as
+  // everything else here — an empty array in state still means "use the
+  // default," not "show nothing."
+  const [tableMode, setTableMode] = useState<"summary" | "detail">(chartConfig?.tableMode ?? "summary");
+  const [tableColumns, setTableColumns] = useState<TableColumn[]>(chartConfig?.tableColumns ?? []);
+  const [tableRowLimit, setTableRowLimit] = useState(String(chartConfig?.tableRowLimit ?? 100));
   const [compareToPrevious, setCompareToPrevious] = useState(chartConfig?.compareToPrevious ?? false);
   const [showMetricPeriodLabel, setShowMetricPeriodLabel] = useState(chartConfig?.showMetricPeriodLabel ?? false);
   const [showMetricTransactions, setShowMetricTransactions] = useState(chartConfig?.showMetricTransactions ?? false);
@@ -664,10 +685,17 @@ export function WidgetEditorPanel({
   const isHistogram = type === "histogram";
   const isStackedBar = type === "stackedBar";
   const isCalendar = type === "calendar";
-  // None of these three group by a picked field the normal way: scatter and
-  // histogram plot/bin raw transactions, and calendar's grouping is always
-  // "day" — forced below in the config useMemo, not offered as a choice.
-  const needsGroupBy = !isText && !isScatter && !isHistogram && !isCalendar && type !== "stat";
+  const isTable = type === "table";
+  // A detail table lists individual transactions (real dates, day of week,
+  // merchant, etc. — see lib/dashboardQuery.ts's `kind: "table"`) instead
+  // of a grouped rollup, so it has no groupBy at all — same reasoning as
+  // scatter, just for a table instead of a chart.
+  const isDetailTable = isTable && tableMode === "detail";
+  // None of these group by a picked field the normal way: scatter and
+  // histogram plot/bin raw transactions, calendar's grouping is always
+  // "day" (forced below in the config useMemo, not offered as a choice),
+  // and a detail table lists rows instead of grouping them.
+  const needsGroupBy = !isText && !isScatter && !isHistogram && !isCalendar && !isDetailTable && type !== "stat";
   // A stat tile's own groupBy is always optional (the no-groupBy case is
   // still the plain single-number stat it always was) — but choosing one
   // turns it into a "top category"/"bottom category" style tile, showing
@@ -682,7 +710,7 @@ export function WidgetEditorPanel({
   // The other coloring mode — per-point, for chart types with more than one
   // visual element at once. Mutually exclusive with showColor by type (a
   // widget is never both).
-  const showMultiColor = type === "bar" || isHistogram || type === "pie" || type === "table";
+  const showMultiColor = type === "bar" || isHistogram || type === "pie" || (isTable && !isDetailTable);
   // Style section, below Color/Colors — line stroke dash pattern (line/area
   // only) and shape fill texture (anything with a solid fill to texture;
   // table/stat/calendar/scatter don't have one worth theming this way).
@@ -907,6 +935,13 @@ export function WidgetEditorPanel({
       // Only persist when it differs from the schema default (12) — same
       // "don't save the default" convention as every other opt-in field.
       ...(isHistogram && Number(histogramBins) !== 12 ? { histogramBins: Number(histogramBins) } : {}),
+      ...(isDetailTable
+        ? {
+            tableMode: "detail" as const,
+            ...(tableColumns.length ? { tableColumns } : {}),
+            ...(Number(tableRowLimit) !== 100 ? { tableRowLimit: Number(tableRowLimit) } : {}),
+          }
+        : {}),
       ...(type === "stat" ? { compareToPrevious } : {}),
       ...(type === "stat" && showMetricPeriodLabel ? { showMetricPeriodLabel: true } : {}),
       ...(type === "stat" && showMetricTransactions ? { showMetricTransactions: true } : {}),
@@ -972,6 +1007,9 @@ export function WidgetEditorPanel({
     amountMax,
     limit,
     histogramBins,
+    tableMode,
+    tableColumns,
+    tableRowLimit,
     compareToPrevious,
     showMetricPeriodLabel,
     showMetricTransactions,
@@ -1190,13 +1228,14 @@ export function WidgetEditorPanel({
           )}
         </label>
 
-        {/* `relative` wrapper exists only to host the metric-builder overlay
-            below — see its own comment for why. */}
-        <div className="relative">
         <div className="grid grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] items-start gap-4">
           {/* Left column: every field, each independently filterable — click
               one to open its picker. Hidden for a text tile, which has no
-              data behind it at all. */}
+              data behind it at all. Stays fully interactive while the
+              metric builder is open (unlike the right column below) —
+              Account and Date here are exactly what the builder's live
+              preview is scoped to, so changing them while you build is
+              meant to work, not be blocked. */}
           {!isText && (
             <div className="flex flex-col gap-1 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
               <span className={labelClasses}>Data sources — click a column to filter by it</span>
@@ -1634,8 +1673,14 @@ export function WidgetEditorPanel({
           )}
 
           {/* Right column: what kind of tile, then (once picked) its
-              type-specific config, then filters/style below that. */}
-          <div className={"flex flex-col gap-3" + (isText ? " col-span-2" : "")}>
+              type-specific config, then filters/style below that. `relative`
+              hosts the metric-builder overlay below — unlike the left
+              column, none of this (the widget's own Type/Metric/Group by)
+              feeds the metric being built, so it's the one blurred out
+              while the builder is open (desktop only — see the overlay's
+              own comment for why not on mobile, where this same space is
+              the builder itself). */}
+          <div className={"relative flex flex-col gap-3" + (isText ? " col-span-2" : "")}>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -2001,6 +2046,67 @@ export function WidgetEditorPanel({
                   </div>
                 )}
 
+                {/* Table tiles only — "Summary" is a table's original
+                    behavior (the same grouped rows a bar/pie would show, as
+                    text — still uses Group By below). "Detail" lists
+                    individual transactions instead, with real dates (see
+                    lib/dashboardQuery.ts's `kind: "table"`) — the only
+                    place in the app you can see an actual transaction date
+                    and day of week side by side, not a bucketed one. */}
+                {isTable && (
+                  <div className="flex flex-col gap-2 rounded-lg border border-black/[.08] p-3 dark:border-white/[.1]">
+                    <span className={labelClasses}>Table shows</span>
+                    <div className="flex gap-1.5">
+                      {(
+                        [
+                          ["summary", "Summary (grouped)"],
+                          ["detail", "Detail (individual transactions)"],
+                        ] as const
+                      ).map(([mode, label]) => (
+                        <button key={mode} type="button" onClick={() => setTableMode(mode)} className={pillClasses(tableMode === mode)}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    {isDetailTable && (
+                      <>
+                        <span className={labelClasses + " mt-1"}>Columns</span>
+                        <div className="flex flex-wrap gap-x-3 gap-y-1">
+                          {TABLE_COLUMNS.map((c) => {
+                            const active = tableColumns.length ? tableColumns.includes(c) : DEFAULT_TABLE_COLUMNS.includes(c);
+                            return (
+                              <label key={c} className="flex items-center gap-1.5 text-sm">
+                                <input
+                                  type="checkbox"
+                                  checked={active}
+                                  onChange={(e) =>
+                                    setTableColumns((prev) => {
+                                      const base = prev.length ? prev : DEFAULT_TABLE_COLUMNS;
+                                      return e.target.checked ? [...base, c] : base.filter((x) => x !== c);
+                                    })
+                                  }
+                                />
+                                {TABLE_COLUMN_LABELS[c]}
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <label className="mt-1 flex flex-col gap-1">
+                          <span className={labelClasses}>Rows (most recent first)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={500}
+                            value={tableRowLimit}
+                            onChange={(e) => setTableRowLimit(e.target.value)}
+                            className={selectClasses + " w-24"}
+                          />
+                        </label>
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {/* A periodic metric ("Compare across time periods" — see
                     CalculatedMetricForm) already does its own bucketing
                     internally (see lib/dashboardQuery.ts's
@@ -2094,28 +2200,27 @@ export function WidgetEditorPanel({
               </>
             )}
 
+            {/* Only this column (the widget's own Type/Metric/Group by/
+                Series/Buttons/etc.) gets covered — Data sources to the left
+                stays fully live, since Account and Date there are exactly
+                what the builder's preview is scoped to; changing them here
+                while you build is meant to work. `hidden lg:flex`: below
+                `lg` there's no separate builder panel to protect this
+                column *from* — the builder replaces this same space inline
+                instead (see the `lg:hidden` MetricBuilderPanel above), so
+                blurring it there would hide the thing you're using. */}
+            {metricBuilder.mode !== "closed" && (
+              <div className="absolute inset-0 z-10 hidden items-start justify-center rounded-lg bg-[var(--background)]/85 pt-12 backdrop-blur-[2px] lg:flex">
+                <div className="mx-4 max-w-xs rounded-lg border border-black/[.1] bg-[var(--background)] p-4 text-center shadow-lg dark:border-white/[.15]">
+                  <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">Building a metric</p>
+                  <p className="mt-1.5 text-[13px] text-zinc-600 dark:text-zinc-300">
+                    None of this widget&rsquo;s own type/metric/grouping affects the metric you&rsquo;re building on the right. Its Account and
+                    Date, on the left, still do — feel free to adjust those as you go.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-        {/* Everything above (Data sources, this widget's own Metric/Group
-            by/etc.) is real and interactive, but none of it feeds the
-            metric being built — only this widget's current Account and
-            Date carry into the preview (see MetricBuilderPanel's `scope`
-            prop), and even those are frozen at whatever they already were
-            when the builder opened, not editable from here. Blurred +
-            covered rather than just left ambiguous, so "does this stuff
-            matter right now?" has an unmissable, explicit answer instead
-            of being something to guess at. */}
-        {metricBuilder.mode !== "closed" && (
-          <div className="absolute inset-0 z-10 flex items-start justify-center rounded-lg bg-[var(--background)]/85 pt-12 backdrop-blur-[2px]">
-            <div className="mx-4 max-w-sm rounded-lg border border-black/[.1] bg-[var(--background)] p-4 text-center shadow-lg dark:border-white/[.15]">
-              <p className="text-sm font-medium text-zinc-800 dark:text-zinc-100">Building a metric</p>
-              <p className="mt-1.5 text-[13px] text-zinc-600 dark:text-zinc-300">
-                Uses this widget&rsquo;s own Account and Date ({dateRangeSummary}) — shown behind, frozen while you build. Nothing else here
-                (Amount/Merchant/Category filters, or this widget&rsquo;s own Metric/Group by) affects the metric on the right.
-              </p>
-            </div>
-          </div>
-        )}
         </div>
 
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}

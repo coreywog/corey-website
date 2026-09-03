@@ -23,8 +23,8 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import type { AggregatedPoint, ScatterPoint, StackedPoint, StackedSeries, WidgetResult } from "@/lib/dashboardQuery";
-import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern, ValueFormat, FontFamily } from "@/lib/dashboardConfig";
-import { METRIC_LABELS } from "@/lib/dashboardConfig";
+import type { WidgetConfig, ChartWidgetConfig, DateButtonConfig, DateButtonPreset, LineStyle, FillPattern, ValueFormat, FontFamily, TableColumn } from "@/lib/dashboardConfig";
+import { METRIC_LABELS, TABLE_COLUMN_LABELS, DEFAULT_TABLE_COLUMNS } from "@/lib/dashboardConfig";
 import { describeDateRangeSelection } from "@/lib/finance";
 import type { BarShapeProps, PieSectorShapeProps, PieLabelRenderProps } from "recharts";
 
@@ -965,6 +965,50 @@ function TableWidget({
   );
 }
 
+/** A table tile in "detail" mode — individual matching transactions, real
+ * date (and day of week) included, instead of TableWidget's grouped
+ * rollup. Every row always carries every field (see lib/dashboardQuery.ts's
+ * `kind: "table"`); `columns` (config.tableColumns, defaulting to
+ * DEFAULT_TABLE_COLUMNS) is purely which ones to render, and in what
+ * order. */
+function DetailTableWidget({ rows, columns }: { rows: Extract<WidgetResult, { kind: "table" }>["rows"]; columns?: TableColumn[] }) {
+  if (rows.length === 0) return <EmptyState />;
+  const cols = columns?.length ? columns : DEFAULT_TABLE_COLUMNS;
+  return (
+    <div className="h-full overflow-auto text-sm">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr className="border-b border-black/[.08] text-left text-xs text-zinc-500 dark:border-white/[.1] dark:text-zinc-400">
+            {cols.map((c) => (
+              <th key={c} className={"py-1 pr-3 font-medium " + (c === "amount" ? "text-right" : "")}>
+                {TABLE_COLUMN_LABELS[c]}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-b border-black/[.05] dark:border-white/[.06]">
+              {cols.map((c) =>
+                c === "amount" ? (
+                  <td key={c} className="py-1 pr-3 text-right tabular-nums">
+                    {r.sign}
+                    {currencyFormatter.format(r.amount)}
+                  </td>
+                ) : (
+                  <td key={c} className="max-w-[160px] truncate py-1 pr-3">
+                    {r[c]}
+                  </td>
+                ),
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 const CALENDAR_WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const calendarMonthFormatter = new Intl.DateTimeFormat("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 
@@ -1770,6 +1814,8 @@ export function Widget({
           )
         ) : result.kind === "stat" ? (
           <StatWidget result={result} color={chartConfig?.color} />
+        ) : result.kind === "table" ? (
+          <DetailTableWidget rows={result.rows} columns={chartConfig?.tableColumns} />
         ) : widget.type === "bar" || widget.type === "histogram" ? (
           <BarWidget
             points={result.points}

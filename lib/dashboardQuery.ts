@@ -50,7 +50,28 @@ export type WidgetResult =
   // type — but kept as its own result kind since the two are triggered by,
   // and rendered from, entirely different config.
   | { kind: "multiSeries"; points: StackedPoint[]; series: StackedSeries[] }
-  | { kind: "text"; text: string };
+  | { kind: "text"; text: string }
+  // A table tile with config.tableMode "detail" — individual matching
+  // transactions (not a grouped rollup — that's still the "series" kind
+  // above, table's original behavior). Every field is always populated;
+  // which ones actually render is a display choice (config.tableColumns),
+  // not a data one, so the full row travels either way. `sign` is a
+  // display hint (income "+", spending "−", transfer/other blank) — `amount`
+  // itself is always the unsigned magnitude, same convention
+  // customMetricRowValue already uses elsewhere in this file.
+  | {
+      kind: "table";
+      rows: {
+        date: string;
+        dayOfWeek: string;
+        merchant: string;
+        category: string;
+        subcategory: string;
+        account: string;
+        amount: number;
+        sign: "+" | "−" | "";
+      }[];
+    };
 
 type DecryptedRow = {
   date: Date;
@@ -369,6 +390,17 @@ function computePeriodicDetail(
   return { label };
 }
 
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** Full weekday name for a date — UTC, same convention as every other date
+ * calc in this file, so a transaction's weekday can't shift a day depending
+ * on server timezone. Shared by keyAndLabelFor's "dayOfWeek" groupBy and
+ * the detail-table row builder below, so both agree on what "Tuesday"
+ * means for the same date. */
+function dayOfWeekLabel(date: Date): string {
+  return WEEKDAY_NAMES[date.getUTCDay()];
+}
+
 function keyAndLabelFor(row: DecryptedRow, groupBy: GroupBy): { key: string; label: string } {
   switch (groupBy) {
     case "day": {
@@ -378,6 +410,15 @@ function keyAndLabelFor(row: DecryptedRow, groupBy: GroupBy): { key: string; lab
     case "month": {
       const m = row.date.toISOString().slice(0, 7);
       return { key: m, label: formatMonthLabel(m) };
+    }
+    case "dayOfWeek": {
+      // Zero-padded weekday index (0=Sunday..6=Saturday) as the key — not
+      // used for sort order today (dayOfWeek ranks by total like any other
+      // category, not chronologically — see GROUP_BYS' own comment in
+      // lib/dashboardConfig.ts), but keeps the key stable and collision-free
+      // regardless of label wording.
+      const idx = row.date.getUTCDay();
+      return { key: String(idx), label: WEEKDAY_NAMES[idx] };
     }
     case "merchantCategory": {
       const c = row.merchantCategory ?? "other";
@@ -911,7 +952,11 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   // custom-metric stat tile is the cheaper tradeoff: CPU-bound and scoped
   // to this one widget's own row set, not an extra network round-trip on
   // every tab switch.
-  const needsDescription = config.groupBy === "merchant" || Boolean(merchantFilter?.length) || (!config.groupBy && Boolean(config.customMetricId));
+  const needsDescription =
+    config.groupBy === "merchant" ||
+    Boolean(merchantFilter?.length) ||
+    (!config.groupBy && Boolean(config.customMetricId)) ||
+    (type === "table" && config.tableMode === "detail"); // merchant name is one of the columns
 
   // A saved CalculatedMetric (see prisma/schema.prisma), if this widget uses
   // one, takes over from the built-in `metric` for filterByAmount below —
@@ -941,6 +986,29 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     config.filters?.amountMax,
     customMetric,
   );
+
+  // A detail table lists individual transactions instead of a grouped
+  // rollup — the other place (besides scatter, below) raw rows matter more
+  // than a bucketed number. Newest-first, capped (tableRowLimit) rather
+  // than every matching row, same "don't ship an unbounded payload"
+  // reasoning as scatter's own cap just below.
+  if (type === "table" && config.tableMode === "detail") {
+    const limit = config.tableRowLimit ?? 100;
+    const tableRows = [...rows]
+      .sort((a, b) => b.date.getTime() - a.date.getTime())
+      .slice(0, limit)
+      .map((r) => ({
+        date: r.date.toISOString().slice(0, 10),
+        dayOfWeek: dayOfWeekLabel(r.date),
+        merchant: r.description ? normalizeMerchantName(r.description) : "Unknown",
+        category: formatCategoryLabel(r.category),
+        subcategory: r.merchantSubcategory ? formatCategoryLabel(r.merchantSubcategory) : "—",
+        account: r.accountName,
+        amount: round2(Math.abs(r.amount)),
+        sign: (r.category === "income" ? "+" : r.category === "spending" ? "−" : "") as "+" | "−" | "",
+      }));
+    return { kind: "table", rows: tableRows };
+  }
 
   // Scatter is the one chart type that plots raw transactions instead of an
   // aggregated bucket per groupBy — one point per row, not one point per

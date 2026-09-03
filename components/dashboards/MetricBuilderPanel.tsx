@@ -125,7 +125,12 @@ export function MetricBuilderPanel({
   // CalculatedMetricForm via onDraftChange, against the triggering widget's
   // own current account/date scope (the most relevant context, and free —
   // see computeDraftMetricPreview's own doc comment for why a metric-level
-  // scope override isn't offered here).
+  // scope override isn't offered here). Also re-fires when that scope
+  // itself changes — Account/Date stay editable in the widget editor's left
+  // column while the builder is open (see WidgetEditorPanel's overlay,
+  // which deliberately leaves that column live), so adjusting either while
+  // watching this preview is meant to actually do something.
+  const scopeKey = JSON.stringify(scope);
   useEffect(() => {
     if (!draft) return;
     let cancelled = false;
@@ -159,8 +164,8 @@ export function MetricBuilderPanel({
       cancelled = true;
       clearTimeout(timeout);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- `scope` is a fresh object each render; its actual fields (accountIds/dateRange) are what matter, and re-firing on an unrelated parent render just re-runs the same query, which is harmless (debounced, and the result would be identical).
-  }, [draft]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `scope` itself is a fresh object every render; `scopeKey` is its stable stand-in so this only re-fires when accountIds/dateRange actually change, not on every unrelated re-render.
+  }, [draft, scopeKey]);
 
   const outerClass =
     variant === "panel"

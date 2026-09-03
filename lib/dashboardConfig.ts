@@ -157,7 +157,14 @@ export const METRIC_LABELS: Record<Metric, string> = {
   transactionCount: "Transactions",
 };
 
-export const GROUP_BYS = ["day", "month", "merchantCategory", "merchantSubcategory", "account", "merchant"] as const;
+// "dayOfWeek" buckets by calendar weekday (Sunday..Saturday) across the
+// whole date range — a *category* like merchantCategory/account, not a
+// timeline like day/month, so it's deliberately excluded from
+// lib/dashboardQuery.ts's/WidgetEditorPanel's `isTimeSeries` check (no
+// running-total option, ranked by total like any other category instead).
+// Answers "which day of the week do I spend the most on," which nothing
+// else here could until now.
+export const GROUP_BYS = ["day", "month", "dayOfWeek", "merchantCategory", "merchantSubcategory", "account", "merchant"] as const;
 export type GroupBy = (typeof GROUP_BYS)[number];
 
 // The tile-level quick-range row (config.dateButtons below) — presets are
@@ -257,6 +264,25 @@ const seriesEntrySchema = z.object({
 });
 export type SeriesEntryConfig = z.infer<typeof seriesEntrySchema>;
 
+// A detail table's available columns — see chartConfigSchema's tableMode/
+// tableColumns and lib/dashboardQuery.ts's `kind: "table"` result. Order
+// here is also the picker's display order in the editor, not the render
+// order (that's tableColumns' own array order).
+export const TABLE_COLUMNS = ["date", "dayOfWeek", "merchant", "category", "subcategory", "account", "amount"] as const;
+export type TableColumn = (typeof TABLE_COLUMNS)[number];
+export const TABLE_COLUMN_LABELS: Record<TableColumn, string> = {
+  date: "Date",
+  dayOfWeek: "Day of week",
+  merchant: "Merchant",
+  category: "Category",
+  subcategory: "Subcategory",
+  account: "Account",
+  amount: "Amount",
+};
+// Shown when a detail table's own `tableColumns` is unset — a sane
+// out-of-the-box view rather than an empty table.
+export const DEFAULT_TABLE_COLUMNS: TableColumn[] = ["date", "dayOfWeek", "merchant", "category", "amount"];
+
 const chartConfigSchema = z.object({
   dataSource: z.literal("transactions"), // only value today — explicit for future data sources
   metric: z.enum(METRICS),
@@ -273,6 +299,22 @@ const chartConfigSchema = z.object({
   // distinction here; the editor's own input just caps lower for those.
   limit: z.number().int().positive().max(1000).optional(),
   sort: z.enum(["totalDesc", "totalAsc", "labelAsc"]).optional(), // ignored when groupBy is day/month — see lib/dashboardQuery.ts
+  // Table tiles only. "summary" (omitted, the default) is a table's
+  // original behavior — the same grouped rows bar/pie would show, just as
+  // text. "detail" skips grouping entirely and lists individual matching
+  // transactions instead (see tableColumns below and
+  // lib/dashboardQuery.ts's `kind: "table"` result) — the only place in the
+  // app a real transaction date, rather than a bucketed one, is visible at
+  // all.
+  tableMode: z.enum(["summary", "detail"]).optional(),
+  // Which columns a detail table shows, and in this order. Omitted =
+  // TABLE_COLUMNS' own default subset (see Widget.tsx). Meaningless outside
+  // tableMode "detail".
+  tableColumns: z.array(z.enum(TABLE_COLUMNS)).max(TABLE_COLUMNS.length).optional(),
+  // Detail tables only — newest-first capped list, same spirit as `limit`
+  // above but a separate field since a detail table's "how many rows" and a
+  // grouped chart's "top N categories" aren't the same knob conceptually.
+  tableRowLimit: z.number().int().positive().max(500).optional(),
   compareToPrevious: z.boolean().optional(), // stat tiles only
   // Stat tiles only, and only meaningful when the metric is a periodic
   // CalculatedMetric (period set — see prisma/schema.prisma). Shows the
