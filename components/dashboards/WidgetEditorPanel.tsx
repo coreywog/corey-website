@@ -2149,7 +2149,14 @@ export function WidgetEditorPanel({
 
         {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
 
-        <div className="mt-auto flex justify-end gap-2 border-t border-black/[.06] pt-4 dark:border-white/[.08]">
+        {/* `relative` hosts its own small blur overlay below — Cancel/Save
+            here belong to the *widget*, but sitting right underneath the
+            metric builder's own Cancel/Save (in the right-hand panel) made
+            it genuinely unclear which pair did what. Blurred + covered for
+            the same reason and on the same `lg`-only condition as the
+            column above, not just left ambiguous. */}
+        <div className="relative mt-auto">
+        <div className="flex justify-end gap-2 border-t border-black/[.06] pt-4 dark:border-white/[.08]">
           <button
             type="button"
             onClick={onClose}
@@ -2165,6 +2172,12 @@ export function WidgetEditorPanel({
           >
             {saving ? "Saving…" : "Save"}
           </button>
+        </div>
+        {metricBuilder.mode !== "closed" && (
+          <div className="absolute inset-0 z-10 hidden items-center justify-center rounded-md bg-[var(--background)]/85 backdrop-blur-[2px] lg:flex">
+            <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Use Save metric on the right instead, for now</span>
+          </div>
+        )}
         </div>
       </div>
 
