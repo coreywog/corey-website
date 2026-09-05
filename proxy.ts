@@ -46,7 +46,11 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except Next's own static/image internals and the favicon —
-  // every page and API route on the site requires a valid session.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  // Everything except Next's own static/image internals and the favicon
+  // (app/icon.svg, Next's file-convention replacement for the old
+  // app/favicon.ico — same reasoning: a browser requests this before ever
+  // hitting a real page, including on the logged-out "/" placeholder every
+  // visitor sees first, so it can't sit behind the auth gate) — every page
+  // and API route on the site requires a valid session.
+  matcher: ["/((?!_next/static|_next/image|icon\\.svg).*)"],
 };
