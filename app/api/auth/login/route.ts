@@ -24,11 +24,10 @@ export async function POST(request: NextRequest) {
   const username = formData.get("username");
   const password = formData.get("password");
 
-  // The actual credential check — see lib/adminCredentials.ts. The
-  // password lives in the database now (hashed with scrypt), not the
-  // ADMIN_PASSWORD env var this used to compare directly; that var is only
-  // ever read once, to seed the first row, so it can be changed from
-  // Settings from here on.
+  // The actual credential check — see lib/adminCredentials.ts. Passwords
+  // (and, as of 2026-09-08, more than one account's worth) live in the
+  // database, hashed with scrypt, not compared against env vars directly
+  // anymore.
   const credentialsValid =
     typeof username === "string" && typeof password === "string" && (await verifyLoginCredentials(username, password));
 
@@ -43,7 +42,9 @@ export async function POST(request: NextRequest) {
   }
 
   await clearLoginAttempts(request);
-  const token = await createSessionToken();
+  // Safe to assert: credentialsValid is only true when username was a
+  // string (see the check above).
+  const token = await createSessionToken(username as string);
   const response = NextResponse.redirect(new URL("/dashboards", request.url), {
     status: 303,
   });

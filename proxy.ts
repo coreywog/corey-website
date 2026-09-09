@@ -50,11 +50,12 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except Next's own static/image internals and the favicon
-  // (app/icon.svg, Next's file-convention replacement for the old
-  // app/favicon.ico — same reasoning: a browser requests this before ever
-  // hitting a real page, including on the logged-out "/" placeholder every
-  // visitor sees first, so it can't sit behind the auth gate) — every page
-  // and API route on the site requires a valid session.
-  matcher: ["/((?!_next/static|_next/image|icon\\.svg).*)"],
+  // Everything except Next's own static/image internals — every page and
+  // API route on the site requires a valid session. (There's no custom
+  // favicon to exempt anymore — app/icon.svg was removed 2026-09-08; if
+  // one's ever added back, it needs the same treatment app/icon.svg used
+  // to get here, since a browser requests it before ever hitting a real
+  // page, including on the logged-out "/" login screen every visitor sees
+  // first.)
+  matcher: ["/((?!_next/static|_next/image).*)"],
 };

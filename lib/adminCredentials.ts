@@ -1,9 +1,8 @@
-import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "crypto";
+import { randomBytes, scrypt as scryptCallback, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { prisma } from "@/lib/prisma";
 
 const scrypt = promisify(scryptCallback) as (password: string, salt: string, keylen: number) => Promise<Buffer>;
-const SINGLETON_ID = "singleton";
 const KEY_LENGTH = 64;
 export const MIN_PASSWORD_LENGTH = 8;
 
@@ -25,64 +24,73 @@ async function verifyPassword(password: string, stored: string): Promise<boolean
   return timingSafeEqual(derived, storedBuf);
 }
 
-/** Constant-time string compare, hashed first so lengths always match —
- * same trick the login route used before credentials moved into the DB. */
-function safeEqualStrings(a: string, b: string): boolean {
-  const hashA = createHash("sha256").update(a).digest();
-  const hashB = createHash("sha256").update(b).digest();
-  return timingSafeEqual(hashA, hashB);
-}
-
 /**
- * Lazily seeds the one AdminCredential row from ADMIN_USERNAME/
- * ADMIN_PASSWORD the first time anything asks for it — a schema migration
- * can't do this itself (it has no access to runtime env vars, and hashing
- * a password is real async work, not a schema change). Every login after
- * the first goes through this DB row alone; changing the password via
- * Settings never touches the env var again, and the env var is only ever
- * read here, exactly once, unless the row is ever deleted.
+ * Seeds the very first account from ADMIN_USERNAME/ADMIN_PASSWORD the
+ * first time anything checks credentials against a completely empty
+ * table — a schema migration can't do this itself (no access to runtime
+ * env vars, and hashing a password is real async work, not a schema
+ * change). Every account after that first one is added directly against
+ * the database (see scripts/add-account.mjs) — there's still no
+ * self-serve signup. Once at least one row exists, this is a no-op
+ * forever; the env var is only ever read on that very first check.
  */
-async function getOrSeedCredential() {
-  const existing = await prisma.adminCredential.findUnique({ where: { id: SINGLETON_ID } });
-  if (existing) return existing;
+async function ensureSeeded(): Promise<void> {
+  const count = await prisma.adminCredential.count();
+  if (count > 0) return;
 
   const envUsername = process.env.ADMIN_USERNAME;
   const envPassword = process.env.ADMIN_PASSWORD;
   if (!envUsername || !envPassword) {
-    throw new Error("ADMIN_USERNAME or ADMIN_PASSWORD env var is not set, and no AdminCredential row exists yet to seed from");
+    throw new Error("ADMIN_USERNAME or ADMIN_PASSWORD env var is not set, and no AdminCredential rows exist yet to seed from");
   }
   const passwordHash = await hashPassword(envPassword);
-  // Someone else's concurrent request could theoretically lose this race
-  // and hit a unique-constraint error on create — extremely unlikely for a
-  // single-admin app's first-ever login, and falling back to a fresh
-  // lookup handles it if it ever happens.
-  return prisma.adminCredential
-    .create({ data: { id: SINGLETON_ID, username: envUsername, passwordHash } })
-    .catch(() => prisma.adminCredential.findUniqueOrThrow({ where: { id: SINGLETON_ID } }));
+  // A concurrent request could theoretically lose a create-vs-create race
+  // here — extremely unlikely for the very first login ever, and harmless
+  // either way since the loser's attempt just becomes a no-op.
+  await prisma.adminCredential.create({ data: { username: envUsername, passwordHash } }).catch(() => {});
 }
 
-/** The actual login check — replaces the old direct env-var comparison. */
+/**
+ * The actual login check. Every account gets identical full access (see
+ * AdminCredential's own schema comment) — this only tells you *whether*
+ * the submitted username+password is a real account, not which one,
+ * since nothing downstream distinguishes accounts by permission. Session
+ * tokens do carry the username (see lib/session.ts) purely so Settings'
+ * change-password form knows whose password it's changing.
+ */
 export async function verifyLoginCredentials(username: string, password: string): Promise<boolean> {
-  const cred = await getOrSeedCredential();
-  if (!safeEqualStrings(username, cred.username)) return false;
+  await ensureSeeded();
+  const cred = await prisma.adminCredential.findUnique({ where: { username } });
+  if (!cred) {
+    // Run a throwaway hash anyway so a nonexistent username doesn't
+    // respond measurably faster than a real one — the same constant-time
+    // spirit as hashing before timingSafeEqual elsewhere in this file,
+    // just guarding against a username-enumeration timing gap instead of
+    // a character-comparison one.
+    await verifyPassword(password, await hashPassword(randomBytes(16).toString("hex")));
+    return false;
+  }
   return verifyPassword(password, cred.passwordHash);
 }
 
-/** Changing the password from Settings — requires the current one, same as
- * every other "change password" flow, so a session left open on a shared
- * computer can't be used to lock the real admin out. */
+/** Settings' "Change password" form — changes the password for whichever
+ * account is actually logged in (see lib/auth.ts's getCurrentUsername),
+ * never any other account. Requires the current password, not just an
+ * active session, so a session left open on a shared computer can't be
+ * used to lock the real account holder out. */
 export async function changePassword(
+  username: string,
   currentPassword: string,
   newPassword: string,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const cred = await getOrSeedCredential();
-  if (!(await verifyPassword(currentPassword, cred.passwordHash))) {
+  const cred = await prisma.adminCredential.findUnique({ where: { username } });
+  if (!cred || !(await verifyPassword(currentPassword, cred.passwordHash))) {
     return { ok: false, error: "Current password is incorrect." };
   }
   if (newPassword.length < MIN_PASSWORD_LENGTH) {
     return { ok: false, error: `New password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
   }
   const passwordHash = await hashPassword(newPassword);
-  await prisma.adminCredential.update({ where: { id: SINGLETON_ID }, data: { passwordHash } });
+  await prisma.adminCredential.update({ where: { username }, data: { passwordHash } });
   return { ok: true };
 }
