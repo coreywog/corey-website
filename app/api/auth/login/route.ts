@@ -1,4 +1,3 @@
-import { createHash, timingSafeEqual } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import {
   SESSION_COOKIE_NAME,
@@ -7,21 +6,9 @@ import {
   sessionMaxAgeSeconds,
 } from "@/lib/session";
 import { checkLoginLockout, recordFailedLogin, clearLoginAttempts } from "@/lib/loginThrottle";
-
-/** Constant-time string compare, hashed first so lengths always match. */
-function safeEqual(a: string, b: string) {
-  const hashA = createHash("sha256").update(a).digest();
-  const hashB = createHash("sha256").update(b).digest();
-  return timingSafeEqual(hashA, hashB);
-}
+import { verifyLoginCredentials } from "@/lib/adminCredentials";
 
 export async function POST(request: NextRequest) {
-  const adminUsername = process.env.ADMIN_USERNAME;
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminUsername || !adminPassword) {
-    throw new Error("ADMIN_USERNAME or ADMIN_PASSWORD env var is not set");
-  }
-
   // Checked before even touching the submitted credentials — a locked-out
   // IP shouldn't get to keep using failed attempts as a timing/validity
   // oracle. See lib/loginThrottle.ts for why this lives in Postgres, not
@@ -37,11 +24,13 @@ export async function POST(request: NextRequest) {
   const username = formData.get("username");
   const password = formData.get("password");
 
+  // The actual credential check — see lib/adminCredentials.ts. The
+  // password lives in the database now (hashed with scrypt), not the
+  // ADMIN_PASSWORD env var this used to compare directly; that var is only
+  // ever read once, to seed the first row, so it can be changed from
+  // Settings from here on.
   const credentialsValid =
-    typeof username === "string" &&
-    typeof password === "string" &&
-    safeEqual(username, adminUsername) &&
-    safeEqual(password, adminPassword);
+    typeof username === "string" && typeof password === "string" && (await verifyLoginCredentials(username, password));
 
   if (!credentialsValid) {
     await recordFailedLogin(request);

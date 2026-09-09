@@ -7,6 +7,26 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// The one admin account's real password — previously just the
+// ADMIN_PASSWORD env var, compared directly on every login. Moved here so
+// a logged-in admin can actually change it (a running instance can't
+// rewrite its own env vars) — see lib/adminCredentials.ts, which lazily
+// seeds this row from ADMIN_USERNAME/ADMIN_PASSWORD the first time
+// anything asks for it, then never touches the env var again. Exactly one
+// row ever exists (id is always "singleton") since this app has exactly
+// one admin. passwordHash is "salt:hash" (scrypt — a real password KDF,
+// not the sha256+timingSafeEqual trick the old env-var comparison used,
+// which was fine for constant-time comparison but not for at-rest
+// storage). If you're ever locked out entirely with no way to log in and
+// reach Settings, scripts/reset-admin-password.mjs resets this directly
+// against the database.
+model AdminCredential {
+  id           String   @id @default("singleton")
+  username     String
+  passwordHash String
+  updatedAt    DateTime @updatedAt
+}
+
 // Failed-login throttling — added 2026-09-08 when the login form moved from
 // the unlisted /quietharbor path onto "/" itself (see app/page.tsx,
 // app/api/auth/login/route.ts). While the login was only reachable at a

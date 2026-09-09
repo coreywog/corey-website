@@ -96,7 +96,7 @@ export default async function DataHubPage({
   // Proxy already gates this route, but never trust that alone — re-verify.
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
-    redirect("/quietharbor");
+    redirect("/"); // "/" is the real login screen now — /quietharbor just redirects there
   }
 
   const { tab, category, subcategory } = await searchParams;

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { requireAdminSession } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { ThemeSettings } from "@/components/ThemeSettings";
+import { ChangePasswordForm } from "@/components/ChangePasswordForm";
 import { ConnectBank } from "@/components/ConnectBank";
 import { SyncPlaidButton } from "@/components/SyncPlaidButton";
 import { DisconnectPlaidButton } from "@/components/DisconnectPlaidButton";
@@ -12,7 +13,7 @@ export default async function SettingsPage() {
   // Proxy already gates this route, but never trust that alone — re-verify.
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
-    redirect("/quietharbor");
+    redirect("/"); // "/" is the real login screen now — /quietharbor just redirects there
   }
 
   const [plaidItems, calculatedMetrics, metricUsage, categorized] = await Promise.all([
@@ -49,6 +50,13 @@ export default async function SettingsPage() {
           Appearance
         </h2>
         <ThemeSettings />
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-sm font-medium text-zinc-500 dark:text-zinc-500 creamsicle:text-orange-700">
+          Account
+        </h2>
+        <ChangePasswordForm />
       </div>
 
       <div className="flex flex-col gap-3">
