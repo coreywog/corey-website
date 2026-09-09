@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
+import { getDashboardAccess, requireDashboardOwner } from "@/lib/dashboardAccess";
 
 const patchSchema = z
   .object({
@@ -15,8 +16,20 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
   const { id } = await params;
+  // 404, never 403, when access is denied — a dashboard you can't see
+  // should read as "doesn't exist," not "exists but you're forbidden,"
+  // so nothing leaks that a given id is real. See lib/dashboardAccess.ts.
+  const access = await getDashboardAccess(id, username);
+  if (!access.allowed) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const dashboard = await prisma.dashboard.findUnique({
     where: { id },
     include: {
@@ -34,8 +47,17 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
   const { id } = await params;
+  // Sharing is view-only — renaming/publishing is owner-only, always.
+  if (!(await requireDashboardOwner(id, username))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const body = await request.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
@@ -65,8 +87,16 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
   const { id } = await params;
+  if (!(await requireDashboardOwner(id, username))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
     // ON DELETE CASCADE (see migration) takes its widgets with it.
     await prisma.dashboard.delete({ where: { id } });

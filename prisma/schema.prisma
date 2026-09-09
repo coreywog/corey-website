@@ -11,13 +11,15 @@ datasource db {
 // "singleton", seeded from the ADMIN_USERNAME/ADMIN_PASSWORD env vars) —
 // as of 2026-09-08 this supports more than one account (see
 // lib/adminCredentials.ts), since Corey wanted a second real login rather
-// than sharing the one admin's credentials. Every account still gets
-// *identical* full access to everything — there's no per-user data
-// ownership anywhere in this schema (dashboards, accounts, metrics are all
-// still single-tenant/shared), so this is "more than one key to the same
-// door," not real multi-user support. That's a real, much larger feature
-// (per-user dashboards, owned bank accounts, a combined-view story) —
-// deliberately not built here.
+// than sharing the one admin's credentials. As of 2026-09-09, accounts
+// also have real separate data: Dashboard.ownerUsername,
+// FinanceAccount.addedByUsername, and AccountShare below give each
+// account its own private dashboards and attributed bank accounts,
+// visible to another account only via an explicit share (see
+// lib/dashboardAccess.ts). Identity here is keyed by `username` throughout
+// (already unique, already the only thing the session JWT carries) rather
+// than introducing a separate id-based identity — simplest thing that
+// works given there's no account-rename feature to worry about.
 //
 // passwordHash is "salt:hash" (scrypt — a real password KDF, not the
 // sha256+timingSafeEqual trick the old env-var comparison used, which was
@@ -34,6 +36,32 @@ model AdminCredential {
   username     String   @unique
   passwordHash String
   updatedAt    DateTime @updatedAt
+
+  dashboards      Dashboard[]
+  financeAccounts FinanceAccount[]
+  sharesGranted   AccountShare[] @relation("SharesGranted")
+  sharesReceived  AccountShare[] @relation("SharesReceived")
+}
+
+// One account granting another read/view access to *all* of its
+// dashboards (see lib/dashboardAccess.ts's getDashboardAccess) — whole
+// account, not per-dashboard, since that's the granularity actually asked
+// for ("if diorgarments shares with cgcamryn then she can now see my
+// dashboards"). View-only: a shared viewer can navigate a dashboard but
+// never edit/rename/publish/delete it (enforced by forcing `published`
+// true for a non-owner viewer, reusing DashboardGrid's existing
+// !published gating — see app/(site)/dashboards/[id]/page.tsx). Deleting
+// either account's row cascades away shares in both directions.
+model AccountShare {
+  id             String   @id @default(cuid())
+  ownerUsername  String
+  viewerUsername String
+  createdAt      DateTime @default(now())
+
+  owner  AdminCredential @relation("SharesGranted", fields: [ownerUsername], references: [username], onDelete: Cascade)
+  viewer AdminCredential @relation("SharesReceived", fields: [viewerUsername], references: [username], onDelete: Cascade)
+
+  @@unique([ownerUsername, viewerUsername])
 }
 
 // Failed-login throttling — added 2026-09-08 when the login form moved from
@@ -56,20 +84,30 @@ model LoginAttempt {
 }
 
 // A user-built collection of widgets — the customizable dashboard builder.
-// Deliberately single-user (no owner/userId field) — matches every other
-// model in this schema; the site has exactly one admin.
+// Owned by exactly one account (ownerUsername) as of 2026-09-09 — private
+// by default, visible to another account only via an AccountShare grant
+// (see lib/dashboardAccess.ts). `name` is unique per-owner now, not
+// globally, so two accounts can each have their own "Overview" dashboard
+// without colliding.
 model Dashboard {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  order     Int      @default(0)
+  id            String   @id @default(cuid())
+  name          String
+  ownerUsername String
+  order         Int      @default(0)
   // false ("editing") shows drag/resize handles and the add/edit/delete
   // controls; true ("published") renders the grid read-only so it can't be
-  // accidentally rearranged while just viewing it.
+  // accidentally rearranged while just viewing it. A non-owner viewer
+  // (shared access) always sees the published/read-only rendering
+  // regardless of this flag's real value — see
+  // app/(site)/dashboards/[id]/page.tsx.
   published Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  tabs DashboardTab[]
+  owner AdminCredential @relation(fields: [ownerUsername], references: [username], onDelete: Restrict)
+  tabs  DashboardTab[]
+
+  @@unique([ownerUsername, name])
 }
 
 // One tab within a Dashboard — its own named grid of widgets (think browser
@@ -150,12 +188,22 @@ model SetEntry {
   exercise Exercise       @relation(fields: [exerciseId], references: [id])
 }
 
+// Attributed to whoever added it (addedByUsername) as of 2026-09-09 — the
+// account that connected it via Plaid, or ran the manual import/add-account
+// flow. Every account can still see every FinanceAccount in Settings (for
+// transparency), but only its adder can manage it (sync/disconnect — see
+// app/api/plaid/sync/route.ts and the item-delete route), and — the part
+// that actually matters for privacy — a dashboard only ever pulls
+// transactions from accounts *its own owner* added, by default (see
+// lib/dashboardQuery.ts's buildWhere). `name` is unique per-adder now, not
+// globally, matching Dashboard's own uniqueness fix.
 model FinanceAccount {
-  id       String  @id @default(cuid())
-  name     String  @unique
-  type     String // e.g. "checking", "savings", "investment", "credit", "loan"
-  kind     String // "asset" | "liability" — sign used when summing net worth
-  archived Boolean @default(false)
+  id              String  @id @default(cuid())
+  name            String
+  addedByUsername String
+  type            String // e.g. "checking", "savings", "investment", "credit", "loan"
+  kind            String // "asset" | "liability" — sign used when summing net worth
+  archived        Boolean @default(false)
 
   // True for an account whose transactions are already fully represented
   // elsewhere — e.g. PayPal, when checkout charges a linked card directly
@@ -174,8 +222,11 @@ model FinanceAccount {
   plaidItem      PlaidItem? @relation(fields: [plaidItemId], references: [id])
   plaidAccountId String?    @unique
 
+  addedBy      AdminCredential @relation(fields: [addedByUsername], references: [username], onDelete: Restrict)
   balances     BalanceEntry[]
   transactions Transaction[]
+
+  @@unique([addedByUsername, name])
 }
 
 // One Plaid Link connection (one bank login) — can expose multiple

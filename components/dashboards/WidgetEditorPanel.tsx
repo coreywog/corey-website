@@ -1069,7 +1069,7 @@ export function WidgetEditorPanel({
         const res = await fetch("/api/dashboards/widgets/preview", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type, config }),
+          body: JSON.stringify({ type, config, dashboardId }),
         });
         if (cancelled) return;
         if (res.ok) {
@@ -1094,6 +1094,7 @@ export function WidgetEditorPanel({
       cancelled = true;
       clearTimeout(timeout);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dashboardId is a stable prop for this panel's whole lifetime; only type/config should re-trigger this.
   }, [type, config]);
 
   // Shared by the dedicated preview panel below (rendered right next to the
@@ -1132,7 +1133,7 @@ export function WidgetEditorPanel({
         const res = await fetch("/api/dashboards/widgets/date-range", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accountIds: accountIds.length ? accountIds : undefined }),
+          body: JSON.stringify({ accountIds: accountIds.length ? accountIds : undefined, dashboardId }),
         });
         if (cancelled) return;
         if (res.ok) setAvailableRange(await res.json());
@@ -1144,6 +1145,7 @@ export function WidgetEditorPanel({
       cancelled = true;
       clearTimeout(timeout);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- dashboardId is a stable prop for this panel's whole lifetime; only isText/accountIds should re-trigger this.
   }, [isText, accountIds]);
 
   async function handleSave() {
@@ -2223,6 +2225,7 @@ export function WidgetEditorPanel({
         <div className="h-96 shrink-0 overflow-hidden rounded-xl border border-black/[.08] dark:border-white/[.1]">
           <Widget
             widget={{ id: "__preview__", type, title: title.trim() || null, x: 0, y: 0, w: 0, h: 0, result: draftResult, config }}
+            dashboardId={dashboardId}
             customMetricNames={Object.fromEntries(calculatedMetrics.map((m) => [m.id, m.name]))}
             onPointClick={showMultiColor ? togglePointSelected : undefined}
             selectedKeys={showMultiColor ? selectedPointKeys : undefined}

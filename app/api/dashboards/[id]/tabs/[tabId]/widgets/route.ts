@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
+import { requireDashboardOwner } from "@/lib/dashboardAccess";
 import { WIDGET_TYPES, WidgetConfigSchema, WidgetLayoutSchema } from "@/lib/dashboardConfig";
 
 // Default size/position for a newly-added widget: appended below whatever
@@ -17,21 +18,29 @@ const createSchema = z.object({
   layout: WidgetLayoutSchema.partial().optional(), // caller may omit; we append below existing content
 });
 
-export async function POST(request: NextRequest, { params }: { params: Promise<{ tabId: string }> }) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string; tabId: string }> }) {
   // Proxy already gates this route, but never trust that alone — re-verify.
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
-  const { tabId } = await params;
+  const { id: dashboardId, tabId } = await params;
+  if (!(await requireDashboardOwner(dashboardId, username))) {
+    return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
+  }
+
   const body = await request.json().catch(() => null);
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid request", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const tab = await prisma.dashboardTab.findUnique({ where: { id: tabId } });
+  const tab = await prisma.dashboardTab.findUnique({ where: { id: tabId, dashboardId } });
   if (!tab) {
     return NextResponse.json({ error: "Tab not found" }, { status: 404 });
   }

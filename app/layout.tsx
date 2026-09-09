@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "poorandproud",
+  title: "Poor and Proud",
   description: "Corey Wogenstahl — personal site, resume, and finance dashboard.",
 };
 
