@@ -1,20 +1,39 @@
-import { Press_Start_2P } from "next/font/google";
-
-const pixelFont = Press_Start_2P({ weight: "400", subsets: ["latin"] });
+import { redirect } from "next/navigation";
+import { requireAdminSession } from "@/lib/auth";
+import { LoginBackdrop } from "@/components/LoginBackdrop";
+import { LoginForm } from "@/components/LoginForm";
 
 /**
- * Deliberately bare — this is what every visitor sees, logged in or not.
- * There's no link anywhere on the site to the real login page; it only
- * exists at its own unlisted path. See proxy.ts, which rewrites any
- * unauthenticated request for a gated route here too, so nothing ever
- * leaks the login path's existence via a redirect.
+ * The real front door, as of 2026-09-08 — "/" used to be a deliberately
+ * bare "work in progress" placeholder with the actual login form hidden at
+ * an unlisted path (see app/quietharbor/page.tsx, now just a redirect
+ * here), so nothing ever hinted a real site existed behind it. That
+ * obscurity was traded away on purpose for a login screen that's actually
+ * memorable to visit — see lib/loginThrottle.ts for the failed-attempt
+ * rate limiting that replaces it as the real access control.
+ *
+ * proxy.ts exempts "/" from its auth check unconditionally (it has to —
+ * that's exactly what makes this reachable while logged out), so an
+ * already-logged-in visit has to be handled here instead: straight on to
+ * the dashboards rather than showing the login form again.
  */
-export default function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; minutes?: string }>;
+}) {
+  if (await requireAdminSession()) {
+    redirect("/dashboards");
+  }
+
+  const { error, minutes } = await searchParams;
+
   return (
-    <div className="flex h-dvh w-full items-center justify-center bg-black">
-      <p className={`${pixelFont.className} text-xs tracking-wide text-white`}>
-        work in progress
-      </p>
+    <div className="relative flex h-dvh w-full items-center justify-center overflow-hidden bg-[var(--background)] px-6">
+      <LoginBackdrop />
+      <div className="relative z-10">
+        <LoginForm error={error} minutes={minutes} />
+      </div>
     </div>
   );
 }
