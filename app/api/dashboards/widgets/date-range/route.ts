@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
+import { requireDashboardOwner } from "@/lib/dashboardAccess";
 
-const bodySchema = z.object({ accountIds: z.array(z.string().min(1)).optional() });
+// dashboardId scopes this to that dashboard's owner's own FinanceAccounts —
+// only called from the widget editor (WidgetEditorPanel.tsx), which is
+// owner-only, so requireDashboardOwner (not the broader getDashboardAccess
+// the live-viewer-facing preview/date-bounds routes use) is correct here.
+const bodySchema = z.object({ accountIds: z.array(z.string().min(1)).optional(), dashboardId: z.string().min(1) });
 
 /**
  * The actual earliest/latest transaction date available — different
@@ -26,7 +31,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 
-  const where = parsed.data.accountIds?.length ? { accountId: { in: parsed.data.accountIds } } : {};
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
+  if (!(await requireDashboardOwner(parsed.data.dashboardId, username))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const where = {
+    account: { addedByUsername: username },
+    ...(parsed.data.accountIds?.length ? { accountId: { in: parsed.data.accountIds } } : {}),
+  };
   const range = await prisma.transaction.aggregate({ where, _min: { date: true }, _max: { date: true } });
 
   return NextResponse.json({

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
+import { requireDashboardOwner } from "@/lib/dashboardAccess";
 import { WidgetConfigSchema, WidgetLayoutSchema } from "@/lib/dashboardConfig";
 
 const patchSchema = z
@@ -14,14 +15,22 @@ const patchSchema = z
     message: "Provide at least one of title, config, or layout",
   });
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ widgetId: string }> }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string; tabId: string; widgetId: string }> }) {
   // Proxy already gates this route, but never trust that alone — re-verify.
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
-  const { widgetId } = await params;
+  const { id: dashboardId, tabId, widgetId } = await params;
+  if (!(await requireDashboardOwner(dashboardId, username))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const body = await request.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
@@ -29,8 +38,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   try {
+    // Compound where — closes a gap where this route used to update a
+    // widget by its bare id alone, with nothing checking it actually
+    // belonged to the tab/dashboard in the URL.
     const widget = await prisma.dashboardWidget.update({
-      where: { id: widgetId },
+      where: { id: widgetId, tabId },
       data: {
         ...(parsed.data.title !== undefined ? { title: parsed.data.title } : {}),
         ...(parsed.data.config !== undefined ? { config: parsed.data.config } : {}),
@@ -44,15 +56,23 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 }
 
-export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ widgetId: string }> }) {
+export async function DELETE(_request: NextRequest, { params }: { params: Promise<{ id: string; tabId: string; widgetId: string }> }) {
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
-  const { widgetId } = await params;
+  const { id: dashboardId, tabId, widgetId } = await params;
+  if (!(await requireDashboardOwner(dashboardId, username))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
-    await prisma.dashboardWidget.delete({ where: { id: widgetId } });
+    await prisma.dashboardWidget.delete({ where: { id: widgetId, tabId } });
     return NextResponse.json({ ok: true });
   } catch (err) {
     console.error("Failed to delete widget", err);

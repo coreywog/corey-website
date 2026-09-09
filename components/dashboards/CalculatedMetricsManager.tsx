@@ -158,11 +158,23 @@ export function CalculatedMetricsManager({
                     This will affect {usedBy.length} widget{usedBy.length === 1 ? "" : "s"}
                   </p>
                   <ul className="flex flex-col gap-0.5 text-xs text-red-700/90 dark:text-red-300/90">
-                    {usedBy.map((u) => (
-                      <li key={u.widgetId}>
-                        {u.dashboardName} → {u.tabName} → &ldquo;{u.widgetTitle}&rdquo;
-                      </li>
-                    ))}
+                    {usedBy.map((u) =>
+                      u.visibleToViewer ? (
+                        <li key={u.widgetId}>
+                          {u.dashboardName} → {u.tabName} → &ldquo;{u.widgetTitle}&rdquo;
+                        </li>
+                      ) : (
+                        // A widget on a dashboard this account doesn't own
+                        // and hasn't been shared — the real name/location
+                        // is deliberately withheld (see
+                        // lib/dashboardQuery.ts's getCalculatedMetricUsage),
+                        // but the deleter still needs to know *something*
+                        // would break.
+                        <li key={u.widgetId} className="italic">
+                          A widget on another account&rsquo;s dashboard
+                        </li>
+                      ),
+                    )}
                   </ul>
                   <p className="text-xs text-red-700/90 dark:text-red-300/90">
                     Deleting &ldquo;{m.name}&rdquo; won&rsquo;t delete these widgets, but any graph or number built from it will fall back to a

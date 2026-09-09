@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
 import { encryptAmount } from "@/lib/crypto";
 
 const ACCOUNT_TYPES = [
@@ -41,6 +41,10 @@ export async function POST(request: NextRequest) {
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
   const body = await request.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
@@ -60,12 +64,13 @@ export async function POST(request: NextRequest) {
         let accountId = entry.accountId;
         if (!accountId && entry.newAccount) {
           const account = await tx.financeAccount.upsert({
-            where: { name: entry.newAccount.name },
+            where: { addedByUsername_name: { addedByUsername: username, name: entry.newAccount.name } },
             update: {},
             create: {
               name: entry.newAccount.name,
               type: entry.newAccount.type,
               kind: entry.newAccount.kind,
+              addedByUsername: username,
             },
           });
           accountId = account.id;

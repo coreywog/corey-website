@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
+import { requireDashboardOwner } from "@/lib/dashboardAccess";
 import { WidgetLayoutSchema } from "@/lib/dashboardConfig";
 
 // react-grid-layout's onLayoutChange fires with every tile's position at
@@ -12,14 +13,24 @@ const bodySchema = z.object({
   widgets: z.array(WidgetLayoutSchema.extend({ id: z.string().min(1) })).min(1),
 });
 
-export async function PATCH(request: NextRequest, { params }: { params: Promise<{ tabId: string }> }) {
+export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string; tabId: string }> }) {
   // Proxy already gates this route, but never trust that alone — re-verify.
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
-  const { tabId } = await params;
+  const { id: dashboardId, tabId } = await params;
+  // This route only ever ran off requireAdminSession() before — dragging/
+  // resizing tiles on a dashboard you don't own now correctly 404s instead
+  // of silently succeeding.
+  if (!(await requireDashboardOwner(dashboardId, username))) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
   const body = await request.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
   if (!parsed.success) {

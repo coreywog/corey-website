@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
+import { requireDashboardOwner } from "@/lib/dashboardAccess";
 
 const createSchema = z.object({ name: z.string().trim().min(1).max(100) });
 
@@ -12,6 +13,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
   const { id: dashboardId } = await params;
   const body = await request.json().catch(() => null);
@@ -20,8 +25,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ error: "Invalid request", details: parsed.error.flatten() }, { status: 400 });
   }
 
-  const dashboard = await prisma.dashboard.findUnique({ where: { id: dashboardId } });
-  if (!dashboard) {
+  // Adding a tab is a write — owner only, even if this dashboard happens
+  // to be shared with the current account.
+  if (!(await requireDashboardOwner(dashboardId, username))) {
     return NextResponse.json({ error: "Dashboard not found" }, { status: 404 });
   }
 

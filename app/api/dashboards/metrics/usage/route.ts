@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
 import { getCalculatedMetricUsage } from "@/lib/dashboardQuery";
 
 /**
@@ -16,9 +16,13 @@ export async function GET() {
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
   try {
-    const usage = await getCalculatedMetricUsage();
+    const usage = await getCalculatedMetricUsage(username);
     return NextResponse.json({ usage });
   } catch (err) {
     console.error("Failed to compute metric usage", err);

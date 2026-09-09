@@ -1247,10 +1247,12 @@ function CalendarButtonIcon() {
  */
 function DateRangeCalendarPicker({
   chartConfig,
+  dashboardId,
   activeKey,
   onChange,
 }: {
   chartConfig: ChartWidgetConfig;
+  dashboardId: string;
   activeKey: string | null;
   onChange: (btn: DateButtonConfig | null) => void;
 }) {
@@ -1268,7 +1270,7 @@ function DateRangeCalendarPicker({
     fetch("/api/dashboards/widgets/date-bounds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ config: chartConfig }),
+      body: JSON.stringify({ config: chartConfig, dashboardId }),
     })
       .then((res) => res.json())
       .then((body) => {
@@ -1474,12 +1476,20 @@ class ChartErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
  */
 export function Widget({
   widget,
+  dashboardId,
   customMetricNames,
   onPointClick,
   selectedKeys,
   onAxisLabelOffsetChange,
 }: {
   widget: WidgetWithData;
+  // Which dashboard this widget lives on — needed so the on-tile date-range
+  // override and calendar date-picker (both re-query live, past what the
+  // page originally loaded) can be scoped to the *dashboard owner's* own
+  // accounts server-side, not whoever happens to be viewing (a shared
+  // viewer sees the owner's data, never their own — see
+  // lib/dashboardAccess.ts). Passed straight through from DashboardGrid.
+  dashboardId: string;
   // id -> name for saved CalculatedMetrics — just enough for the
   // auto-generated title (below) to show a custom-metric widget's real
   // name instead of the generic "Custom metric" fallback. Omitted
@@ -1608,7 +1618,7 @@ export function Widget({
     fetch("/api/dashboards/widgets/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: widget.type, config: { ...chartConfig, dateRange } }),
+      body: JSON.stringify({ type: widget.type, config: { ...chartConfig, dateRange }, dashboardId }),
     })
       .then((res) => res.json())
       .then((body) => {
@@ -1640,7 +1650,7 @@ export function Widget({
     fetch("/api/dashboards/widgets/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: widget.type, config: drillConfig }),
+      body: JSON.stringify({ type: widget.type, config: drillConfig, dashboardId }),
     })
       .then((res) => res.json())
       .then((body) => {
@@ -1718,6 +1728,7 @@ export function Widget({
             {chartConfig && (
               <DateRangeCalendarPicker
                 chartConfig={chartConfig}
+                dashboardId={dashboardId}
                 activeKey={activeButton ? dateButtonKey(activeButton) : null}
                 onChange={setActiveButton}
               />

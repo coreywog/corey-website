@@ -306,7 +306,7 @@ export function DashboardGrid({
                     </button>
                   </div>
                 )}
-                <Widget widget={widget} customMetricNames={customMetricNames} />
+                <Widget widget={widget} dashboardId={dashboardId} customMetricNames={customMetricNames} />
               </div>
             ))}
           </ReactGridLayout>

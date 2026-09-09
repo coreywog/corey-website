@@ -1,11 +1,13 @@
-import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
+import { listVisibleDashboards } from "@/lib/dashboardAccess";
 import { DashboardNavItem } from "./DashboardNavItem";
 
 /**
- * The sidebar's own list of dashboards — every real Dashboard a user has
- * built. Each one pops its tabs (and the publish/delete controls that used
- * to live at the top of the dashboard page) out underneath it while that
+ * The sidebar's own list of dashboards — every one this account owns,
+ * plus (as of 2026-09-09) any another account has shared with it — see
+ * lib/dashboardAccess.ts's listVisibleDashboards. Each one pops its tabs
+ * (and, for an owned dashboard, the publish/delete controls that used to
+ * live at the top of the dashboard page) out underneath it while that
  * dashboard is the one currently open — see DashboardNavItem, the client
  * component that actually renders each row and knows whether it's active.
  * Deliberately its own small async Server Component rather than fetched in
@@ -19,27 +21,28 @@ import { DashboardNavItem } from "./DashboardNavItem";
 export async function DashboardNavList() {
   const isAuthed = await requireAdminSession();
   if (!isAuthed) return null;
+  const username = await getCurrentUsername();
+  if (!username) return null; // stale pre-2026-09-09 session token — the page itself sends these to a fresh login
 
-  const dashboards = await prisma.dashboard.findMany({
-    orderBy: [{ order: "asc" }, { createdAt: "asc" }],
-    select: {
-      id: true,
-      name: true,
-      published: true,
-      // Secondary tiebreaker matters here in a way it didn't before tab
-      // reordering existed: tabs created before the `order` column existed
-      // can all share its default value, and without a tiebreaker their
-      // relative order would be left to whatever Postgres feels like
-      // returning for equal keys — not guaranteed stable across queries.
-      tabs: { orderBy: [{ order: "asc" }, { createdAt: "asc" }], select: { id: true, name: true, order: true } },
-    },
-  });
+  const dashboards = await listVisibleDashboards(username);
+  const owned = dashboards.filter((d) => d.isOwner);
+  const shared = dashboards.filter((d) => !d.isOwner);
 
   return (
     <>
-      {dashboards.map((d) => (
-        <DashboardNavItem key={d.id} dashboard={d} />
+      {owned.map((d) => (
+        <DashboardNavItem key={d.id} dashboard={d} isOwner />
       ))}
+      {shared.length > 0 && (
+        <div className="mt-3 flex flex-col gap-1">
+          <span className="px-2 text-[11px] font-medium tracking-wide text-zinc-400 uppercase dark:text-zinc-500">
+            Shared with you
+          </span>
+          {shared.map((d) => (
+            <DashboardNavItem key={d.id} dashboard={d} isOwner={false} />
+          ))}
+        </div>
+      )}
     </>
   );
 }

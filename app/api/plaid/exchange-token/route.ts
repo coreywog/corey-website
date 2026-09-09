@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
 import { plaid } from "@/lib/plaid";
 import { encryptText } from "@/lib/crypto";
 import { syncOneItem } from "@/lib/plaidSync";
@@ -37,6 +37,10 @@ export async function POST(request: NextRequest) {
   const isAuthed = await requireAdminSession();
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
   }
 
   const body = await request.json().catch(() => null);
@@ -76,6 +80,10 @@ export async function POST(request: NextRequest) {
         const displayName = `${institutionName} ${a.name}${a.mask ? ` ...${a.mask}` : ""} (Plaid)`;
         return prisma.financeAccount.upsert({
           where: { plaidAccountId: a.account_id },
+          // addedByUsername only on create, deliberately never on update —
+          // a reconnect of an already-linked account must not silently
+          // reassign whose account it is to whoever happened to click
+          // "reconnect" this time.
           update: { name: displayName, type, kind, plaidItemId: item.id },
           create: {
             name: displayName,
@@ -84,6 +92,7 @@ export async function POST(request: NextRequest) {
             plaidItemId: item.id,
             plaidAccountId: a.account_id,
             excludeFromCashFlow: isPayPal,
+            addedByUsername: username,
           },
         });
       }),

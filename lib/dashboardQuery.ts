@@ -502,25 +502,42 @@ function applyPointColors(points: AggregatedPoint[], config: ChartWidgetConfig):
   return points;
 }
 
+/** Which account's data a query is allowed to touch — every dashboard
+ * query is scoped to its owner's own FinanceAccounts by default (see
+ * buildWhere below), never anyone else's, even when viewed by someone the
+ * dashboard is shared with (AccountShare grants *viewing* the owner's
+ * dashboard, not blending in the viewer's own separate accounts). See
+ * lib/dashboardAccess.ts for how this gets resolved from a dashboard id. */
+export type DashboardScope = { ownerUsername: string };
+
 /** Builds the Prisma `where` shared by the main window and (for stat tiles)
  * the comparison window. Narrowed to just the fields this actually reads
  * (rather than the full ChartWidgetConfig) so computeDraftMetricPreview
  * below can call it with a plain object literal, not a full widget config —
  * a metric being previewed while it's still being built has no widget
  * config yet. */
-function buildWhere(config: Pick<ChartWidgetConfig, "metric" | "customMetricId" | "filters">, start: string, end: string) {
+function buildWhere(
+  config: Pick<ChartWidgetConfig, "metric" | "customMetricId" | "filters">,
+  start: string,
+  end: string,
+  scope: DashboardScope,
+) {
   return {
     date: { gte: new Date(start), lt: new Date(end) },
     ...(config.filters?.accountIds?.length
       ? // An explicit account selection is the user asking for exactly
         // these accounts — respect it even if one of them is normally
-        // excluded (e.g. deliberately looking at PayPal on its own).
-        { accountId: { in: config.filters.accountIds } }
-      : // No explicit accounts picked: same default every other cash-flow
-        // query in the app uses — leave out accounts like PayPal that
-        // duplicate another account's charges, so aggregate totals aren't
-        // doubled.
-        { account: { excludeFromCashFlow: false } }),
+        // excluded (e.g. deliberately looking at PayPal on its own). Still
+        // bound to the dashboard owner's own accounts, though — an
+        // explicit filter (even a stale/tampered one; nothing validates
+        // accountIds against the DB at save time) can never widen a
+        // widget past what its owner is actually allowed to see.
+        { accountId: { in: config.filters.accountIds }, account: { addedByUsername: scope.ownerUsername } }
+      : // No explicit accounts picked: every account *this dashboard's
+        // owner* added, except ones like PayPal that duplicate another
+        // account's charges (excludeFromCashFlow) — never another
+        // account's linked banks, even if this dashboard is shared out.
+        { account: { excludeFromCashFlow: false, addedByUsername: scope.ownerUsername } }),
     ...(config.filters?.merchantCategories?.length
       ? { merchantCategory: { in: config.filters.merchantCategories } }
       : {}),
@@ -633,17 +650,19 @@ const DRAFT_PREVIEW_ROW_LIMIT = 50;
  */
 export async function computeDraftMetricPreview(
   metric: CustomMetric,
-  scope: { accountIds?: string[]; dateRange?: DateRangeSelection },
+  filterScope: { accountIds?: string[]; dateRange?: DateRangeSelection },
+  ownerUsername: string,
 ): Promise<DraftMetricPreview> {
-  const { start, end } = resolveDateRange(scope.dateRange ?? { mode: "allTime" });
+  const { start, end } = resolveDateRange(filterScope.dateRange ?? { mode: "allTime" });
   const where = buildWhere(
     {
       metric: "spendingTotal",
       customMetricId: "draft",
-      filters: scope.accountIds?.length ? { accountIds: scope.accountIds } : undefined,
+      filters: filterScope.accountIds?.length ? { accountIds: filterScope.accountIds } : undefined,
     },
     start,
     end,
+    { ownerUsername },
   );
   const rows = filterByMerchant(await fetchRows(where, true), undefined);
   const value = round2(computeCustomMetricValue(rows, metric));
@@ -653,7 +672,15 @@ export async function computeDraftMetricPreview(
   return { value, sampleSize, detailRows, ...computePeriodicDetail(rows, metric, true, true) };
 }
 
-export type MetricUsageEntry = { dashboardName: string; tabName: string; widgetTitle: string; widgetId: string };
+// `visibleToViewer: false` entries redact the real dashboard/tab/widget
+// names — a metric is still a shared, global thing anyone can use, so a
+// deleter needs to see the *true* blast radius of removing one (it can
+// break a widget on a dashboard they can't otherwise see at all), but
+// showing them that dashboard's actual name would leak it. See
+// getCalculatedMetricUsage's own comment.
+export type MetricUsageEntry =
+  | { visibleToViewer: true; dashboardName: string; tabName: string; widgetTitle: string; widgetId: string }
+  | { visibleToViewer: false; widgetId: string };
 
 /**
  * Which saved CalculatedMetrics are actually referenced by a real widget
@@ -666,15 +693,24 @@ export type MetricUsageEntry = { dashboardName: string; tabName: string; widgetT
  * query for the one shape Prisma's own JSON filters can't express anyway
  * (customMetricId nested inside config.series, a JSON array).
  *
+ * Scans every widget on every dashboard regardless of owner (metrics stay
+ * a shared global library — deleting one can break a widget on a
+ * dashboard `viewerUsername` can't see at all, and they should still be
+ * warned that *something* would break), but redacts entries belonging to
+ * a dashboard `viewerUsername` doesn't own and hasn't been shared — see
+ * MetricUsageEntry above.
+ *
  * One query for every metric's usage at once, not N — Settings shows this
  * proactively next to every metric, not just at delete time.
  */
-export async function getCalculatedMetricUsage(): Promise<Record<string, MetricUsageEntry[]>> {
-  const [widgets, metrics] = await Promise.all([
+export async function getCalculatedMetricUsage(viewerUsername: string): Promise<Record<string, MetricUsageEntry[]>> {
+  const [widgets, metrics, sharedWithViewer] = await Promise.all([
     prisma.dashboardWidget.findMany({ include: { tab: { include: { dashboard: true } } } }),
     prisma.calculatedMetric.findMany({ select: { id: true, name: true } }),
+    prisma.accountShare.findMany({ where: { viewerUsername }, select: { ownerUsername: true } }),
   ]);
   const metricNames = Object.fromEntries(metrics.map((m) => [m.id, m.name]));
+  const visibleOwners = new Set([viewerUsername, ...sharedWithViewer.map((s) => s.ownerUsername)]);
   const usage: Record<string, MetricUsageEntry[]> = {};
   for (const row of widgets) {
     // Defensive-read, same as every other place a stored config gets
@@ -690,12 +726,15 @@ export async function getCalculatedMetricUsage(): Promise<Record<string, MetricU
     for (const s of config.series ?? []) if (s.customMetricId) idsUsed.add(s.customMetricId);
     if (idsUsed.size === 0) continue;
 
-    const entry: MetricUsageEntry = {
-      dashboardName: row.tab.dashboard.name,
-      tabName: row.tab.name,
-      widgetTitle: deriveWidgetTitle(row.title, config, metricNames),
-      widgetId: row.id,
-    };
+    const entry: MetricUsageEntry = visibleOwners.has(row.tab.dashboard.ownerUsername)
+      ? {
+          visibleToViewer: true,
+          dashboardName: row.tab.dashboard.name,
+          tabName: row.tab.name,
+          widgetTitle: deriveWidgetTitle(row.title, config, metricNames),
+          widgetId: row.id,
+        }
+      : { visibleToViewer: false, widgetId: row.id };
     for (const id of idsUsed) (usage[id] ??= []).push(entry);
   }
   return usage;
@@ -768,9 +807,9 @@ export async function getCalculatedMetricNames(ids: string[]): Promise<Record<st
   return Object.fromEntries(rows.map((r) => [r.id, r.name]));
 }
 
-export async function computeDateBounds(config: ChartWidgetConfig): Promise<{ min: string; max: string } | null> {
+export async function computeDateBounds(config: ChartWidgetConfig, scope: DashboardScope): Promise<{ min: string; max: string } | null> {
   const { start: allTimeStart, end: allTimeEnd } = resolveDateRange({ mode: "allTime" });
-  const where = buildWhere(config, allTimeStart, allTimeEnd);
+  const where = buildWhere(config, allTimeStart, allTimeEnd, scope);
   const needsDescription = !!config.filters?.merchants?.length;
   let rows = await fetchRows(where, needsDescription);
   rows = filterByMerchant(rows, config.filters?.merchants);
@@ -816,11 +855,16 @@ export function toCustomMetric(m: {
   };
 }
 
-async function computeCumulativeOffset(config: ChartWidgetConfig, before: string, customMetric: CustomMetric | null): Promise<number> {
+async function computeCumulativeOffset(
+  config: ChartWidgetConfig,
+  before: string,
+  customMetric: CustomMetric | null,
+  scope: DashboardScope,
+): Promise<number> {
   // Earlier than any real transaction could be — stands in for "everything
   // up to `before`" without needing a separate unbounded query shape.
   const EPOCH = "1900-01-01";
-  const where = buildWhere(config, EPOCH, before);
+  const where = buildWhere(config, EPOCH, before, scope);
   const needsDescription = Boolean(config.filters?.merchants?.length);
   const rows = filterByAmount(
     filterByMerchant(await fetchRows(where, needsDescription), config.filters?.merchants),
@@ -851,7 +895,12 @@ async function computeCumulativeOffset(config: ChartWidgetConfig, before: string
  * magnitude into the *same* bin edges (derived from the combined min/max
  * across all series), so the bars are actually comparable bin-for-bin.
  */
-async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntryConfig[], isHistogram: boolean): Promise<WidgetResult> {
+async function computeMultiSeries(
+  config: ChartWidgetConfig,
+  series: SeriesEntryConfig[],
+  isHistogram: boolean,
+  scope: DashboardScope,
+): Promise<WidgetResult> {
   const { start, end } = resolveDateRange(config.dateRange);
   const merchantFilter = config.filters?.merchants;
   const needsDescription = config.groupBy === "merchant" || Boolean(merchantFilter?.length);
@@ -867,7 +916,7 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
           ...(entry.merchantCategories?.length ? { merchantCategories: entry.merchantCategories } : {}),
         },
       };
-      const where = buildWhere(seriesConfig, start, end);
+      const where = buildWhere(seriesConfig, start, end, scope);
       // Same reasoning as computeWidgetData's own customMetric lookup —
       // buildWhere above only needed entry.customMetricId's truthiness (a
       // plain string, no query), not the resolved row, so this can run
@@ -988,7 +1037,7 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
   if (isTimeSeries) {
     for (const { entry, seriesConfig, customMetric } of resolved) {
       if (!entry.cumulative) continue;
-      let running = entry.cumulativeBasis === "lifetime" ? await computeCumulativeOffset(seriesConfig, start, customMetric) : 0;
+      let running = entry.cumulativeBasis === "lifetime" ? await computeCumulativeOffset(seriesConfig, start, customMetric, scope) : 0;
       for (const point of points) {
         const bucketValue = typeof point[entry.id] === "number" ? (point[entry.id] as number) : 0;
         running += bucketValue;
@@ -1008,7 +1057,7 @@ async function computeMultiSeries(config: ChartWidgetConfig, series: SeriesEntry
  * merchantCategory"); this is the generic version, parameterized by
  * whatever the widget's config says.
  */
-export async function computeWidgetData(config: WidgetConfig, type: WidgetType): Promise<WidgetResult> {
+export async function computeWidgetData(config: WidgetConfig, type: WidgetType, scope: DashboardScope): Promise<WidgetResult> {
   // A text tile has no data behind it at all — nothing to query.
   if (config.dataSource === "text") {
     return { kind: "text", text: config.text };
@@ -1020,12 +1069,12 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
   // below, since none of the single-metric logic applies once this is set.
   const MULTI_SERIES_TYPES: WidgetType[] = ["line", "area", "bar", "stackedBar", "histogram"];
   if (config.series && config.series.length >= 2 && MULTI_SERIES_TYPES.includes(type)) {
-    return computeMultiSeries(config, config.series, type === "histogram");
+    return computeMultiSeries(config, config.series, type === "histogram", scope);
   }
 
   const { start, end } = resolveDateRange(config.dateRange);
 
-  const where = buildWhere(config, start, end);
+  const where = buildWhere(config, start, end, scope);
   // Merchant names aren't a plain DB column (see filtersSchema's own
   // comment in lib/dashboardConfig.ts) — decrypting descriptions is the
   // only way to filter or group by one, so either need turns it on.
@@ -1213,7 +1262,7 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     const spanMs = new Date(end).getTime() - new Date(start).getTime();
     const prevEnd = start;
     const prevStart = new Date(new Date(start).getTime() - spanMs).toISOString().slice(0, 10);
-    const prevWhere = buildWhere(config, prevStart, prevEnd);
+    const prevWhere = buildWhere(config, prevStart, prevEnd, scope);
     const prevRows = filterByAmount(
       filterByMerchant(await fetchRows(prevWhere, needsDescription), merchantFilter),
       config.metric,
@@ -1298,7 +1347,7 @@ export async function computeWidgetData(config: WidgetConfig, type: WidgetType):
     // computeMultiSeries' per-series version above, just for a widget not
     // using config.series at all.
     if (config.cumulative) {
-      let running = config.cumulativeBasis === "lifetime" ? await computeCumulativeOffset(config, start, customMetric) : 0;
+      let running = config.cumulativeBasis === "lifetime" ? await computeCumulativeOffset(config, start, customMetric, scope) : 0;
       points = points.map((p) => {
         running += p.value;
         return { ...p, value: round2(running) };

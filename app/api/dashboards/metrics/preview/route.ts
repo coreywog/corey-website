@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
 import { dateRangeSchema } from "@/lib/dashboardConfig";
 import { metricDefinitionSchema } from "../route";
 import { computeDraftMetricPreview, toCustomMetric } from "@/lib/dashboardQuery";
@@ -34,6 +34,10 @@ export async function POST(request: NextRequest) {
   if (!isAuthed) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    return NextResponse.json({ error: "Your session is out of date — please log in again." }, { status: 401 });
+  }
 
   const body = await request.json().catch(() => null);
   const parsed = bodySchema.safeParse(body);
@@ -42,7 +46,11 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const preview = await computeDraftMetricPreview(toCustomMetric(parsed.data.metric), parsed.data.scope ?? {});
+    // Scoped to the current viewer's own accounts by default — this route
+    // has no dashboard at all (it's Settings' standalone metric builder,
+    // and the widget editor's inline one before a widget's even saved), so
+    // there's no dashboard owner to inherit scope from.
+    const preview = await computeDraftMetricPreview(toCustomMetric(parsed.data.metric), parsed.data.scope ?? {}, username);
     return NextResponse.json(preview);
   } catch (err) {
     console.error("Failed to compute metric preview", err);

@@ -1,6 +1,7 @@
 import { redirect, notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { requireAdminSession } from "@/lib/auth";
+import { requireAdminSession, getCurrentUsername } from "@/lib/auth";
+import { getDashboardAccess } from "@/lib/dashboardAccess";
 import { WidgetConfigSchema, type WidgetType } from "@/lib/dashboardConfig";
 import { computeWidgetData, getCalculatedMetricNames } from "@/lib/dashboardQuery";
 import { DashboardGrid } from "@/components/dashboards/DashboardGrid";
@@ -22,9 +23,22 @@ export default async function DashboardPage({
   if (!isAuthed) {
     redirect("/"); // "/" is the real login screen now — /quietharbor just redirects there
   }
+  const username = await getCurrentUsername();
+  if (!username) {
+    redirect("/"); // stale pre-2026-09-09 session token with no username claim — needs a fresh login
+  }
 
   const { id } = await params;
   const { tab: requestedTabId } = await searchParams;
+
+  // 404, never a permission error — a dashboard you can't see (not yours,
+  // not shared with you) should look exactly like one that doesn't exist.
+  // See lib/dashboardAccess.ts.
+  const access = await getDashboardAccess(id, username);
+  if (!access.allowed) {
+    notFound();
+  }
+  const isOwner = access.isOwner;
 
   const dashboard = await prisma.dashboard.findUnique({
     where: { id },
@@ -66,7 +80,11 @@ export default async function DashboardPage({
             return { ...base, config: null, result: { error: "This widget's configuration is out of date." } };
           }
           try {
-            return { ...base, config: parsed.data, result: await computeWidgetData(parsed.data, row.type as WidgetType) };
+            return {
+              ...base,
+              config: parsed.data,
+              result: await computeWidgetData(parsed.data, row.type as WidgetType, { ownerUsername: access.ownerUsername }),
+            };
           } catch (err) {
             console.error(`Failed to compute widget ${row.id}`, err);
             return { ...base, config: parsed.data, result: { error: "Failed to load this widget." } };
@@ -117,7 +135,12 @@ export default async function DashboardPage({
           tabId={activeTabId}
           widgets={widgets}
           customMetricNames={customMetricNames}
-          published={dashboard.published}
+          // A shared (non-owner) viewer always gets the read-only rendering
+          // regardless of the owner's own current publish state — sharing
+          // is view-only (see AccountShare's schema comment). Reuses
+          // DashboardGrid's existing !published gating for free; no
+          // changes needed inside DashboardGrid.tsx itself.
+          published={dashboard.published || !isOwner}
         />
       )}
     </div>

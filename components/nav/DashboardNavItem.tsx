@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 
 type Tab = { id: string; name: string; order: number };
-type DashboardRow = { id: string; name: string; published: boolean; tabs: Tab[] };
+type DashboardRow = { id: string; name: string; published: boolean; ownerUsername: string; tabs: Tab[] };
 
 const inputClasses =
   "w-full rounded-md border border-black/[.1] bg-white px-2 py-1 text-xs outline-none focus:border-zinc-400 dark:border-white/[.15] dark:bg-zinc-900 dark:focus:border-zinc-500 creamsicle:border-orange-300 creamsicle:focus:border-orange-500";
@@ -46,8 +46,17 @@ function PencilIcon() {
  * name while it's already the active dashboard toggles that panel closed/
  * open again instead of navigating (there's nowhere else to navigate to);
  * clicking a *different* dashboard always opens its panel fresh.
+ *
+ * `isOwner` (as of 2026-09-09) gates every mutation affordance — rename,
+ * publish toggle, add/rename/delete/reorder tab, delete dashboard — down
+ * to nothing for a dashboard shared with this account rather than owned by
+ * it (see AccountShare's schema comment: sharing is view-only, always).
+ * The row stays fully navigable either way; a non-owner just gets a
+ * "Shared by {owner}" badge instead of controls. The server independently
+ * re-enforces all of this too (lib/dashboardAccess.ts) — hiding these
+ * buttons is just so one that would 404 isn't sitting there.
  */
-export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
+export function DashboardNavItem({ dashboard, isOwner }: { dashboard: DashboardRow; isOwner: boolean }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -301,19 +310,40 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
 
   const panel = (
     <div className="mt-1 mb-2 ml-2 flex flex-col gap-2 border-l border-black/[.08] py-1 pl-3 dark:border-white/[.1] creamsicle:border-orange-200">
-      <span
-        className={
-          "self-start rounded-full px-2 py-0.5 text-[10px] font-medium " +
-          (published
-            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-            : "bg-amber-500/10 text-amber-700 dark:text-amber-400")
-        }
-      >
-        {published ? "Published — view only" : "Editing"}
-      </span>
+      {isOwner ? (
+        <span
+          className={
+            "self-start rounded-full px-2 py-0.5 text-[10px] font-medium " +
+            (published
+              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+              : "bg-amber-500/10 text-amber-700 dark:text-amber-400")
+          }
+        >
+          {published ? "Published — view only" : "Editing"}
+        </span>
+      ) : (
+        <span className="self-start rounded-full bg-black/[.05] px-2 py-0.5 text-[10px] font-medium text-zinc-500 dark:bg-white/[.08] dark:text-zinc-400">
+          Shared by {dashboard.ownerUsername}
+        </span>
+      )}
 
       <div className="flex flex-col gap-0.5">
-        {tabs.map((tab) =>
+        {!isOwner
+          ? tabs.map((tab) => (
+              <Link
+                key={tab.id}
+                href={`${href}?tab=${tab.id}`}
+                className={
+                  "rounded-md px-2 py-1.5 text-sm font-medium transition-colors " +
+                  (tab.id === activeTabId
+                    ? "bg-black/[.05] text-zinc-950 dark:bg-white/[.08] dark:text-zinc-50 creamsicle:bg-orange-100 creamsicle:text-orange-950"
+                    : "text-zinc-600 hover:bg-black/[.03] hover:text-zinc-950 dark:text-zinc-400 dark:hover:bg-white/[.05] dark:hover:text-zinc-50 creamsicle:text-orange-700 creamsicle:hover:bg-orange-50")
+                }
+              >
+                {tab.name}
+              </Link>
+            ))
+          : tabs.map((tab) =>
           editingTabId === tab.id ? (
             <input
               key={tab.id}
@@ -416,7 +446,7 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
           ),
         )}
 
-        {addingTab ? (
+        {isOwner && (addingTab ? (
           <form onSubmit={handleCreateTab} className="flex flex-col gap-1 py-0.5">
             <input
               type="text"
@@ -446,7 +476,7 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
             Add tab
             <span aria-hidden="true">+</span>
           </button>
-        )}
+        ))}
       </div>
 
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
@@ -506,7 +536,7 @@ export function DashboardNavItem({ dashboard }: { dashboard: DashboardRow }) {
             {name}
           </Link>
         )}
-        {active && !editingName && (
+        {active && !editingName && isOwner && (
           <div className="flex shrink-0 items-center gap-0.5 pr-1">
             <button
               type="button"
