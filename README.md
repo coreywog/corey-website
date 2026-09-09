@@ -1,4 +1,4 @@
-# athenics.com
+# poorandproud.com
 
 Corey Wogenstahl's personal site — resume, "who I am," and a private
 finance dashboard (Plaid-synced bank accounts, spending categorization,

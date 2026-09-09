@@ -6,6 +6,7 @@ import {
   sessionCookieOptions,
   sessionMaxAgeSeconds,
 } from "@/lib/session";
+import { checkLoginLockout, recordFailedLogin, clearLoginAttempts } from "@/lib/loginThrottle";
 
 /** Constant-time string compare, hashed first so lengths always match. */
 function safeEqual(a: string, b: string) {
@@ -21,6 +22,17 @@ export async function POST(request: NextRequest) {
     throw new Error("ADMIN_USERNAME or ADMIN_PASSWORD env var is not set");
   }
 
+  // Checked before even touching the submitted credentials — a locked-out
+  // IP shouldn't get to keep using failed attempts as a timing/validity
+  // oracle. See lib/loginThrottle.ts for why this lives in Postgres, not
+  // in-memory.
+  const lockedMinutes = await checkLoginLockout(request);
+  if (lockedMinutes !== null) {
+    return NextResponse.redirect(new URL(`/?error=locked&minutes=${lockedMinutes}`, request.url), {
+      status: 303,
+    });
+  }
+
   const formData = await request.formData();
   const username = formData.get("username");
   const password = formData.get("password");
@@ -32,14 +44,16 @@ export async function POST(request: NextRequest) {
     safeEqual(password, adminPassword);
 
   if (!credentialsValid) {
-    // On failure, land back on the login path itself — never redirect to
-    // "/", or a wrong-password attempt would bounce back to the public WIP
-    // placeholder and look like the login path doesn't work at all.
-    return NextResponse.redirect(new URL("/quietharbor?error=1", request.url), {
+    await recordFailedLogin(request);
+    // The login form lives directly on "/" now (it used to be hidden at
+    // /quietharbor, back when that path's obscurity was the only real
+    // access control) — land back there on failure.
+    return NextResponse.redirect(new URL("/?error=1", request.url), {
       status: 303,
     });
   }
 
+  await clearLoginAttempts(request);
   const token = await createSessionToken();
   const response = NextResponse.redirect(new URL("/dashboards", request.url), {
     status: 303,

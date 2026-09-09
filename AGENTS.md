@@ -32,11 +32,13 @@ in the same afternoon). This section exists so that doesn't happen again.
 
 **At the end of a session** that made real progress (a schema change, a
 new feature, anything non-trivial — not every one-line fix needs this),
-write `docs/sessions/athenics-session-{YYYY-MM-DD}-{device}.md` (device =
-your own platform, e.g. "windows" or "macbook") using this template:
+write `docs/sessions/poorandproud-session-{YYYY-MM-DD}-{device}.md` (device =
+your own platform, e.g. "windows" or "macbook") using this template. (Older
+logs under `docs/sessions/athenics-session-*.md` are from before the app's
+rename — leave them as-is, just start new ones under the new name.)
 
 ```
-# Athenics Session — {Date} | {Device}
+# Poor and Proud Session — {Date} | {Device}
 
 ## Completed Today
 - [Feature/fix] → ✅ done / 🔄 in-progress / 🚫 blocked

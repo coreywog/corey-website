@@ -1,20 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME, verifySessionToken } from "@/lib/session";
 
-// The only place the real login form exists. Nothing on the site links to
-// it — you have to know the path. Change here (and rename the app/ folder
-// to match) if it ever needs to rotate.
+// Retired 2026-09-08 (see app/quietharbor/page.tsx) — the login form used
+// to live only here, unlinked from anywhere else on the site, so obscurity
+// was the real access control. It's shown openly on "/" now; this path
+// just redirects there for anyone with it bookmarked, and still needs the
+// same exemption below so that redirect itself isn't gated behind a
+// session cookie it'll never have.
 const LOGIN_PATH = "/quietharbor";
 
 /**
- * "/" is a bare "work in progress" placeholder for everyone, logged in or
- * not — there's no hint anywhere that a real site exists behind it. Every
- * other route requires the session cookie; failing that, page routes get
- * rewritten (not redirected — a redirect would leak the login path via the
- * browser's address bar/history) to the same placeholder, and API routes
- * get a plain 401. This is only an optimistic check (see Next.js docs on
- * Proxy) — every page and mutating route handler re-verifies the session
- * independently too.
+ * "/" is the real login screen (app/page.tsx) for everyone, logged in or
+ * not — a logged-in visitor just gets redirected onward from there instead
+ * of seeing the form. Every other route requires the session cookie;
+ * failing that, page routes get rewritten (not redirected — kept as a
+ * rewrite from the days when the login path itself was a secret worth not
+ * leaking via the browser's address bar; harmless either way now, just
+ * never changed back) to "/", and API routes get a plain 401. This is only
+ * an optimistic check (see Next.js docs on Proxy) — every page and
+ * mutating route handler re-verifies the session independently too.
  */
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
