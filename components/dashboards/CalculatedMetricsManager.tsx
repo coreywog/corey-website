@@ -46,13 +46,22 @@ function describeMetric(m: CalculatedMetricOption): string {
 /**
  * "Calculated Metrics" section on the Settings page — a real management
  * surface for the saved metrics the widget editor's "+ New calculated
- * metric…" flow creates. Previously there was no way to see them all in
- * one place, edit one, or actually reach the (already-existing but
- * uncalled) delete endpoint. Now also shows, for every metric, exactly
- * which dashboard widgets currently use it — and re-checks that before
- * letting a delete through, since deleting a metric a widget still
- * references makes that widget silently fall back to a generic built-in
- * measure instead of erroring, which is easy to not notice happened.
+ * metric…" flow creates. This exists because that inline flow is
+ * create-only: it's built for "I need a metric right now while I'm
+ * building this one widget," not "let me see everything I've saved." This
+ * is genuinely the *only* place to edit a metric's definition after the
+ * fact, or to delete one — the delete endpoint existed but was completely
+ * unreachable from anywhere before this section was built. Also shows,
+ * for every metric, exactly which dashboard widgets currently use it — and
+ * re-checks that before letting a delete through, since deleting a metric
+ * a widget still references makes that widget silently fall back to a
+ * generic built-in measure instead of erroring, which is easy to not
+ * notice happened.
+ *
+ * Collapsed by default (2026-09-09) — the full list rendered open by
+ * default read as "a bit much" for a section most visits to Settings have
+ * no reason to touch at all. Nothing to collapse when there's nothing
+ * saved yet, so the toggle only appears once at least one metric exists.
  */
 export function CalculatedMetricsManager({
   initialMetrics,
@@ -65,6 +74,7 @@ export function CalculatedMetricsManager({
 }) {
   const [metrics, setMetrics] = useState(initialMetrics);
   const [usage, setUsage] = useState(initialUsage);
+  const [collapsed, setCollapsed] = useState(true);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   // Distinct from "which row is mid-delete" (deletingId, below) — this is
@@ -123,7 +133,18 @@ export function CalculatedMetricsManager({
         <p className="text-sm text-zinc-500">None yet — a widget&apos;s Metric picker can create one, or start here.</p>
       )}
 
-      {metrics.map((m) => {
+      {metrics.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setCollapsed((c) => !c)}
+          className="flex items-center gap-1.5 self-start text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+        >
+          <span className={"inline-block text-[10px] transition-transform " + (collapsed ? "-rotate-90" : "")}>▾</span>
+          {collapsed ? "Show" : "Hide"} {metrics.length} saved metric{metrics.length === 1 ? "" : "s"}
+        </button>
+      )}
+
+      {(metrics.length === 0 || !collapsed) && metrics.map((m) => {
         const usedBy = usage[m.id] ?? [];
         if (editingId === m.id) {
           return (

@@ -71,10 +71,10 @@ async function main() {
   }
 
   // FinanceAccount.name is unique per addedByUsername now, not globally —
-  // this script has only ever imported "diorgarments"'s own historical
+  // this script has only ever imported this account's own historical
   // statement data, so that's hardcoded here rather than taken as an
-  // argument.
-  const IMPORT_OWNER_USERNAME = "diorgarments";
+  // argument. (Renamed from "diorgarments" to "coreywog" 2026-09-09.)
+  const IMPORT_OWNER_USERNAME = "coreywog";
   const accountIds = {};
   for (const [name, defaults] of Object.entries(ACCOUNT_DEFAULTS)) {
     const account = await prisma.financeAccount.upsert({
