@@ -7,6 +7,25 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Failed-login throttling — added 2026-09-08 when the login form moved from
+// the unlisted /quietharbor path onto "/" itself (see app/page.tsx,
+// app/api/auth/login/route.ts). While the login was only reachable at a
+// secret path, an attacker had to guess the URL before a password even
+// mattered; now that it's the front door, that layer is gone, so this adds
+// a real one back. One row per client IP (not a growing attempt log) —
+// failCount/windowStart track a rolling window, lockedUntil (once set)
+// blocks further attempts outright until it passes. Cleared entirely on a
+// successful login from that IP. Deliberately in Postgres, not in-memory —
+// Vercel serverless functions don't share memory across instances, so an
+// in-memory counter would under-count and barely slow anything down.
+model LoginAttempt {
+  id          String    @id @default(cuid())
+  ip          String    @unique
+  failCount   Int       @default(0)
+  windowStart DateTime  @default(now())
+  lockedUntil DateTime?
+}
+
 // A user-built collection of widgets — the customizable dashboard builder.
 // Deliberately single-user (no owner/userId field) — matches every other
 // model in this schema; the site has exactly one admin.
